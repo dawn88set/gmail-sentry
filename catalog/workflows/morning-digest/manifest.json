@@ -1,0 +1,14 @@
+{
+  "id": "morning-digest",
+  "kind": "workflow",
+  "version": "1.0.0",
+  "description": "Fire once per morning; run the LinkedIn summarizer agent and write the digest.",
+  "intentHints": [
+    "morning digest",
+    "daily summary",
+    "send me a morning email"
+  ],
+  "dependsOn": [
+    { "kind": "agent", "id": "linkedin-summarizer" }
+  ]
+}

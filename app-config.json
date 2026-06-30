@@ -1,0 +1,342 @@
+{
+  "$schema": "https://clarity.ai/schemas/app-config-v1.json",
+  "appName": "App",
+  "appVersion": "1.0.0",
+  "description": "An AI-powered agentic app.",
+  "configSchema": {
+    "version": "1.0",
+    "sections": [
+      {
+        "id": "ai_settings",
+        "label": "AI Configuration",
+        "description": "Configure how AI agents operate in your application",
+        "icon": "sparkles",
+        "order": 1,
+        "fields": [
+          {
+            "key": "AI_OPERATION_MODE",
+            "label": "AI Operation Mode",
+            "description": "How should AI agents behave?",
+            "type": "select",
+            "required": true,
+            "default": "balanced",
+            "options": [
+              {
+                "value": "fast",
+                "label": "Fast",
+                "description": "Quick responses, lower cost, good for simple tasks"
+              },
+              {
+                "value": "balanced",
+                "label": "Balanced",
+                "description": "Good balance of speed and quality"
+              },
+              {
+                "value": "quality",
+                "label": "Quality",
+                "description": "Best quality responses, slower, higher cost"
+              }
+            ],
+            "validation": {
+              "enum": ["fast", "balanced", "quality"]
+            }
+          },
+          {
+            "key": "AI_RESPONSE_TEMPERATURE",
+            "label": "AI Creativity Level",
+            "description": "How creative should AI responses be? (0 = consistent, 100 = very creative)",
+            "type": "number",
+            "required": false,
+            "default": 70,
+            "validation": {
+              "min": 0,
+              "max": 100
+            },
+            "help_text": "Lower values produce more consistent responses, higher values more creative"
+          }
+        ]
+      },
+      {
+        "id": "workflow_settings",
+        "label": "Workflow Execution",
+        "description": "Configure how workflows execute",
+        "icon": "workflow",
+        "order": 2,
+        "fields": [
+          {
+            "key": "WORKFLOW_RETRY_FAILED",
+            "label": "Auto-Retry Failed Workflows",
+            "description": "Automatically retry workflows that fail",
+            "type": "boolean",
+            "required": false,
+            "default": true
+          },
+          {
+            "key": "WORKFLOW_MAX_RETRIES",
+            "label": "Maximum Retries",
+            "description": "How many times to retry failed workflows",
+            "type": "number",
+            "required": false,
+            "default": 2,
+            "validation": {
+              "min": 0,
+              "max": 5
+            },
+            "condition": {
+              "field": "WORKFLOW_RETRY_FAILED",
+              "equals": true
+            }
+          },
+          {
+            "key": "WORKFLOW_PARALLEL_LIMIT",
+            "label": "Parallel Workflow Limit",
+            "description": "Maximum number of workflows to run simultaneously",
+            "type": "number",
+            "required": false,
+            "default": 3,
+            "validation": {
+              "min": 1,
+              "max": 10
+            },
+            "help_text": "Higher values allow more concurrent workflows but use more resources"
+          }
+        ]
+      },
+      {
+        "id": "notification_settings",
+        "label": "Notifications",
+        "description": "Configure when and how you receive notifications",
+        "icon": "bell",
+        "order": 3,
+        "fields": [
+          {
+            "key": "NOTIFY_ON_WORKFLOW_COMPLETE",
+            "label": "Workflow Completion Notifications",
+            "description": "Get notified when workflows complete",
+            "type": "boolean",
+            "required": false,
+            "default": true
+          },
+          {
+            "key": "NOTIFY_ON_WORKFLOW_FAILURE",
+            "label": "Workflow Failure Notifications",
+            "description": "Get notified when workflows fail",
+            "type": "boolean",
+            "required": false,
+            "default": true
+          },
+          {
+            "key": "NOTIFICATION_EMAIL",
+            "label": "Notification Email Address",
+            "description": "Where to send notifications",
+            "type": "email",
+            "required": false,
+            "validation": {
+              "email": true
+            },
+            "help_text": "Leave empty to use your account email"
+          }
+        ]
+      },
+      {
+        "id": "integration_settings",
+        "label": "External Integrations",
+        "description": "Connect to external services (optional)",
+        "icon": "plug",
+        "order": 4,
+        "fields": [
+          {
+            "key": "ENABLE_SLACK_INTEGRATION",
+            "label": "Enable Slack Integration",
+            "description": "Send notifications to Slack",
+            "type": "boolean",
+            "required": false,
+            "default": false
+          },
+          {
+            "key": "SLACK_WEBHOOK_URL",
+            "label": "Slack Webhook URL",
+            "description": "Webhook URL from Slack",
+            "type": "url",
+            "secure": true,
+            "required": false,
+            "validation": {
+              "url": true,
+              "pattern": "^https://hooks\\.slack\\.com/.*$"
+            },
+            "condition": {
+              "field": "ENABLE_SLACK_INTEGRATION",
+              "equals": true
+            },
+            "help_text": "Get this from Slack: Settings > Incoming Webhooks"
+          }
+        ]
+      },
+      {
+        "id": "advanced_settings",
+        "label": "Advanced",
+        "description": "Advanced configuration options",
+        "icon": "settings",
+        "order": 5,
+        "collapsible": true,
+        "collapsed": true,
+        "fields": [
+          {
+            "key": "DEBUG_MODE",
+            "label": "Debug Mode",
+            "description": "Enable verbose logging for troubleshooting",
+            "type": "boolean",
+            "required": false,
+            "default": false,
+            "help_text": "Only enable when debugging issues. Performance impact."
+          },
+          {
+            "key": "CUSTOM_METADATA",
+            "label": "Custom Metadata",
+            "description": "Add custom metadata (JSON format)",
+            "type": "json",
+            "required": false,
+            "help_text": "Advanced users only. Must be valid JSON."
+          }
+        ]
+      }
+    ]
+  },
+  "metadata": {
+    "author": "",
+    "license": "MIT",
+    "documentation": "",
+    "support": ""
+  },
+  "clarity_marketplace": {
+    "version": "1.0.0",
+    "category": "templates",
+    "tags": ["template", "starter", "agentic-app", "ai", "agents", "workflows", "triggers"],
+    "pricing_model": "free",
+    "developer": {
+      "name": "",
+      "email": "",
+      "website": "",
+      "support_email": ""
+    },
+    "features": [
+      "Complete starter template for building agentic apps",
+      "Working Smart Email Filter example with AI agents",
+      "Auto-discovery system for agents and workflows",
+      "Widget-first design following Apple HIG standards",
+      "Multi-tenant architecture with user isolation",
+      "Docker-ready deployment configuration",
+      "Comprehensive developer documentation",
+      "Production-ready code structure and patterns"
+    ],
+    "screenshots": [
+      {
+        "url": "./screenshots/widget-small.png",
+        "caption": "Small widget - Shows important email count and detection accuracy at a glance",
+        "type": "widget-small",
+        "required": true,
+        "dimensions": {
+          "width": 300,
+          "height": 150,
+          "note": "Approximate - widget is responsive"
+        }
+      },
+      {
+        "url": "./screenshots/widget-large.png",
+        "caption": "Large widget - Displays important emails with sender, subject, urgency levels, and detection metrics",
+        "type": "widget-large",
+        "required": true,
+        "dimensions": {
+          "width": 600,
+          "height": 400,
+          "note": "Approximate - widget is responsive"
+        }
+      },
+      {
+        "url": "./screenshots/dashboard.png",
+        "caption": "Full app dashboard (accessed by clicking widget)",
+        "type": "full-app",
+        "required": false
+      },
+      {
+        "url": "./screenshots/trigger-manager.png",
+        "caption": "Trigger management interface",
+        "type": "feature",
+        "required": false
+      }
+    ],
+    "screenshot_instructions": {
+      "required_files": [
+        "./screenshots/widget-small.png",
+        "./screenshots/widget-large.png"
+      ],
+      "how_to_capture": [
+        "1. Run your app: docker-compose up",
+        "2. Open frontend at http://localhost:3200",
+        "3. For widget-small.png: Capture the small widget from /widget page",
+        "4. For widget-large.png: Capture the large widget from /widget page",
+        "5. Save screenshots to ./screenshots/ directory in your app root",
+        "6. Use PNG format with transparent or white background",
+        "7. Ensure screenshots show REAL DATA, not empty states"
+      ],
+      "best_practices": [
+        "Use high-quality screenshots (2x resolution recommended)",
+        "Show the widget in action with realistic data",
+        "Avoid screenshots with obvious test/placeholder data",
+        "Widget screenshots are PRIMARY - users see these in marketplace",
+        "Ensure good lighting and contrast for visibility"
+      ]
+    },
+    "required_integrations": [],
+    "optional_integrations": [],
+    "core_action": {
+      "_comment": "Filled during brainstorm. Describes what this app DOES to the outside world + the bar for done. Used by the identity gate's advisory checks. See INTEGRATIONS.md + CLAUDE.md 'Build patterns'.",
+      "description": "",
+      "external_systems": [],
+      "requires_approval": false,
+      "definition_of_done": ""
+    },
+    "api_contract": {
+      "health_endpoint": "/health",
+      "widget_endpoint": "/api/widget",
+      "auth_method": "x-user-id-header",
+      "required_headers": ["X-User-ID"],
+      "rate_limits": {
+        "per_minute": 60,
+        "per_hour": 1000
+      }
+    },
+    "resource_requirements": {
+      "min_memory_mb": 512,
+      "recommended_memory_mb": 1024,
+      "min_cpu_cores": 1,
+      "recommended_cpu_cores": 2,
+      "storage_mb": 500,
+      "requires_postgres": true,
+      "requires_redis": false
+    },
+    "deployment": {
+      "docker_compose_version": "3.8",
+      "services": ["postgres", "backend", "frontend"],
+      "health_check_path": "/health",
+      "ready_check_path": "/health",
+      "startup_timeout_seconds": 60
+    },
+    "security": {
+      "user_data_isolation": true,
+      "encrypted_credentials": true,
+      "cors_enabled": true,
+      "rate_limiting": true,
+      "input_validation": true
+    },
+    "validation_requirements": {
+      "must_build": true,
+      "must_pass_health_check": true,
+      "must_accept_x_user_id_header": true,
+      "must_filter_by_user_id": true,
+      "no_hardcoded_secrets": true,
+      "no_sql_injection": true,
+      "docker_security_scan": true
+    }
+  }
+}

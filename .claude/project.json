@@ -1,0 +1,64 @@
+{
+  "name": "Agentic App Seed - Claritty Platform Template",
+  "description": "Minimal template for building agentic apps that deploy to Claritty Platform. Optimized for Claude Code brainstorming and implementation workflow.",
+  "version": "1.0.0",
+  "context": {
+    "files": [
+      "README.md",
+      "CLAUDE.md",
+      "IDENTITY.md",
+      "INTEGRATIONS.md",
+      "catalog/INDEX.md",
+      "WIDGETS.md",
+      "LLM_PROXY.md",
+      ".claude/design-tokens.md",
+      "backend/routes/app.py",
+      "backend/agents/example_agent.py",
+      "backend/workflows/example_workflow.py",
+      "backend/triggers/example_trigger.py",
+      "frontend/src/components/Widget.tsx",
+      "frontend/src/lib/widget-sizes.ts",
+      "frontend/src/pages/Dashboard.tsx"
+    ],
+    "ignore": [
+      "docs/archive/**",
+      "node_modules/**",
+      "__pycache__/**",
+      ".git/**",
+      "*.pyc",
+      ".env",
+      ".venv/**",
+      "venv/**",
+      "dist/**",
+      "build/**"
+    ]
+  },
+  "metadata": {
+    "stack": "Python FastAPI + React TypeScript + Postgres",
+    "claritty_dependencies": ["LLM via claritty_sdk proxy", "@clarittyai/widget-toolkit UI kit"],
+    "deployment": "Self-hosted — Docker (host it yourself)",
+    "widget_sizes": ["170×170px (small)", "360×170px (medium)", "360×360px (large)"],
+    "required_env_vars": [
+      "DATABASE_URL — Postgres connection (required)",
+      "CLARITTY_PLATFORM_URL + CLARITTY_AUTH_TOKEN — LLM proxy (required for real AI; heuristic fallback if unset)"
+    ],
+    "tenancy": "Per-user via the X-User-ID header (models.user_id); there is NO CLARITY_WORKSPACE_ID"
+  },
+  "guidelines": {
+    "give_it_its_own_identity": "This is a TEMPLATE. Keep the platform contract but COMPLETELY replace the template identity (palette+font in frontend/src/theme.css, the landing page Dashboard.tsx, the header logo in Layout.tsx, appName in app-meta.ts, and the example agent/workflow/trigger). First run `rm .claritty-seed-pristine`. The identity gate (scripts/check-not-template.mjs, also a Stop hook + `npm run check:identity`) blocks 'done' until you do. See IDENTITY.md.",
+    "start_with_brainstorming": "Always run /superpowers:brainstorming before implementing — include the Design Identity step (palette, type, landing page, app mark) AND the external-action/approval/definition-of-done steps",
+    "integrations_when_needed": "If the app reads from or acts on an external service, CHECK catalog/INDEX.md FIRST. ~33 services (Gmail, Slack, LinkedIn, X, HubSpot, Stripe, Notion, GitHub…) are built-in integrations with PLATFORM-MANAGED OAuth — declare the integration in intelligence.yaml#integrations, list its tools in the agent's tools[], and call them (or use ctx.integration(...)). You need NO API keys and write NO OAuth code; test locally with CLARITTY_FAKE_CREDS_<ID> (the REAL path, not a mock). When not connected, return a 409 connect-prompt — NEVER fake/simulate success. Only when a service is NOT in the catalog (e.g. reddit/g2/hn) use a custom read-only tool or clearly-labeled seed data. Infer the obvious platform if the user didn't name one, and confirm. See INTEGRATIONS.md.",
+    "approval_pattern": "If the app shouldn't act autonomously, model draft → approved → published|failed and an /approve endpoint that performs the action, with a widget approve quick-action. Don't auto-publish what a human should sign off on.",
+    "scheduling_is_platform_owned": "There is NO local scheduler. SCHEDULE_* triggers only fire on the Claritty platform. Locally, run workflows on demand (POST /api/workflows/{id}/execute); the widget updates only after a run. Still ship the trigger template.",
+    "definition_of_done": "Define one concrete end-to-end success sentence (app-config.json core_action.definition_of_done) and verify the value path: agent runs → workflow persists → widget shows real data → the real action happens or is labeled simulated.",
+    "widget_first_design": "Design widgets before full app pages - widgets are primary interface",
+    "self_hosted": "You host this app yourself (Docker). The only Claritty dependencies are the LLM (via claritty_sdk proxy) and the UI kit (@clarittyai/widget-toolkit). Don't delete the required env vars (DATABASE_URL, CLARITTY_PLATFORM_URL, CLARITTY_AUTH_TOKEN).",
+    "ai_via_sdk": "Call models ONLY through claritty_sdk.llm.get_llm_client — never a raw provider SDK or ANTHROPIC_API_KEY.",
+    "schema_via_migrations": "Change the DB schema with Alembic migrations (backend/alembic.ini), never ad-hoc create_all — so data is preserved.",
+    "keep_api_contract_in_sync": "frontend/src/lib/api.ts and backend/routes/app.py must agree (same paths, methods, response shapes).",
+    "multi_tenancy_required": "Every query holding user data MUST filter by the caller (X-User-ID header). There is no CLARITY_WORKSPACE_ID.",
+    "three_widget_sizes": "Apple HIG, three sizes only: Small 170×170, Medium 360×170, Large 360×360",
+    "design_system": "Use the semantic token SYSTEM (bg-card, text-accent, text-muted-foreground; never bare hex; no hover-scale; 44px touch targets, 12px min font) — but give THIS app its own look by overriding the brand VALUES in frontend/src/theme.css (token names stay, values are yours). Don't ship the seed's indigo defaults. See .claude/design-tokens.md + IDENTITY.md",
+    "performance_targets": "Small widget < 200ms, Large widget < 500ms"
+  }
+}

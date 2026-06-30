@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "_comment": "SINGLE SOURCE OF TRUTH for integrations. Read at runtime by the seed backend (backend/integrations) to drive routes + the Settings UI, and at plan time by clarity-api (SeedForkService.readSeedFile) to ground generation. Each entry describes WHAT credentials an app needs and HOW the user obtains each one (per-field howToObtain). authKind drives the connect flow: 'apikey'/'basic' = save-and-use; 'byo-oauth' = save client creds then run the user's own OAuth; 'webhook' = save a URL. status 'available' = curated/tested here; 'generated' = produced on demand by the reasoning flow for a not-yet-curated integration.",
+  "integrations": [
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "icon": "mail",
+      "authKind": "byo-oauth",
+      "provider": "google",
+      "status": "available",
+      "summary": "Read, organize, and act on the user's Gmail (triage, labels, archive/trash).",
+      "capabilities": ["gmail.read", "gmail.modify", "gmail.trash", "gmail.send"],
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/userinfo.email"
+      ],
+      "redirectPath": "/settings/integrations/gmail/callback",
+      "oauth": {
+        "authUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenUrl": "https://oauth2.googleapis.com/token",
+        "userinfoUrl": "https://www.googleapis.com/oauth2/v2/userinfo",
+        "accessType": "offline",
+        "prompt": "consent"
+      },
+      "credentialFields": [
+        {
+          "key": "client_id",
+          "label": "Client ID",
+          "secret": false,
+          "help": "Your Google OAuth 2.0 Web-application Client ID (ends in .apps.googleusercontent.com).",
+          "howToObtain": [
+            { "step": "Open the Google Cloud Console and create or select a project.", "url": "https://console.cloud.google.com/projectcreate" },
+            { "step": "Enable the Gmail API for that project.", "url": "https://console.cloud.google.com/apis/library/gmail.googleapis.com" },
+            { "step": "Configure the OAuth consent screen (User type: External) and add YOUR OWN email under 'Test users'.", "url": "https://console.cloud.google.com/apis/credentials/consent" },
+            { "step": "Go to Credentials → Create credentials → OAuth client ID → Application type: Web application.", "url": "https://console.cloud.google.com/apis/credentials" },
+            { "step": "Under 'Authorized redirect URIs', add the exact Redirect URI shown above this form, then click Create.", "detail": "It must match exactly, including https and no trailing slash." },
+            { "step": "Copy the 'Client ID' value and paste it here." }
+          ]
+        },
+        {
+          "key": "client_secret",
+          "label": "Client secret",
+          "secret": true,
+          "help": "The client secret created alongside the Client ID above.",
+          "howToObtain": [
+            { "step": "On the same OAuth client you just created, copy the 'Client secret' value." },
+            { "step": "Paste it here. You can retrieve it again anytime from the Credentials page.", "url": "https://console.cloud.google.com/apis/credentials" }
+          ]
+        }
+      ],
+      "setupGuide": [
+        { "step": "Create a Google Cloud project", "detail": "Console → New Project (or pick an existing one).", "url": "https://console.cloud.google.com/projectcreate" },
+        { "step": "Enable the Gmail API", "detail": "APIs & Services → Library → Gmail API → Enable.", "url": "https://console.cloud.google.com/apis/library/gmail.googleapis.com" },
+        { "step": "Set up the OAuth consent screen", "detail": "User type External; add your own email under Test users so you can connect before Google verification.", "url": "https://console.cloud.google.com/apis/credentials/consent" },
+        { "step": "Create an OAuth client (Web application)", "detail": "Credentials → Create credentials → OAuth client ID → Web application.", "url": "https://console.cloud.google.com/apis/credentials" },
+        { "step": "Add the redirect URI", "detail": "Paste the Redirect URI shown above into 'Authorized redirect URIs' — it must match exactly." },
+        { "step": "Paste Client ID + Client secret below, then click Connect", "detail": "You'll be sent to Google to grant access; tokens are stored encrypted and used by this app on your behalf." }
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "icon": "sparkles",
+      "authKind": "apikey",
+      "provider": "openai",
+      "status": "available",
+      "summary": "Use the user's own OpenAI account for model calls (chat, embeddings).",
+      "capabilities": ["openai.chat", "openai.embeddings"],
+      "credentialFields": [
+        {
+          "key": "api_key",
+          "label": "API key",
+          "secret": true,
+          "help": "An OpenAI API key (starts with 'sk-'). Billed to your own OpenAI account.",
+          "howToObtain": [
+            { "step": "Sign in to the OpenAI platform.", "url": "https://platform.openai.com/login" },
+            { "step": "Open the API keys page.", "url": "https://platform.openai.com/api-keys" },
+            { "step": "Click 'Create new secret key', give it a name, and create it." },
+            { "step": "Copy the key now (it's shown only once) and paste it here." }
+          ]
+        }
+      ],
+      "setupGuide": [
+        { "step": "Sign in to platform.openai.com", "url": "https://platform.openai.com/login" },
+        { "step": "Create a secret key", "detail": "API keys → Create new secret key.", "url": "https://platform.openai.com/api-keys" },
+        { "step": "Paste the key below and Save", "detail": "Stored encrypted; used for this app's model calls on your account." }
+      ]
+    }
+  ]
+}

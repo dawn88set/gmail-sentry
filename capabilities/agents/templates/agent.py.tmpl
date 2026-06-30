@@ -1,0 +1,47 @@
+# Scaffolded by the `agents` capability — a minimal, working Claritty SDK agent.
+# It asks the configured LLM and returns the reply. The user's per-agent context
+# (set in the platform) is auto-injected into the system prompt by the SDK, so
+# "tell it how to do its job" works with no extra code. Customize freely.
+
+import asyncio
+
+from claritty_sdk import agent, BaseAgent, AgentResult, AgentContext
+from claritty_sdk.llm import get_llm_client
+
+
+@agent(
+    id="assistant",
+    name="Assistant",
+    description="Answers a prompt using the app's configured LLM.",
+    category="productivity",
+    inputs={
+        "prompt": {
+            "type": "string",
+            "description": "What to ask the assistant",
+            "required": True,
+        },
+    },
+    outputs={
+        "reply": {"type": "string", "description": "The assistant's reply"},
+    },
+    timeout=60,
+)
+class AssistantAgent(BaseAgent):
+    async def execute(self, context: AgentContext) -> AgentResult:
+        prompt = context.get_input("prompt", "")
+        if not prompt:
+            return AgentResult(success=False, error="Missing required input: prompt")
+
+        context.log("info", "assistant: calling LLM")
+        try:
+            client = get_llm_client("claude-sonnet-4-6")
+            # chat() is sync (httpx) — run off the event loop. The SDK merges the
+            # user's per-agent context into the system prompt automatically.
+            result = await asyncio.to_thread(
+                client.chat,
+                [{"role": "user", "content": prompt}],
+                system="You are a helpful assistant for this app.",
+            )
+            return AgentResult(success=True, data={"reply": result.content})
+        except Exception as e:
+            return AgentResult(success=False, error=str(e))

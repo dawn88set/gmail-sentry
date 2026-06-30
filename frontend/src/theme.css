@@ -1,0 +1,13 @@
+/*
+ * Per-app theme overrides. The platform injects this file at generation time
+ * with a palette + typography chosen to fit the specific app's purpose. Empty
+ * in the seed so the neutral brand-token defaults in index.css apply.
+ *
+ * Example (what the generator writes):
+ *   :root {
+ *     --brand-accent: 268 84% 58%;
+ *     --brand-accent-600: 268 84% 48%;
+ *     --brand-primary: 240 6% 10%;
+ *     --brand-font: 'Inter', system-ui, sans-serif;
+ *   }
+ */

@@ -1,0 +1,585 @@
+{
+  "$defs": {
+    "AgentDecl": {
+      "additionalProperties": false,
+      "description": "An agent the app exposes. The SDK runs an Anthropic tool-use loop\nfor each invocation; the agent's effective toolset is the union of\nits declared standalone tools and the tools provided by its declared\nintegrations.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "default": "custom",
+          "enum": [
+            "catalog",
+            "custom"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "handler": {
+          "description": "Python class symbol, e.g. 'backend.agents.foo:Agent'. Must subclass BaseAgent.",
+          "title": "Handler",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "model": {
+          "default": "claude-sonnet-4-6",
+          "title": "Model",
+          "type": "string"
+        },
+        "integrations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Integrations",
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "timeout": {
+          "default": 60,
+          "maximum": 600,
+          "minimum": 1,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "budgetCents": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budgetcents"
+        }
+      },
+      "required": [
+        "id",
+        "handler"
+      ],
+      "title": "AgentDecl",
+      "type": "object"
+    },
+    "CatalogLockEntry": {
+      "additionalProperties": false,
+      "description": "One pinned catalog version + content hash. Mirrors the TS shape\nin automation.ts. Stored under AppManifest.catalog[].",
+      "properties": {
+        "kind": {
+          "enum": [
+            "integration",
+            "agent",
+            "tool",
+            "trigger",
+            "workflow"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "sha": {
+          "description": "Content hash of the catalog entry at composition time.",
+          "title": "Sha",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "version",
+        "sha"
+      ],
+      "title": "CatalogLockEntry",
+      "type": "object"
+    },
+    "IntegrationDecl": {
+      "additionalProperties": false,
+      "description": "An integration the app depends on. Catalog-only; custom\nintegrations are refused under the closed-library policy.\n\nTwo transports are supported by the catalog:\n\n- ``kind: \"native\"`` (default) \u2014 first-party catalog integration with\n  platform-owned OAuth. Tool handlers are Python templates rendered\n  from the catalog at build time.\n- ``kind: \"mcp\"`` \u2014 third-party MCP (Model Context Protocol) server.\n  Tool handlers are synthesized at boot from the server's\n  ``tools/list`` reply and proxy calls to its ``tools/call`` RPC.\n\nThe MCP transport-specific fields (``mcpUrl``, ``mcpCommand``) live\non the catalog manifest, not on this per-app declaration \u2014 the app\njust opts in by id.",
+      "properties": {
+        "id": {
+          "description": "Catalog id, e.g. 'gmail'.",
+          "title": "Id",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "IntegrationDecl",
+      "type": "object"
+    },
+    "ToolDecl": {
+      "additionalProperties": false,
+      "description": "A tool an agent (or a workflow step) may invoke.\n\nStandalone tools live in this section. Integration-provided tools\nare NOT listed here \u2014 they materialize from `integrations[]` at boot\nand are automatically scoped to agents that declare the integration.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "default": "custom",
+          "enum": [
+            "catalog",
+            "custom"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "handler": {
+          "description": "Python symbol the SDK binds to, e.g. 'backend.tools.save_digest:run'. Required for custom tools; catalog tools resolve through the SDK's catalog package.",
+          "title": "Handler",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "handler"
+      ],
+      "title": "ToolDecl",
+      "type": "object"
+    },
+    "TriggerConfigField": {
+      "additionalProperties": false,
+      "description": "Schema for one configField on a trigger recipe \u2014 these become\nuser-facing UI inputs when the user creates a TriggerInstance.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "text",
+            "textarea",
+            "number",
+            "boolean",
+            "select",
+            "email",
+            "url",
+            "time",
+            "timezone",
+            "json"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "default": {
+          "default": null,
+          "title": "Default"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        }
+      },
+      "required": [
+        "key",
+        "type"
+      ],
+      "title": "TriggerConfigField",
+      "type": "object"
+    },
+    "TriggerDecl": {
+      "additionalProperties": false,
+      "description": "A trigger the app exposes. Manifest-only \u2014 there is no Python\ndecorator counterpart in the new SDK. The platform reads this\nsection directly to populate the App.triggerRecipe panel.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "SCHEDULE",
+            "WEBHOOK"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "workflow": {
+          "description": "Workflow id this trigger fires.",
+          "title": "Workflow",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "supportedSchedules": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "DAILY",
+                  "WEEKLY",
+                  "MONTHLY",
+                  "INTERVAL",
+                  "ONE_TIME"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supportedschedules"
+        },
+        "maxInstancesPerUser": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxinstancesperuser"
+        },
+        "configFields": {
+          "items": {
+            "$ref": "#/$defs/TriggerConfigField"
+          },
+          "title": "Configfields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "workflow"
+      ],
+      "title": "TriggerDecl",
+      "type": "object"
+    },
+    "WorkflowDecl": {
+      "additionalProperties": false,
+      "description": "A declarative workflow. Steps are topologically sorted and run by\nthe SDK's WorkflowEngine. `${input.x}`, `${steps.id.output.y}`, and\n`${trigger.config.z}` expressions in step inputs are resolved at run\ntime against the active execution context.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": true,
+          "title": "Inputs",
+          "type": "object"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/WorkflowStep"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "outputs": {
+          "additionalProperties": true,
+          "title": "Outputs",
+          "type": "object"
+        },
+        "onError": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowOnError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "budgetCents": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budgetcents"
+        }
+      },
+      "required": [
+        "id",
+        "steps"
+      ],
+      "title": "WorkflowDecl",
+      "type": "object"
+    },
+    "WorkflowOnError": {
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "default": "fail",
+          "enum": [
+            "skip",
+            "fail",
+            "retry"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "maxAttempts": {
+          "default": 1,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Maxattempts",
+          "type": "integer"
+        }
+      },
+      "title": "WorkflowOnError",
+      "type": "object"
+    },
+    "WorkflowStep": {
+      "additionalProperties": false,
+      "description": "A single step in a workflow DAG. Exactly one of `agent` or `tool`\nmust be set; mixing or omitting both is rejected.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "onError": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowStepOnError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "WorkflowStep",
+      "type": "object"
+    },
+    "WorkflowStepOnError": {
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "default": "fail",
+          "enum": [
+            "skip",
+            "fail",
+            "retry"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "maxAttempts": {
+          "default": 1,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Maxattempts",
+          "type": "integer"
+        },
+        "fallbackStep": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fallbackstep"
+        }
+      },
+      "title": "WorkflowStepOnError",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical schema for the seed's intelligence.yaml. Generated from claritty_sdk.manifest.AppManifest via Pydantic; do not edit by hand.",
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "catalog": {
+      "items": {
+        "$ref": "#/$defs/CatalogLockEntry"
+      },
+      "title": "Catalog",
+      "type": "array"
+    },
+    "integrations": {
+      "items": {
+        "$ref": "#/$defs/IntegrationDecl"
+      },
+      "title": "Integrations",
+      "type": "array"
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/ToolDecl"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentDecl"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "workflows": {
+      "items": {
+        "$ref": "#/$defs/WorkflowDecl"
+      },
+      "title": "Workflows",
+      "type": "array"
+    },
+    "triggers": {
+      "items": {
+        "$ref": "#/$defs/TriggerDecl"
+      },
+      "title": "Triggers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "version"
+  ],
+  "title": "Claritty AppManifest",
+  "type": "object",
+  "$id": "https://claritty.dev/schema/intelligence.yaml/v1"
+}

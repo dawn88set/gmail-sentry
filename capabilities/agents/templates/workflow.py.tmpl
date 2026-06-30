@@ -1,0 +1,16 @@
+# Scaffolded by the `agents` capability — runs the assistant agent.
+# Chain more agents with additional @uses_agent(..., input_from=...) decorators.
+
+from claritty_sdk import workflow, uses_agent, WorkflowContext, ExecutionMode
+
+
+@workflow(
+    id="assistant-workflow",
+    name="Assistant Workflow",
+    description="Runs the assistant agent on the trigger / input data.",
+    execution_mode=ExecutionMode.SEQUENTIAL,
+)
+@uses_agent("assistant", output_key="result")
+async def assistant_workflow(context: WorkflowContext):
+    # Step results are available via context.get_step_result("result").
+    context.log("info", "assistant workflow complete")

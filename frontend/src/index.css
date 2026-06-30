@@ -1,0 +1,318 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Canonical Claritty palette (mirrors clarity-platform/src/app/globals.css).
+     Values are HSL channels for `hsl(var(--x) / <alpha-value>)`. */
+  :root {
+    --background: 0 0% 100%;          /* #FFFFFF */
+    --foreground: 222 47% 11%;        /* #1E293B */
+    --card: 0 0% 100%;                /* #FFFFFF */
+    --card-foreground: 222 47% 11%;   /* #1E293B */
+    --primary: 222 47% 11%;           /* #1E293B navy */
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96.1%;          /* shadcn slot (unused by brand accent) */
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;         /* #EF4444 */
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 227 100% 68%;
+    --radius: 0.5rem;
+
+    /* Brand tokens (HSL channels). Default = Claritty royal blue #2957FF; each
+       generated app may override these in src/theme.css for a unique look.
+       NOTE: the accent must stay dark enough that WHITE text on it AND the
+       accent ON white both clear WCAG AA (4.5:1) — the kit's primary Button is
+       white-on-accent, and active nav/links are accent-on-white. #5B7FFF (the
+       old default, L 68%) only reached 3.54:1 and failed the G5 rendered audit;
+       L≈58% gives ~5.4:1. Keep L ≲ 60% when re-theming. */
+    --brand-primary: 222 47% 11%;
+    --brand-accent: 227 100% 58%;     /* #2957FF — white-on-accent ≈ 5.4:1 (AA) */
+    --brand-accent-600: 230 88% 50%;  /* darker hover/active shade */
+    --brand-accent-foreground: 0 0% 100%; /* text/icon ON the accent fill (white in light mode) */
+    --brand-font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
+  }
+
+  .dark {
+    --background: 240 6% 6%;          /* #0F0F10 */
+    --foreground: 210 40% 98%;        /* #F8FAFC */
+    --card: 240 4% 10%;               /* #1A1A1C — distinct from bg for depth */
+    --card-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;           /* #3B82F6 */
+    --primary-foreground: 222 47% 11%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 240 4% 16%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;         /* #DC2626 */
+    --destructive-foreground: 210 40% 98%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 227 100% 68%;
+    /* Brand accent — LIGHTER in dark mode so it reads as text/links on the
+       near-black surface, with a DARK foreground on the accent fill. One accent
+       can't clear WCAG AA as text in both themes (dark-for-light-mode-buttons vs
+       light-for-dark-surfaces), so it flips per theme. Per-app theme.css ships
+       its own .dark block (see renderThemeCss) and overrides these. */
+    --brand-accent: 227 100% 68%;
+    --brand-accent-600: 227 100% 58%;
+    --brand-accent-foreground: 227 45% 12%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Widget host (the /widget route, embedded in an exact-size iframe):
+     no background, no margin/padding, and the widget casts no shadow — so
+     nothing is clipped or offset by the iframe edge. Added by WidgetPage. */
+  body.widget-host {
+    background: transparent;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  body.widget-host [data-widget-size] {
+    box-shadow: none !important;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-tight;
+    letter-spacing: -0.02em; /* Tighter tracking for Apple style */
+  }
+}
+
+@layer components {
+  /* Buttons - Apple Style (Minimal, Bold) */
+  .btn-primary {
+    @apply bg-primary text-white font-medium px-8 py-3.5 sm:px-10 sm:py-4 lg:px-12 lg:py-4 rounded-full transition-all touch-manipulation;
+    @apply hover:bg-primary-800 hover:shadow-lg active:scale-[0.98];
+    font-size: clamp(16px, 2vw, 18px);
+    letter-spacing: -0.01em;
+    min-height: 44px;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent text-primary font-medium px-8 py-3.5 sm:px-10 sm:py-4 lg:px-12 lg:py-4 rounded-full border-2 border-gray-300 transition-all touch-manipulation;
+    @apply hover:bg-gray-50 hover:border-gray-400 active:scale-[0.98];
+    font-size: clamp(16px, 2vw, 18px);
+    letter-spacing: -0.01em;
+    min-height: 44px;
+  }
+
+  .btn-accent {
+    @apply bg-accent text-white font-medium px-8 py-3.5 sm:px-10 sm:py-4 lg:px-12 lg:py-4 rounded-full transition-all touch-manipulation;
+    @apply hover:bg-accent-600 hover:shadow-lg active:scale-[0.98];
+    font-size: clamp(16px, 2vw, 18px);
+    letter-spacing: -0.01em;
+    min-height: 44px;
+  }
+
+  /* Apple-style Text Highlight */
+  .text-gradient {
+    @apply text-accent font-bold;
+  }
+
+  .text-gradient-blue {
+    @apply text-accent font-bold;
+  }
+
+  /* Section Containers - Apple Generous Spacing */
+  .section-container {
+    @apply max-w-6xl mx-auto px-5 py-12 sm:px-6 sm:py-20 md:px-8 md:py-24 lg:px-12 lg:py-32 xl:py-36;
+  }
+
+  .section-narrow {
+    @apply max-w-4xl mx-auto px-5 py-10 sm:px-6 sm:py-14 md:px-8 md:py-20 lg:px-12 lg:py-24 xl:py-28;
+  }
+
+  /* Hero Section */
+  .hero-section {
+    @apply relative overflow-hidden bg-white min-h-[calc(100vh-4rem)] sm:min-h-[calc(100vh-4rem)] lg:min-h-screen flex items-center justify-center py-16 sm:py-20 lg:py-0;
+  }
+
+  /* Subtle gradient background */
+  .bg-subtle-gradient {
+    background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+  }
+
+  /* Clean divider */
+  .section-divider {
+    @apply border-t border-gray-200 my-16 sm:my-24;
+  }
+
+  /* Card - Modern elevated design */
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-gray-100 transition-all;
+  }
+
+  /* Input - Apple Style */
+  .input {
+    @apply w-full px-5 py-4 border border-gray-300 rounded-xl;
+    @apply focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all;
+    @apply bg-white;
+    font-size: 17px;
+  }
+
+  .textarea {
+    @apply w-full px-5 py-4 border border-gray-300 rounded-xl resize-none;
+    @apply focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all;
+    @apply bg-white;
+    font-size: 17px;
+  }
+
+  /* Apple-style Headlines - Responsive */
+  .headline-hero {
+    font-size: clamp(40px, 7vw, 96px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+  }
+
+  .headline-section {
+    font-size: clamp(32px, 5vw, 72px);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+
+  .body-large {
+    font-size: clamp(17px, 1.8vw, 24px);
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    font-weight: 400;
+  }
+
+  .subheadline {
+    font-size: clamp(20px, 2.5vw, 32px);
+    line-height: 1.35;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+  }
+}
+
+@layer utilities {
+  /* Animated dataflow along the agent-graph connector lines. */
+  .agent-graph-flow {
+    animation: agentGraphFlow 1.2s linear infinite;
+  }
+  @keyframes agentGraphFlow {
+    to {
+      stroke-dashoffset: -11; /* one dash+gap cycle (5 + 6) */
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .agent-graph-flow {
+      animation: none;
+    }
+  }
+
+  /* Smooth scroll */
+  .scroll-smooth {
+    scroll-behavior: smooth;
+  }
+
+  /* Gradient backgrounds */
+  .bg-gradient-mixed {
+    @apply bg-gradient-to-br from-accent to-purple;
+  }
+
+  .bg-gradient-logo {
+    @apply bg-gradient-to-br from-teal via-accent to-pink;
+  }
+
+  .bg-gradient-warm {
+    @apply bg-gradient-to-br from-orange to-yellow;
+  }
+
+  .bg-gradient-cool {
+    @apply bg-gradient-to-br from-teal to-accent;
+  }
+
+  .bg-gradient-vibrant {
+    @apply bg-gradient-to-br from-pink via-purple to-accent;
+  }
+
+  /* Text shadows */
+  .text-shadow {
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Backdrop blur */
+  .backdrop-blur-xs {
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+
+  /* Mobile-specific utilities */
+  @media (max-width: 920px) {
+    .section-container {
+      @apply px-4 py-10;
+    }
+
+    .section-narrow {
+      @apply px-4 py-8;
+    }
+
+    .card {
+      @apply p-5;
+    }
+
+    /* Touch-target floor for the APP only. Scoped to `body:not(.widget-host)` so
+     * it does NOT leak into the widget iframe (rendered under `body.widget-host`):
+     * a bare `a, button` rule here would inflate fixed-size widget controls to
+     * 44px and break the Apple-HIG fixed frame. (See CLAUDE.md → global CSS leaks.) */
+    body:not(.widget-host) a,
+    body:not(.widget-host) button {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+
+  /* Desktop hover effects */
+  @media (min-width: 1025px) {
+    .hover-lift {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .hover-lift:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 60px -15px rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  /* Smooth scroll behavior */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Reduce motion for accessibility */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

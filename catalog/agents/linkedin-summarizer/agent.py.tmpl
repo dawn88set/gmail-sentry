@@ -1,0 +1,29 @@
+# Catalog agent: linkedin-summarizer.
+#
+# Manifest-first SDK v2: the agent class is just a binder + a
+# system_prompt + optional before/after hooks. The Anthropic-style
+# tool-use loop is driven by claritty_sdk.runtime.tool_loop; this class
+# does NOT implement execute() — that was the v1 contract.
+
+from claritty_sdk import agent, BaseAgent, AgentContext
+
+
+# The materializer renders the SYSTEM_PROMPT below from prompt.md so
+# the prompt is editable as Markdown without touching Python.
+SYSTEM_PROMPT = """You are a LinkedIn feed summarizer.
+
+Steps you take on every invocation:
+1. Call linkedin.fetch_posts to read the user's feed. Pass `limit` from
+   your input (default 20).
+2. Call llm.summarize with the post texts as `items` and style=bullet.
+3. Call __finish with {summary, post_count} matching the agent's output
+   schema.
+
+Never invent facts; if linkedin.fetch_posts returns an error, finish
+with summary="(LinkedIn not connected)" and post_count=0.
+"""
+
+
+@agent(id="linkedin-summarizer")
+class LinkedInSummarizerAgent(BaseAgent):
+    system_prompt = SYSTEM_PROMPT

@@ -1,0 +1,23 @@
+{
+  "id": "data-model",
+  "name": "Data Model",
+  "description": "Declarative entity definitions generate SQLAlchemy models, FastAPI CRUD routes, and TypeScript types in the forked app. Composition-time only — no LLM authors per-entity code.",
+  "version": "0.1.0",
+  "dependsOn": [],
+  "requires": {
+    "entities": "one-or-more"
+  },
+  "configSchema": [],
+  "wireUp": "wire-up.json",
+  "intentHints": [
+    "track",
+    "store",
+    "save",
+    "record",
+    "list",
+    "manage",
+    "catalog",
+    "log",
+    "CRUD"
+  ]
+}

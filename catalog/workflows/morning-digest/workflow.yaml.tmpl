@@ -1,0 +1,17 @@
+# Workflow template: morning-digest.
+#
+# The materializer renders this block into the app's intelligence.yaml#workflows
+# section with `${user_id}` substituted from the goal's primary actor.
+
+id: morning-digest
+inputs:
+  user_id: { type: string, required: true }
+steps:
+  - id: summarize
+    agent: linkedin-summarizer
+    input:
+      user_id: "${input.user_id}"
+      limit: 20
+outputs:
+  summary: "${steps.summarize.output.summary}"
+  post_count: "${steps.summarize.output.post_count}"

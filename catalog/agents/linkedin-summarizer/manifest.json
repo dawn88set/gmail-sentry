@@ -1,0 +1,24 @@
+{
+  "id": "linkedin-summarizer",
+  "kind": "agent",
+  "version": "0.1.0",
+  "description": "Fetch the user's LinkedIn feed, summarize it, and return the digest.",
+  "intentHints": [
+    "summarize linkedin feed",
+    "daily linkedin digest",
+    "what happened on linkedin today"
+  ],
+  "model": "claude-sonnet-4-6",
+  "input": {
+    "user_id": { "type": "string", "required": false },
+    "limit": { "type": "integer", "required": false, "default": 20 }
+  },
+  "output": {
+    "summary": { "type": "string", "required": true },
+    "post_count": { "type": "integer", "required": true }
+  },
+  "defaultTools": ["llm.summarize"],
+  "defaultIntegrations": ["linkedin"],
+  "handler": "claritty_catalog_agents.linkedin_summarizer:LinkedInSummarizerAgent",
+  "promptFile": "prompt.md"
+}

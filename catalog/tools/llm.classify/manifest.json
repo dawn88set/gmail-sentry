@@ -1,0 +1,24 @@
+{
+  "id": "llm.classify",
+  "kind": "tool",
+  "version": "1.0.0",
+  "description": "Classify a piece of text into exactly one of the provided labels using the LLM proxy. The chosen label is snapped to one of the options so workflow branching is safe.",
+  "intentHints": [
+    "categorize this message",
+    "triage by type",
+    "label as urgent or not",
+    "route to the right bucket",
+    "detect sentiment"
+  ],
+  "input": {
+    "text": { "type": "string", "required": true },
+    "labels": { "type": "array", "required": true },
+    "instructions": { "type": "string", "required": false }
+  },
+  "output": {
+    "label": { "type": "string", "required": true },
+    "confidence": { "type": "number", "required": false },
+    "reason": { "type": "string", "required": false }
+  },
+  "handler": "claritty_catalog_tools.llm_classify:run"
+}

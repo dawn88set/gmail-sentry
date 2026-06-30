@@ -1,0 +1,61 @@
+# Catalog tool: llm.extract — pulls structured fields out of free text
+# via the LLM proxy and returns them as a JSON object. The materializer
+# copies this file into generated apps under backend/catalog_tools/llm_extract.py.
+
+import json
+from typing import Any, Dict, List
+
+from claritty_sdk import tool, ToolCtx
+from claritty_sdk.llm import get_llm_client
+
+
+def _json_slice(s: str) -> str:
+    start, end = s.find("{"), s.rfind("}")
+    return s[start : end + 1] if start != -1 and end != -1 else s
+
+
+def _field_lines(fields: List[Any]) -> str:
+    lines = []
+    for f in fields:
+        if isinstance(f, dict):
+            name = str(f.get("name") or f.get("key") or "")
+            desc = str(f.get("description") or f.get("desc") or "")
+            lines.append(f"- {name}" + (f": {desc}" if desc else ""))
+        else:
+            lines.append(f"- {str(f)}")
+    return "\n".join(lines)
+
+
+@tool(id="llm.extract")
+def run(input: Dict[str, Any], ctx: ToolCtx) -> Dict[str, Any]:
+    text: str = str(input.get("text") or "")
+    fields: List[Any] = input.get("fields") or []
+
+    if not text or not fields:
+        return {"data": {}}
+
+    client = get_llm_client("claude-sonnet-4-6")
+    res = client.chat(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "Extract the following fields from the text. Use null when a "
+                    "field is not present — never invent values.\n\n"
+                    f"Fields:\n{_field_lines(fields)}\n\n"
+                    "Respond with ONLY a JSON object whose keys are the field "
+                    "names.\n\nText:\n" + text
+                ),
+            }
+        ]
+    )
+
+    raw = (res.content or "").strip()
+    try:
+        data = json.loads(_json_slice(raw))
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+
+    return {"data": data}

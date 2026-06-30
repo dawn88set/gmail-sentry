@@ -1,0 +1,75 @@
+# Claritty seed app — v2 manifest.
+#
+# This file is the SINGLE source of truth for the four runtime
+# primitives the SDK reads at boot: integrations, tools, agents,
+# workflows, triggers. Decorators in backend/{agents,tools}/ bind a
+# Python symbol to an entry by id; they do not carry data this
+# manifest doesn't already declare.
+#
+# The catalog/ tree next to this file is the closed library the
+# generator composes from. The `catalog:` block below pins the
+# specific catalog versions this app was generated against — bumping
+# requires regeneration.
+
+schemaVersion: 1
+id: claritty-seed-example
+version: 2.0.0
+
+catalog: []
+
+integrations: []
+
+tools:
+  - id: app.echo
+    handler: backend.tools.example_tool:echo
+    input:
+      message: { type: string, required: true }
+    output:
+      reply: { type: string, required: true }
+
+agents:
+  - id: example-agent
+    source: custom
+    handler: backend.agents.example_agent:ExampleAgent
+    description: |
+      Echoes a greeting back to the caller, demonstrating the v2
+      manifest-first runtime: the SDK reads input/output/tools from
+      this manifest entry; the agent class only carries the system
+      prompt and any before/after hooks.
+    model: claude-sonnet-4-6
+    # Reasoning tier: standard | deep | light. A trivial echo is "standard"; an
+    # agent that synthesises multi-source data into the app's valuable output
+    # should be "deep" (→ a strong model + extended thinking + a grounded,
+    # self-critiquing prompt). See .claude/prompts/implement-agent.md.
+    reasoning: standard
+    integrations: []
+    tools: [app.echo]
+    input:
+      name: { type: string, required: true }
+    output:
+      greeting: { type: string, required: true }
+    timeout: 30
+
+workflows:
+  - id: example-workflow
+    inputs:
+      name: { type: string, required: true }
+    steps:
+      - id: greet
+        agent: example-agent
+        input:
+          name: "${input.name}"
+    outputs:
+      greeting: "${steps.greet.output.greeting}"
+
+triggers:
+  - id: example_manual
+    type: SCHEDULE
+    workflow: example-workflow
+    name: Daily greeting
+    description: Demo trigger — fires the example workflow on a schedule.
+    supportedSchedules: [DAILY]
+    maxInstancesPerUser: 1
+    configFields:
+      - { key: time, type: time, required: true, default: "09:00" }
+      - { key: timezone, type: timezone, required: true }

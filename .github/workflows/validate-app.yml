@@ -1,0 +1,410 @@
+name: Validate Clarity App
+
+on:
+  repository_dispatch:
+    types: [claritty-validate]
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate Requirements
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch || github.ref }}
+
+      - name: Check app identity (not still the template)
+        run: |
+          # Fails while the app still looks like the seed (empty theme.css,
+          # template Dashboard, default appName, Claritty logo, example agents).
+          # No-op on the untouched seed (.claritty-seed-pristine present).
+          node scripts/check-not-template.mjs
+
+      - name: Check app coherence (complete + user-scoped)
+        run: |
+          # Fails while the app is incomplete: no Definition of Done, missing
+          # discovery brief, or a domain model without a user_id (tenancy leak).
+          # No-op on the untouched seed (.claritty-seed-pristine present).
+          node scripts/check-coherence.mjs
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+          # No API keys needed — AI runs via the platform proxy (heuristic fallback in CI)
+
+      - name: Start services
+        run: |
+          docker compose up -d
+          # Wait for services to be ready
+          sleep 30
+
+      - name: Wait for backend health check
+        run: |
+          echo "Waiting for backend to be healthy..."
+          for i in {1..30}; do
+            if curl -f http://localhost:3200/health; then
+              echo "Backend is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i/30 failed, waiting 2s..."
+            sleep 2
+          done
+          echo "Backend health check failed after 60 seconds"
+          docker compose logs app
+          exit 1
+
+      - name: Run validation script
+        run: |
+          python scripts/validate-app.py
+        env:
+          BACKEND_URL: http://localhost:3200
+
+      - name: Check logs for errors
+        if: failure()
+        run: |
+          echo "=== App Logs (nginx + FastAPI) ==="
+          docker compose logs app
+          echo "=== Database Logs ==="
+          docker compose logs postgres
+
+      - name: Stop services
+        if: always()
+        run: |
+          docker compose down -v
+
+  lint-backend:
+    name: Lint Backend Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install flake8 black
+
+      - name: Lint with flake8
+        run: |
+          cd backend
+          # Stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        continue-on-error: true
+
+      - name: Check formatting with black
+        run: |
+          cd backend
+          black --check --diff .
+        continue-on-error: true
+
+  lint-frontend:
+    name: Lint Frontend Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Lint with ESLint
+        run: |
+          cd frontend
+          npm run lint
+        continue-on-error: true
+
+      - name: Type check with TypeScript
+        run: |
+          cd frontend
+          npm run type-check
+        continue-on-error: true
+
+      # G5 — rendered design audit. Boots the app (Playwright webServer) and
+      # checks the live DOM/CSS: WCAG AA contrast, ≥32px tap targets, no
+      # horizontal overflow. HARD findings (invisible text, untappable controls,
+      # mobile overflow) fail the build; accent-text dips + spacing are advisory.
+      - name: Design audit (rendered)
+        run: |
+          cd frontend
+          npx playwright install --with-deps chromium
+          npm run check:design
+
+      # G6 — rubric scorecard over the page corpus. Fails only on a hard-zero
+      # criterion; the JSON report is uploaded so kit/template changes can be
+      # tracked against the versioned DESIGN_RUBRIC over time.
+      - name: Design golden-set scorecard
+        run: |
+          cd frontend
+          npm run check:design:score
+
+      - name: Upload design scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-score
+          path: frontend/test-results/design-score.json
+          if-no-files-found: ignore
+
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+
+      - name: Start services
+        run: |
+          docker compose up -d
+          sleep 20
+
+      - name: Run backend tests
+        run: |
+          docker compose exec -T app sh -c "pip install -q pytest && python -m pytest -v"
+        continue-on-error: true
+
+      - name: Stop services
+        if: always()
+        run: |
+          docker compose down -v
+
+  build-check:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+
+      - name: Build app image
+        run: |
+          docker compose build app
+
+      - name: Build summary
+        run: |
+          echo "✅ All Docker images built successfully"
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.branch || github.ref }}
+
+      - name: Security scan - Detect hardcoded secrets
+        run: |
+          echo "============================================"
+          echo "🔒 SECURITY SCANNING"
+          echo "============================================"
+          echo "Scanning for hardcoded secrets..."
+
+          secrets_found=false
+
+          # Check backend (Python)
+          if grep -r -E "(password|secret|api_key|apikey|token|private_key|access_key)[\s]*=[\s]*['\"][^'\"]{10,}['\"]" backend/ \
+            --exclude-dir=__pycache__ \
+            --exclude="*.pyc" \
+            --exclude=".env.example" 2>/dev/null; then
+            echo "❌ Found hardcoded secrets in backend!"
+            secrets_found=true
+          fi
+
+          # Check frontend (JavaScript/TypeScript)
+          if grep -r -E "(password|secret|api_key|apikey|token|private_key)[\s]*=[\s]*['\"][^'\"]{10,}['\"]" frontend/src/ \
+            --exclude-dir=node_modules \
+            --exclude-dir=dist 2>/dev/null; then
+            echo "❌ Found hardcoded secrets in frontend!"
+            secrets_found=true
+          fi
+
+          # Check for committed .env files
+          if [ -f ".env" ]; then
+            echo "⚠️  WARNING: .env file found (should be in .gitignore)"
+            if grep -E "(API_KEY|SECRET|TOKEN|PASSWORD)" .env 2>/dev/null; then
+              echo "❌ .env contains sensitive data!"
+              secrets_found=true
+            fi
+          fi
+
+          if [ "$secrets_found" = true ]; then
+            echo "❌ SECURITY FAILURE: Hardcoded secrets detected"
+            exit 1
+          fi
+
+          echo "✅ No hardcoded secrets detected"
+
+      - name: Security scan - Detect malicious patterns
+        run: |
+          echo ""
+          echo "Scanning for dangerous code patterns..."
+
+          # Python backend patterns
+          echo "Checking Python backend..."
+          if grep -r -E "eval\(|exec\(|__import__\(|compile\(" backend/ \
+            --include="*.py" \
+            --exclude-dir=__pycache__ 2>/dev/null; then
+            echo "⚠️  WARNING: Dangerous Python patterns found (eval, exec, etc.)"
+          fi
+
+          if grep -r -E "subprocess\.call|os\.system|os\.popen" backend/ \
+            --include="*.py" \
+            --exclude-dir=__pycache__ 2>/dev/null; then
+            echo "⚠️  WARNING: System command execution found in backend"
+          fi
+
+          # JavaScript frontend patterns
+          echo "Checking JavaScript frontend..."
+          if grep -r -E "eval\(|new Function\(|dangerouslySetInnerHTML" frontend/src/ \
+            --include="*.js" \
+            --include="*.jsx" \
+            --include="*.ts" \
+            --include="*.tsx" 2>/dev/null; then
+            echo "⚠️  WARNING: Dangerous JavaScript patterns found"
+          fi
+
+          echo "✅ Security pattern scan complete"
+
+      - name: Dependency security audit
+        run: |
+          echo ""
+          echo "Running dependency security audits..."
+
+          # Python dependencies
+          echo "Auditing Python dependencies..."
+          cd backend
+          if [ -f requirements.txt ]; then
+            pip install pip-audit 2>/dev/null || echo "pip-audit not available"
+            pip-audit --requirement requirements.txt 2>/dev/null || echo "⚠️  Python audit check complete"
+          fi
+          cd ..
+
+          # JavaScript dependencies
+          echo "Auditing JavaScript dependencies..."
+          cd frontend
+          npm audit --audit-level=high || echo "⚠️  Frontend vulnerabilities found"
+          cd ..
+
+          echo "✅ Dependency audit complete"
+
+  summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [validate, lint-backend, lint-frontend, test-backend, build-check, security-scan]
+    if: always()
+
+    steps:
+      - name: Check validation results
+        run: |
+          echo "============================================"
+          echo "📊 VALIDATION SUMMARY"
+          echo "============================================"
+          echo "Validate:        ${{ needs.validate.result }}"
+          echo "Lint Backend:    ${{ needs.lint-backend.result }}"
+          echo "Lint Frontend:   ${{ needs.lint-frontend.result }}"
+          echo "Test Backend:    ${{ needs.test-backend.result }}"
+          echo "Build Check:     ${{ needs.build-check.result }}"
+          echo "Security Scan:   ${{ needs.security-scan.result }}"
+          echo "============================================"
+
+          if [ "${{ needs.validate.result }}" != "success" ]; then
+            echo "❌ Critical validation failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.security-scan.result }}" != "success" ]; then
+            echo "❌ Security scan failed"
+            exit 1
+          fi
+
+          echo "✅ All critical checks passed!"
+          echo "============================================"
+
+      - name: Report validation results to Claritty
+        if: ${{ github.event_name == 'repository_dispatch' && always() }}
+        run: |
+          STATUS="success"
+          if [ "${{ needs.validate.result }}" != "success" ] || [ "${{ needs.security-scan.result }}" != "success" ]; then
+            STATUS="failure"
+          fi
+
+          # Only report if callback URL is provided (triggered by Claritty)
+          if [ -n "${{ github.event.client_payload.callback_url }}" ]; then
+            echo "Reporting validation results to Claritty..."
+            curl -X POST "${{ github.event.client_payload.callback_url }}" \
+              -H "Content-Type: application/json" \
+              -H "X-Claritty-Secret: ${{ github.event.client_payload.secret }}" \
+              -d "{
+                \"validation_id\": \"${{ github.event.client_payload.validation_id }}\",
+                \"submission_id\": \"${{ github.event.client_payload.submission_id }}\",
+                \"status\": \"$STATUS\",
+                \"run_id\": \"${{ github.run_id }}\",
+                \"run_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
+                \"check_run_id\": ${{ github.event.client_payload.check_run_id || 0 }}
+              }"
+            echo "✅ Validation results reported to Claritty"
+          fi

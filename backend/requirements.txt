@@ -1,0 +1,55 @@
+# Clarity Backend Requirements
+
+# Web Framework
+fastapi==0.109.0
+# pydantic is pulled in transitively by fastapi, but backend/config.py imports
+# it DIRECTLY (BaseModel/Field/validator) — pin it explicitly so the build's
+# missing-dependency gate passes and a direct import never relies on a
+# transitive version.
+pydantic>=2.0,<3.0
+uvicorn[standard]==0.27.0
+# Pin websockets to a range uvicorn 0.27 supports — unpinned it resolves to a
+# 14+/16 release whose API uvicorn 0.27 can't use, logging "No supported
+# WebSocket library detected" on every upgrade request.
+websockets>=10.4,<12
+# Bumped 0.0.9 → 0.0.32 to clear CVE chain (DoS via malformed multipart, etc.).
+# fastapi pulls it for form parsing; the seed declares no form/upload endpoints,
+# so this is purely the patched floor — no API surface the bump can break.
+python-multipart==0.0.32
+
+# Clarity SDK (from PyPI)
+# For local development: pip install -e /path/to/claritty-sdk
+# Floor pinned to 2.0.0: the v2 manifest-first runtime + the agent fallback(ctx)
+# offline-degradation hook ship in 2.0.0. (>=1.0.2 first shipped the two-t
+# `claritty_sdk` module; <2.0.0 predates the v2 runtime this seed depends on.)
+claritty-sdk>=2.0.0,<3.0.0
+
+# Encryption — backend/integrations/crypto.py imports Fernet DIRECTLY for
+# at-rest encryption of integration credentials. Not a transitive dep of
+# anything pinned above, so without this line uvicorn crashes at boot with
+# `ModuleNotFoundError: No module named 'cryptography'` and every /api/* 502s.
+cryptography>=42.0,<46.0
+
+# Database
+sqlalchemy==2.0.25
+# 2.9.10 has macOS-ARM64 + manylinux-aarch64 wheels (2.9.9 had none → clang
+# source build failed on dev machines). Keep in sync with clarity-api SEED_REQUIREMENTS.
+psycopg2-binary==2.9.10
+alembic==1.13.1
+
+# AI — the agent runtime is claritty_sdk's tool-use loop (Anthropic Messages),
+# NOT LangChain. langchain + langchain-anthropic were unused (zero imports in
+# backend/) and carried a string of CVEs, so they were removed. `anthropic`
+# stays: validate_startup.py imports it as a boot sanity check.
+anthropic==0.18.1
+
+# Scheduling
+apscheduler==3.10.4
+pytz==2024.1
+
+# HTTP Client
+httpx==0.26.0
+
+# Utilities
+# 1.0.1 → 1.2.2 clears a CVE; load_dotenv() API is unchanged across the bump.
+python-dotenv==1.2.2

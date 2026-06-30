@@ -1,0 +1,38 @@
+# Catalog tool: llm.draft — drafts a short message from context in a
+# given tone via the LLM proxy. Returns text only; the workflow should
+# route the draft through a human-approval step before sending. The
+# materializer copies this file into generated apps under
+# backend/catalog_tools/llm_draft.py.
+
+from typing import Any, Dict
+
+from claritty_sdk import tool, ToolCtx
+from claritty_sdk.llm import get_llm_client
+
+
+@tool(id="llm.draft")
+def run(input: Dict[str, Any], ctx: ToolCtx) -> Dict[str, Any]:
+    purpose: str = str(input.get("purpose") or "")
+    context: str = str(input.get("context") or "")
+    tone: str = str(input.get("tone") or "professional and concise")
+    max_length: int = int(input.get("max_length") or 800)
+
+    if not purpose and not context:
+        return {"draft": ""}
+
+    client = get_llm_client("claude-sonnet-4-6")
+    res = client.chat(
+        [
+            {
+                "role": "user",
+                "content": (
+                    f"Write a draft for this purpose: {purpose}.\n"
+                    f"Tone: {tone}. Stay under ~{max_length} characters. "
+                    "Do not invent facts not present in the context. "
+                    "Return ONLY the draft text — no preamble, no quotes.\n\n"
+                    f"Context:\n{context}"
+                ),
+            }
+        ]
+    )
+    return {"draft": (res.content or "").strip()}

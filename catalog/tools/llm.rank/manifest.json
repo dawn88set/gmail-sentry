@@ -1,0 +1,21 @@
+{
+  "id": "llm.rank",
+  "kind": "tool",
+  "version": "1.0.0",
+  "description": "Rank/prioritize a list of items against a stated criterion using the LLM proxy. Returns the items ordered most-important first, each with a score and a one-line reason.",
+  "intentHints": [
+    "prioritize my tasks",
+    "what should I do first",
+    "rank these leads by value",
+    "surface the most urgent items"
+  ],
+  "input": {
+    "items": { "type": "array", "required": true },
+    "criterion": { "type": "string", "required": true },
+    "top_k": { "type": "integer", "required": false, "default": 5 }
+  },
+  "output": {
+    "ranked": { "type": "array", "required": true }
+  },
+  "handler": "claritty_catalog_tools.llm_rank:run"
+}

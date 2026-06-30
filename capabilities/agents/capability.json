@@ -1,0 +1,24 @@
+{
+  "id": "agents",
+  "name": "Agents",
+  "description": "Scaffolds a Claritty SDK agent + workflow + trigger (decorated with @agent / @workflow / @trigger_template) under backend/. The closed-library building block for agentic apps — composition-time only, no LLM authors the agent code. Apps customize the scaffold; goal-specific agent composition builds on this once the planner emits agent specs.",
+  "version": "0.1.0",
+  "dependsOn": [],
+  "requires": {
+    "entities": "optional"
+  },
+  "configSchema": [],
+  "wireUp": "wire-up.json",
+  "intentHints": [
+    "agent",
+    "assistant",
+    "automate",
+    "analyze",
+    "summarize",
+    "classify",
+    "workflow",
+    "schedule",
+    "trigger",
+    "ai"
+  ]
+}

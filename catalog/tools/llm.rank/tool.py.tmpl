@@ -1,0 +1,72 @@
+# Catalog tool: llm.rank — orders a list of items by a stated criterion
+# via the LLM proxy (most important first). The materializer copies this
+# file into generated apps under backend/catalog_tools/llm_rank.py.
+
+import json
+from typing import Any, Dict, List
+
+from claritty_sdk import tool, ToolCtx
+from claritty_sdk.llm import get_llm_client
+
+
+def _json_slice(s: str) -> str:
+    start, end = s.find("["), s.rfind("]")
+    return s[start : end + 1] if start != -1 and end != -1 else s
+
+
+@tool(id="llm.rank")
+def run(input: Dict[str, Any], ctx: ToolCtx) -> Dict[str, Any]:
+    items: List[Any] = input.get("items") or []
+    criterion: str = str(input.get("criterion") or "importance")
+    top_k: int = int(input.get("top_k") or 5)
+
+    if not items:
+        return {"ranked": []}
+
+    # Index the items so the model can reference them without re-quoting.
+    listing = "\n".join(f"[{i}] {str(item)}" for i, item in enumerate(items))
+
+    client = get_llm_client("claude-sonnet-4-6")
+    res = client.chat(
+        [
+            {
+                "role": "user",
+                "content": (
+                    f"Rank the items below by this criterion: {criterion}. "
+                    f"Return the TOP {top_k} most important, most important first.\n"
+                    "Respond with ONLY a JSON array of objects: "
+                    '[{"index": <int>, "score": <0..1>, "reason": <short>}].\n\n'
+                    f"Items:\n{listing}"
+                ),
+            }
+        ]
+    )
+
+    raw = (res.content or "").strip()
+    try:
+        rows = json.loads(_json_slice(raw))
+        if not isinstance(rows, list):
+            rows = []
+    except Exception:
+        rows = []
+
+    ranked: List[Dict[str, Any]] = []
+    for row in rows[:top_k]:
+        try:
+            idx = int(row.get("index"))
+        except Exception:
+            continue
+        if 0 <= idx < len(items):
+            ranked.append(
+                {
+                    "item": items[idx],
+                    "score": row.get("score"),
+                    "reason": row.get("reason"),
+                }
+            )
+
+    # Fallback: if parsing failed, return the original order untouched.
+    if not ranked:
+        ranked = [{"item": it, "score": None, "reason": None} for it in items[:top_k]]
+
+    return {"ranked": ranked}

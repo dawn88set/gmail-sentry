@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "agent:example-agent",
+      "type": "agent",
+      "name": "Prioritize Task",
+      "data": {
+        "agentId": "example-agent",
+        "category": "productivity",
+        "description": "Triages a task: assigns a priority and a suggested next action.",
+        "inputs": {
+          "task_title": {
+            "type": "string",
+            "description": "The task title",
+            "required": true
+          },
+          "task_description": {
+            "type": "string",
+            "description": "Optional notes",
+            "required": false
+          }
+        },
+        "outputs": {
+          "priority": {
+            "type": "string",
+            "description": "low | medium | high | urgent"
+          },
+          "suggested_action": {
+            "type": "string",
+            "description": "One short next step"
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger:example-trigger",
+      "type": "trigger",
+      "name": "Daily Task Run",
+      "data": {
+        "triggerId": "example-trigger",
+        "templateType": "schedule_daily",
+        "workflowId": "example-workflow",
+        "category": "productivity"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "trigger:example-trigger->agent:example-agent",
+      "source": "trigger:example-trigger",
+      "target": "agent:example-agent",
+      "data": {
+        "workflowId": "example-workflow",
+        "trigger": true
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "id": "example-workflow",
+      "name": "Capture & Triage a Task",
+      "executionMode": "sequential",
+      "steps": [
+        {
+          "agentId": "example-agent",
+          "outputKey": "triage",
+          "inputFrom": null
+        }
+      ]
+    }
+  ],
+  "source": "runtime"
+}

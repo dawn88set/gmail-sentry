@@ -1,0 +1,30 @@
+# Catalog agent: triage-agent.
+#
+# Manifest-first SDK v2: the agent class is a binder + a system_prompt.
+# The Anthropic-style tool-use loop is driven by
+# claritty_sdk.runtime.tool_loop; this class does NOT implement execute().
+
+from claritty_sdk import agent, BaseAgent
+
+
+# The materializer renders SYSTEM_PROMPT from prompt.md so it stays
+# editable as Markdown without touching Python.
+SYSTEM_PROMPT = """You triage a list of items so the user sees what matters first.
+
+Steps you take on every invocation:
+1. For each item in `items`, call llm.classify with the item text and the
+   provided `categories`. If no categories were given, infer 3-5 sensible
+   buckets and reuse them consistently.
+2. Call llm.rank with the items and `criterion` (default: "urgency and
+   importance") to order them most-important first.
+3. Call __finish with:
+   - `triaged`: the full list, each entry {item, label, score, reason}
+   - `top`: the 3 highest-priority entries (for the widget headline)
+
+Never invent items. If `items` is empty, finish with triaged=[] and top=[].
+"""
+
+
+@agent(id="triage-agent")
+class TriageAgent(BaseAgent):
+    system_prompt = SYSTEM_PROMPT

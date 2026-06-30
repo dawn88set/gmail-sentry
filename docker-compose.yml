@@ -1,0 +1,98 @@
+# Clarity Agentic App - Docker Compose Configuration
+# Orchestrates PostgreSQL database + Monolithic App Container
+#
+# ⚠️ WARNING: Port configuration is managed by Clarity Platform
+# DO NOT modify port mappings or VITE_API_URL defaults unless you understand the implications
+#
+# Port Configuration:
+# - Set POSTGRES_PORT, APP_PORT in .env file (via Clarity Platform)
+# - Defaults: PostgreSQL=5432, App=3200
+# - Required for Clarity Platform deployment (dynamic port allocation)
+#
+# Architecture (Monolithic Container):
+# - Single container runs both Nginx (port 3200) + FastAPI (port 8000) via supervisord
+# - Nginx proxies /api/* requests to localhost:8000 (see frontend/nginx.conf)
+# - VITE_API_URL must be empty string (relative URLs) for production
+# - Compatible with Clarity Platform's single-container ECS deployment
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: ${CONTAINER_PREFIX:-clarity-agentic}-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clarity_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clarity_password}
+      POSTGRES_DB: ${POSTGRES_DB:-clarity_agentic_app}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # -d targets the real DB; without it pg_isready defaults dbname to the
+      # username and Postgres logs noisy "database clarity_user does not exist".
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clarity_user} -d ${POSTGRES_DB:-clarity_agentic_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - clarity-network
+
+  # Monolithic App Container (Nginx + FastAPI + Supervisord)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    container_name: ${CONTAINER_PREFIX:-clarity-agentic}-app
+    # Load ALL vars from .env into the backend process, so app-specific secrets
+    # you add to .env (e.g. an integration token) actually reach os.getenv(...).
+    # The explicit `environment:` keys below still win where both are set.
+    env_file:
+      - .env
+    environment:
+      # Database — defaults to the local postgres service. Override DATABASE_URL
+      # in .env to point the local app at the prod RDS instead.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://clarity_user:clarity_password@postgres:5432/clarity_agentic_app}
+
+      # Server
+      PORT: 8000  # Internal FastAPI port
+      HOST: 0.0.0.0
+      DEBUG: "${DEBUG:-false}"
+
+      # Identity: locally there is no Claritty edge to stamp X-Claritty-Auth, so
+      # require_user() (backend/security.py) needs NODE_ENV=development to accept
+      # requests as "dev-user". In production the platform injects ALB_AUTH_SECRET
+      # and require_user uses the edge-verified path regardless of NODE_ENV.
+      NODE_ENV: ${NODE_ENV:-development}
+
+      # CORS
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3200}
+
+      # AI: NO provider API key in the app. The published SDK reaches Claude
+      # through the Claritty platform LLM proxy. Set these in .env to connect the
+      # LOCAL app to the PROD platform service for real model output; leave them
+      # empty and the SDK calls each agent's fallback(ctx) (a no-AI result).
+      CLARITTY_PLATFORM_URL: ${CLARITTY_PLATFORM_URL:-}
+      CLARITTY_AUTH_TOKEN: ${CLARITTY_AUTH_TOKEN:-}
+      CLARITTY_LLM_PROXY_URL: ${CLARITTY_LLM_PROXY_URL:-}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${APP_PORT:-3200}:3200"  # Nginx port (proxies to FastAPI on localhost:8000)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - clarity-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  clarity-network:
+    driver: bridge

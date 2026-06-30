@@ -1,0 +1,29 @@
+{
+  "id": "schedule-daily",
+  "kind": "trigger",
+  "version": "1.0.0",
+  "type": "SCHEDULE",
+  "description": "Fire a workflow once a day at a user-chosen time.",
+  "intentHints": [
+    "every morning",
+    "every day at 9am",
+    "daily digest",
+    "send me a summary at the end of the day"
+  ],
+  "supportedSchedules": ["DAILY"],
+  "configFields": [
+    {
+      "key": "time",
+      "type": "time",
+      "required": true,
+      "label": "Run at",
+      "default": "09:00"
+    },
+    {
+      "key": "timezone",
+      "type": "timezone",
+      "required": true,
+      "label": "Timezone"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Catalog tool: llm.summarize — calls the LLM proxy to condense a list
+# of texts into a short digest. The materializer copies this file into
+# generated apps under backend/catalog_tools/llm_summarize.py.
+
+from typing import Any, Dict, List
+
+from claritty_sdk import tool, ToolCtx
+from claritty_sdk.llm import get_llm_client
+
+
+@tool(id="llm.summarize")
+def run(input: Dict[str, Any], ctx: ToolCtx) -> Dict[str, Any]:
+    items: List[Any] = input.get("items") or []
+    style: str = input.get("style") or "bullet"
+    max_length: int = int(input.get("max_length") or 400)
+
+    if not items:
+        return {"summary": ""}
+
+    # Stringify items so the prompt is robust to arbitrary shapes.
+    body = "\n".join(f"- {str(item)}" for item in items)
+    style_hint = {
+        "bullet": "Produce a tight bulleted list, one bullet per key idea.",
+        "paragraph": "Produce a single short paragraph.",
+        "tweet": "Produce a single sentence under 280 characters.",
+    }.get(style, "Produce a tight bulleted list.")
+
+    client = get_llm_client("claude-sonnet-4-6")
+    res = client.chat(
+        [
+            {
+                "role": "user",
+                "content": (
+                    f"{style_hint}\n"
+                    f"Stay under ~{max_length} characters. "
+                    "Do not invent facts.\n\nItems:\n" + body
+                ),
+            }
+        ]
+    )
+    return {"summary": res.content.strip()}

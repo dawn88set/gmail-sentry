@@ -1,0 +1,20 @@
+{
+  "id": "llm.summarize",
+  "kind": "tool",
+  "version": "1.0.0",
+  "description": "Summarize a list of texts into a short digest using the LLM proxy.",
+  "intentHints": [
+    "summarize a list of posts",
+    "create a digest from messages",
+    "boil down a thread"
+  ],
+  "input": {
+    "items": { "type": "array", "required": true },
+    "style": { "type": "string", "required": false, "default": "bullet" },
+    "max_length": { "type": "integer", "required": false, "default": 400 }
+  },
+  "output": {
+    "summary": { "type": "string", "required": true }
+  },
+  "handler": "claritty_catalog_tools.llm_summarize:run"
+}

@@ -1,0 +1,607 @@
+{
+  "generatedAt": "2026-06-23T03:20:49.244Z",
+  "integrations": [
+    {
+      "id": "airtable",
+      "version": "1.0.0",
+      "name": "Airtable",
+      "description": "Read and write records in Airtable bases.",
+      "category": "data",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "airtable records",
+        "create an airtable row"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "version": "1.0.0",
+      "name": "Anthropic",
+      "description": "Call Anthropic Messages directly. Most apps use the Claritty proxy instead and get this for free.",
+      "category": "ai",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "call claude",
+        "anthropic chat"
+      ]
+    },
+    {
+      "id": "asana",
+      "version": "1.0.0",
+      "name": "Asana",
+      "description": "Create and list tasks in Asana projects.",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "create an asana task",
+        "list my asana tasks"
+      ]
+    },
+    {
+      "id": "brave-search",
+      "version": "1.0.0",
+      "name": "Brave Search",
+      "description": "Search the web with Brave Search to ground content in current results. Uses an API key (X-Subscription-Token).",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "web search",
+        "search the web",
+        "current results",
+        "ground in web results"
+      ]
+    },
+    {
+      "id": "calendly",
+      "version": "1.0.0",
+      "name": "Calendly",
+      "description": "List scheduled meetings and cancel events with a Calendly personal access token.",
+      "category": "calendar",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "calendly meetings",
+        "cancel a calendly event",
+        "list scheduled events"
+      ]
+    },
+    {
+      "id": "clickup",
+      "version": "1.0.0",
+      "name": "ClickUp",
+      "description": "Create and list tasks in ClickUp.",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "clickup task",
+        "list clickup tasks"
+      ]
+    },
+    {
+      "id": "discord",
+      "version": "1.0.0",
+      "name": "Discord",
+      "description": "Send messages to Discord channels and list guilds.",
+      "category": "communication",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "post to discord",
+        "alert a discord channel"
+      ]
+    },
+    {
+      "id": "dropbox",
+      "version": "1.0.0",
+      "name": "Dropbox",
+      "description": "List and upload files in Dropbox.",
+      "category": "files",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "upload to dropbox",
+        "list dropbox files"
+      ]
+    },
+    {
+      "id": "github",
+      "version": "1.0.0",
+      "name": "GitHub",
+      "description": "List + create issues, open PRs, and search code in GitHub repos.",
+      "category": "dev",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "open a github issue",
+        "create a pull request",
+        "search github code"
+      ]
+    },
+    {
+      "id": "gitlab",
+      "version": "1.0.0",
+      "name": "GitLab",
+      "description": "List issues and create merge requests in GitLab.",
+      "category": "dev",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "gitlab issues",
+        "open a merge request"
+      ]
+    },
+    {
+      "id": "gmail",
+      "version": "1.0.0",
+      "name": "Gmail",
+      "description": "Send and read email through the authenticated user's Gmail account.",
+      "category": "email",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "send an email",
+        "search my inbox",
+        "reply to a thread",
+        "label messages"
+      ]
+    },
+    {
+      "id": "google-calendar",
+      "version": "1.0.0",
+      "name": "Google Calendar",
+      "description": "Read events and create events on the user's Google Calendar.",
+      "category": "calendar",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "what's on my calendar",
+        "schedule a meeting"
+      ]
+    },
+    {
+      "id": "google-drive",
+      "version": "1.0.0",
+      "name": "Google Drive",
+      "description": "Search and list files in the user's Google Drive.",
+      "category": "files",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "find a file in drive",
+        "list drive files"
+      ]
+    },
+    {
+      "id": "hubspot",
+      "version": "1.0.0",
+      "name": "HubSpot",
+      "description": "Create and search contacts, and update deals in the user's HubSpot CRM.",
+      "category": "crm",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "create a hubspot contact",
+        "update a hubspot deal",
+        "search hubspot crm"
+      ]
+    },
+    {
+      "id": "jira",
+      "version": "1.0.0",
+      "name": "Jira",
+      "description": "Create and transition issues in Jira via the Atlassian OAuth.",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "create a jira ticket",
+        "transition an issue",
+        "jql search"
+      ]
+    },
+    {
+      "id": "linear",
+      "version": "1.0.0",
+      "name": "Linear",
+      "description": "Create issues, search, and comment in the user's Linear workspace.",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "create a linear issue",
+        "find linear tickets",
+        "comment on a linear issue"
+      ]
+    },
+    {
+      "id": "linkedin",
+      "version": "1.0.0",
+      "name": "LinkedIn",
+      "description": "Read the authenticated user's LinkedIn feed and publish posts to their personal feed or a Company Page they administer.",
+      "category": "social",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "summarize my linkedin feed",
+        "post a daily linkedin digest",
+        "monitor linkedin notifications",
+        "read what's happening on linkedin"
+      ]
+    },
+    {
+      "id": "mailchimp",
+      "version": "0.1.0",
+      "name": "Mailchimp",
+      "description": "Add subscribers and send campaigns.",
+      "category": "marketing",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "add a subscriber",
+        "send a campaign"
+      ]
+    },
+    {
+      "id": "microsoft-teams",
+      "version": "1.0.0",
+      "name": "Microsoft Teams",
+      "description": "Post messages to Teams channels and chats.",
+      "category": "communication",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "post in teams",
+        "send a teams message"
+      ]
+    },
+    {
+      "id": "notion",
+      "version": "1.0.0",
+      "name": "Notion",
+      "description": "Search, read, create, and update pages in the user's Notion workspace.",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "search notion",
+        "create a notion page",
+        "update a notion doc"
+      ]
+    },
+    {
+      "id": "openai",
+      "version": "1.0.0",
+      "name": "OpenAI",
+      "description": "Call OpenAI chat completions, embeddings, and image generation. Routed via the Claritty proxy when no key is configured.",
+      "category": "ai",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "openai chat",
+        "embedding",
+        "generate an image"
+      ]
+    },
+    {
+      "id": "outlook",
+      "version": "1.0.0",
+      "name": "Outlook",
+      "description": "Send and read email through the authenticated user's Outlook (Microsoft 365) account.",
+      "category": "email",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "send an outlook email",
+        "search my outlook inbox"
+      ]
+    },
+    {
+      "id": "outlook-calendar",
+      "version": "1.0.0",
+      "name": "Outlook Calendar",
+      "description": "Read and write events on the user's Outlook calendar.",
+      "category": "calendar",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "outlook calendar",
+        "schedule a meeting in outlook"
+      ]
+    },
+    {
+      "id": "pipedrive",
+      "version": "1.0.0",
+      "name": "Pipedrive",
+      "description": "List and create deals in Pipedrive.",
+      "category": "crm",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "pipedrive deals",
+        "create a pipedrive deal"
+      ]
+    },
+    {
+      "id": "posthog",
+      "version": "1.0.0",
+      "name": "PostHog",
+      "description": "Capture events and run HogQL queries against your PostHog project.",
+      "category": "analytics",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "track an event",
+        "query posthog",
+        "capture analytics event"
+      ]
+    },
+    {
+      "id": "salesforce",
+      "version": "1.0.0",
+      "name": "Salesforce",
+      "description": "Run SOQL, create leads, and update opportunities in Salesforce.",
+      "category": "crm",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "soql",
+        "create a salesforce lead",
+        "update an opportunity"
+      ]
+    },
+    {
+      "id": "slack",
+      "version": "1.0.0",
+      "name": "Slack",
+      "description": "Post messages and read conversations across the authenticated user's Slack workspace.",
+      "category": "communication",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "post to a slack channel",
+        "alert the team in slack",
+        "search slack messages"
+      ]
+    },
+    {
+      "id": "stripe",
+      "version": "1.0.0",
+      "name": "Stripe",
+      "description": "Create customers, list charges, and generate payment links.",
+      "category": "payments",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "create a stripe customer",
+        "issue a payment link",
+        "list charges"
+      ]
+    },
+    {
+      "id": "trello",
+      "version": "0.1.0",
+      "name": "Trello",
+      "description": "Create cards and list cards across Trello boards.",
+      "category": "productivity",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "create a trello card",
+        "list trello cards"
+      ]
+    },
+    {
+      "id": "twilio",
+      "version": "1.0.0",
+      "name": "Twilio",
+      "description": "Send SMS and place voice calls.",
+      "category": "communication",
+      "kind": "integration",
+      "authType": "apiKey",
+      "intentHints": [
+        "text me",
+        "send an sms",
+        "call a number"
+      ]
+    },
+    {
+      "id": "x-twitter",
+      "version": "1.0.0",
+      "name": "X (Twitter)",
+      "description": "Post tweets and search recent tweets.",
+      "category": "social",
+      "kind": "integration",
+      "authType": "oauth2",
+      "intentHints": [
+        "post a tweet",
+        "search tweets"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "id": "llm.classify",
+      "version": "1.0.0",
+      "description": "Classify a piece of text into exactly one of the provided labels using the LLM proxy. The chosen label is snapped to one of the options so workflow branching is safe.",
+      "intentHints": [
+        "categorize this message",
+        "triage by type",
+        "label as urgent or not",
+        "route to the right bucket",
+        "detect sentiment"
+      ]
+    },
+    {
+      "id": "llm.draft",
+      "version": "1.0.0",
+      "description": "Draft a short message (email reply, post, note, summary blurb) from context in a given tone, using the LLM proxy. Returns text only — pair with a human-in-the-loop approval step before sending anything.",
+      "intentHints": [
+        "draft a reply",
+        "write a response",
+        "compose a follow-up email",
+        "draft a post for me"
+      ]
+    },
+    {
+      "id": "llm.extract",
+      "version": "1.0.0",
+      "description": "Extract structured fields from free text into a JSON object using the LLM proxy. Pass the field names (and optional descriptions) you want pulled out.",
+      "intentHints": [
+        "pull the fields out of this email",
+        "extract the amount and due date",
+        "parse the meeting details",
+        "structure this note"
+      ]
+    },
+    {
+      "id": "llm.rank",
+      "version": "1.0.0",
+      "description": "Rank/prioritize a list of items against a stated criterion using the LLM proxy. Returns the items ordered most-important first, each with a score and a one-line reason.",
+      "intentHints": [
+        "prioritize my tasks",
+        "what should I do first",
+        "rank these leads by value",
+        "surface the most urgent items"
+      ]
+    },
+    {
+      "id": "llm.summarize",
+      "version": "1.0.0",
+      "description": "Summarize a list of texts into a short digest using the LLM proxy.",
+      "intentHints": [
+        "summarize a list of posts",
+        "create a digest from messages",
+        "boil down a thread"
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "id": "linkedin-summarizer",
+      "version": "0.1.0",
+      "description": "Fetch the user's LinkedIn feed, summarize it, and return the digest.",
+      "intentHints": [
+        "summarize linkedin feed",
+        "daily linkedin digest",
+        "what happened on linkedin today"
+      ],
+      "defaultTools": [
+        "llm.summarize"
+      ],
+      "defaultIntegrations": [
+        "linkedin"
+      ]
+    },
+    {
+      "id": "triage-agent",
+      "version": "0.1.0",
+      "description": "Triage a list of items: classify each into the given categories, prioritize by urgency/importance, and return the sorted, labeled list with the top items surfaced.",
+      "intentHints": [
+        "triage my inbox",
+        "sort and prioritize incoming items",
+        "categorize and rank these",
+        "what needs attention first"
+      ],
+      "defaultTools": [
+        "llm.classify",
+        "llm.rank"
+      ],
+      "defaultIntegrations": []
+    }
+  ],
+  "triggers": [
+    {
+      "id": "schedule-daily",
+      "version": "1.0.0",
+      "kind": "trigger",
+      "description": "Fire a workflow once a day at a user-chosen time.",
+      "configFields": [
+        {
+          "key": "time",
+          "type": "time",
+          "required": true,
+          "label": "Run at",
+          "default": "09:00"
+        },
+        {
+          "key": "timezone",
+          "type": "timezone",
+          "required": true,
+          "label": "Timezone"
+        }
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "morning-digest",
+      "version": "1.0.0",
+      "description": "Fire once per morning; run the LinkedIn summarizer agent and write the digest.",
+      "intentHints": [
+        "morning digest",
+        "daily summary",
+        "send me a morning email"
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "id": "classify-and-triage",
+      "version": "0.1.0",
+      "description": "Classify each item into the given categories and rank by importance then urgency, with a grounded one-line reason per item, so the highest-leverage work surfaces first.",
+      "intentHints": [
+        "triage",
+        "classify these items",
+        "categorize and prioritize",
+        "what needs attention first",
+        "sort by urgency",
+        "rank incoming items"
+      ],
+      "appliesTo": [
+        "llm.classify",
+        "llm.rank"
+      ]
+    },
+    {
+      "id": "draft-on-brand-reply",
+      "version": "0.1.0",
+      "description": "Draft a reply that matches the brand voice, leads with the answer, is concrete and safe to send (no commitments it wasn't given, no sensitive data).",
+      "intentHints": [
+        "draft a reply",
+        "respond to a message",
+        "write an on-brand response",
+        "draft an email reply",
+        "compose a response",
+        "reply to customers"
+      ],
+      "appliesTo": [
+        "llm.draft",
+        "gmail.send",
+        "slack.send",
+        "outlook.send"
+      ]
+    },
+    {
+      "id": "summarize-with-citations",
+      "version": "0.1.0",
+      "description": "Produce a faithful, grounded summary that cites its sources, separates fact from inference, preserves the source's weighting, and never invents details.",
+      "intentHints": [
+        "summarize",
+        "write a digest",
+        "give me a summary",
+        "summarize with sources",
+        "brief me on",
+        "daily digest"
+      ],
+      "appliesTo": [
+        "llm.summarize",
+        "llm.extract"
+      ]
+    }
+  ]
+}

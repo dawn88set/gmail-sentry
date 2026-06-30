@@ -1,0 +1,20 @@
+{
+  "id": "llm.extract",
+  "kind": "tool",
+  "version": "1.0.0",
+  "description": "Extract structured fields from free text into a JSON object using the LLM proxy. Pass the field names (and optional descriptions) you want pulled out.",
+  "intentHints": [
+    "pull the fields out of this email",
+    "extract the amount and due date",
+    "parse the meeting details",
+    "structure this note"
+  ],
+  "input": {
+    "text": { "type": "string", "required": true },
+    "fields": { "type": "array", "required": true }
+  },
+  "output": {
+    "data": { "type": "object", "required": true }
+  },
+  "handler": "claritty_catalog_tools.llm_extract:run"
+}

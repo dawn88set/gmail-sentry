@@ -1,0 +1,58 @@
+# Custom-tool validator rules — single source of truth.
+#
+# Phase 4f — these rules are loaded by:
+#   1. clarity-api's CustomToolService (user-authored tool save endpoint)
+#   2. claritty-api's materializer post-write AST check
+#   3. claritty_sdk.validators (seed-side `claritty seed verify` CLI +
+#      runtime bootstrap sanity check)
+#
+# All three apply identical rules, so a tool that passes one passes them
+# all — no drift between platform-side save and seed-side verify.
+#
+# Rules ride with the app's pinned catalog version (catalog.lock.json),
+# so a regeneration honours the rules that shipped with that snapshot.
+#
+# Editing these rules is a security-relevant change. Bump
+# rulesetVersion when you do; both consumers refuse to load an unknown
+# major version, so the change can't silently relax enforcement.
+rulesetVersion: 1
+
+# Total ceiling for a single impl.py file. 64 KiB is well above what
+# any legitimate tool needs and well below what would let a malicious
+# author hide a payload in whitespace.
+maxSourceBytes: 65536
+
+# Allowed shape for a tool's recipe id. Used to derive the on-disk
+# folder name (any char not in [a-zA-Z0-9_] is replaced with _ at
+# materialize time) and to assert the @tool decorator's id matches.
+idRegex: '^[a-zA-Z0-9_.-]{1,128}$'
+
+# The exact function signature the SDK's tool-use loop dispatches to.
+# A custom tool that doesn't match this signature is uninvokable at
+# runtime; rejecting at validate time prevents a silent failure later.
+#
+# The trailing colon is required — the regex matches at the line that
+# opens the function definition, not the body.
+signatureRegex: '^def\s+run\s*\(\s*input\s*:\s*[\w\[\],\s]+\s*,\s*ctx\s*:\s*[\w\[\],\s]+\s*\)\s*->\s*[\w\[\],\s]+\s*:'
+
+# The @tool(id="…") decorator that registers the function with the SDK
+# at boot. Capture group 1 is the declared id; CustomToolService asserts
+# it matches the recipe id, preventing a copy-paste of one tool's source
+# from registering under another's name.
+decoratorRegex: '@tool\s*\(\s*id\s*=\s*[''"]([\w.-]+)[''"]'
+
+# Imports / call sites that should never appear inside a user-authored
+# tool. The platform's real sandboxing is the Lambda runtime; this list
+# is defense-in-depth so a clearly-malicious snippet doesn't even land
+# on disk. Tools that legitimately need any of these (rare) should ride
+# the catalog path, where they get an audit.
+bannedImports:
+  - '\b(import|from)\s+os\.system\b'
+  - '\b(import|from)\s+subprocess\b'
+  - '\b(import|from)\s+pty\b'
+  - '\b__import__\b'
+  - '\beval\s*\('
+  - '\bexec\s*\('
+  - '\bcompile\s*\('
+  - "\\bopen\\s*\\(\\s*['\"]/etc\\b"
+  - '\b(import|from)\s+ctypes\b'

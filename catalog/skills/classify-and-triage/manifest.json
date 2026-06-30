@@ -1,0 +1,16 @@
+{
+  "id": "classify-and-triage",
+  "kind": "skill",
+  "version": "0.1.0",
+  "description": "Classify each item into the given categories and rank by importance then urgency, with a grounded one-line reason per item, so the highest-leverage work surfaces first.",
+  "intentHints": [
+    "triage",
+    "classify these items",
+    "categorize and prioritize",
+    "what needs attention first",
+    "sort by urgency",
+    "rank incoming items"
+  ],
+  "appliesTo": ["llm.classify", "llm.rank"],
+  "procedureFile": "procedure.md"
+}

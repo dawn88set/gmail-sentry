@@ -1,0 +1,39 @@
+# Phase 5.8 — CI gate.
+#
+# Runs `claritty seed verify` on every PR + every push to main. Hard-
+# fails on the same conditions as the pre-commit hook: invalid intelligence.yaml,
+# invalid custom-tool source, or token-shaped strings under backend/.
+# The pre-commit hook catches issues locally; this is the backstop in
+# case a developer skipped hooks.
+name: seed-verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  seed-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install claritty-sdk
+        run: |
+          # The seed depends on the published SDK; in CI we install the
+          # version pinned in pyproject.toml / requirements.txt. If the
+          # seed is in a monorepo with the SDK checked out alongside,
+          # an editable install can be substituted here.
+          python -m pip install --upgrade pip
+          python -m pip install claritty-sdk
+
+      - name: Verify
+        run: claritty-seed-verify

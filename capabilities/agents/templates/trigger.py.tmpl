@@ -1,0 +1,33 @@
+# Scaffolded by the `agents` capability — a daily schedule for the assistant
+# workflow. Users create instances (their own time/timezone) from this template.
+
+from claritty_sdk import trigger_template, TriggerTemplateType
+
+
+@trigger_template(
+    id="assistant-daily",
+    name="Daily Assistant Run",
+    description="Runs the assistant workflow on a daily schedule.",
+    template_type=TriggerTemplateType.SCHEDULE_DAILY,
+    workflow_id="assistant-workflow",
+    category="productivity",
+    config_fields=[
+        {
+            "key": "time",
+            "label": "What time should this run?",
+            "type": "time",
+            "required": True,
+            "default": "09:00",
+        },
+        {
+            "key": "timezone",
+            "label": "Your timezone",
+            "type": "timezone",
+            "required": True,
+            "default": "America/New_York",
+        },
+    ],
+    max_instances_per_user=3,
+)
+class AssistantDailyTrigger:
+    pass

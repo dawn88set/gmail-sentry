@@ -1,0 +1,94 @@
+# Claritty Agentic App — Cursor / AI editor rules
+
+A **self-hostable** agentic web app: FastAPI backend + Vite/React frontend +
+Postgres. You host it yourself (Docker or your own infra). It depends on Claritty
+for exactly two things:
+
+1. **AI** — call models ONLY through the Claritty SDK's LLM proxy
+   (`from claritty_sdk.llm import get_llm_client`). NEVER use a raw provider SDK
+   or an `ANTHROPIC_API_KEY`. The proxy is reached via `CLARITTY_PLATFORM_URL` +
+   `CLARITTY_AUTH_TOKEN` (set in `.env`); with neither set, the SDK calls each
+   agent's `fallback(ctx)` method (a deterministic, no-AI result) so the app still
+   runs locally. Give every agent that needs the model a `fallback(ctx)`.
+2. **Widget UI** — build dashboard widgets with the Claritty UI kit
+   `@clarittyai/widget-toolkit` (`WidgetContainer`, `WidgetButton`, `WidgetBadge`).
+
+## Required env vars (don't delete these — the app needs them)
+- `DATABASE_URL` — Postgres connection (required).
+- `CLARITTY_PLATFORM_URL` + `CLARITTY_AUTH_TOKEN` — the LLM proxy (required for
+  real AI; optional locally — agents degrade via `fallback(ctx)`).
+
+## Structure
+- `backend/models.py` — SQLAlchemy models. **Every user-data model has a
+  `user_id` column and EVERY query filters by it** (multi-tenancy).
+- `backend/routes/app.py` — the app's HTTP API (`@router.get/post(...)`). Read the
+  caller from the **`X-User-ID`** header (`_resolve_user`) — there is NO
+  `CLARITY_WORKSPACE_ID`.
+- `intelligence.yaml` — the v2 MANIFEST: declares agents, tools, workflows, triggers (schema lives
+  here). The SDK runs THIS. Agents are a system prompt (`promptFile` → zero-Python, or a
+  `@agent(id)` + `system_prompt` class — NEVER `def execute()`/`AgentResult`). Workflows +
+  triggers are YAML. Do NOT create `backend/workflows/*.py` or `backend/triggers/*.py` — the
+  runtime ignores them and rejects v1 `execute()` at boot.
+- `backend/custom/agents/<id>/prompt.md` — a custom agent's instructions (prose).
+  `backend/custom/tools/<id>/impl.py` — `@tool(id)` `def run(input, ctx)`; agents reach
+  external services only through tools via `ctx.integration(...)`.
+- `frontend/src/components/Widget.tsx` — the dashboard widget (uses the UI kit).
+- `frontend/src/pages/*` + `frontend/src/components/ui/*` — full-app screens.
+  `components/ui/` has app primitives (Button/Input/Card/Dialog/Table/...).
+- Schema changes go through **Alembic** migrations (see below), never ad-hoc.
+
+## Make it YOUR app — don't ship the template look (see IDENTITY.md)
+This is a TEMPLATE. Replacing backend logic is not enough — you MUST give the app
+its own identity, or it looks exactly like the seed. An identity gate
+(`scripts/check-not-template.mjs`, run as a Stop hook / `npm run check:identity` /
+CI) blocks "done" until you do. First: `rm .claritty-seed-pristine`.
+- Fill `frontend/src/theme.css` with YOUR palette + font — set `--brand-accent`,
+  `--brand-accent-600`, `--brand-primary`, `--brand-font`. Token NAMES are fixed
+  (the kit reads them); you change their VALUES. This is the biggest lever.
+- Replace `frontend/src/pages/Dashboard.tsx` (it's a template showcase) with your
+  real landing page; remove `AgentGraph`/`HowItWorks`/`WidgetGallery`.
+- Swap `/claritty-logo.png` in `frontend/src/components/Layout.tsx` for your mark;
+  reskin `components/ui/*`; set real `appName`/`appDescription` in `lib/app-meta.ts`.
+- Delete the seed `example_agent`/`example_workflow`/`example_trigger`; build your own.
+KEEP the contract: endpoints, SDK decorators, widget sizes, infra, multi-tenancy,
+and the CSS token NAMES.
+
+## Widgets — Apple HIG, THREE sizes (canonical: `frontend/src/lib/widget-sizes.ts`)
+- small **170×170**, medium **360×170**, large **360×360**.
+- Build with the kit: `<WidgetContainer size={size}>…</WidgetContainer>` +
+  `WidgetButton` / `WidgetBadge`. Don't hand-roll the card or set
+  width/height/rounded/overflow yourself — the kit does it.
+- Branch on the `size` prop into three distinct layouts. No responsive prefixes
+  (`sm:`/`md:`), no `@media`, no `window.innerWidth` — widgets are fixed-size.
+- The widget runs in an iframe sized EXACTLY to it: **no box-shadow**, and the host
+  (`WidgetPage.tsx`) renders the bare widget with **no bg/padding/margin** (transparent
+  `widget-host` body — see index.css). See WIDGETS.md → "Exact-size iframe".
+
+## Make it actually work (not just compile — see CLAUDE.md "Build patterns" + INTEGRATIONS.md)
+- If the app acts on an external service (post/send/charge/sync…), SHIP a way to connect it: a
+  Connect page + per-user creds in `UserIntegration` + a pluggable action that SIMULATES until
+  connected. Infer the obvious platform if the user didn't name one, and confirm. (INTEGRATIONS.md)
+- If a human should approve before acting: model `draft → approved → published|failed` + an
+  `/approve` endpoint that performs the action + a widget approve quick-action.
+- No local scheduler: `SCHEDULE_*` triggers fire only on the platform. Locally run workflows on
+  demand (`POST /api/workflows/{id}/execute`); the widget updates after a run.
+- App-specific secrets in `.env` reach the backend (compose loads `env_file: .env`).
+
+## Dev workflow (self-hosted)
+- `docker compose up --build` → app on http://localhost:3200 (nginx → FastAPI).
+- DB schema: `alembic -c backend/alembic.ini revision --autogenerate -m "..."`
+  then `alembic -c backend/alembic.ini upgrade head` (the app also runs
+  `upgrade head` on startup).
+- Frontend tests: `npm run test:widgets`.
+
+## DON'T
+- ❌ Don't add provider API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) or import
+  `anthropic`/`openai` directly — use `get_llm_client`.
+- ❌ Don't implement 2 widget sizes or 190×190/400×190 — it's 3 sizes (170/360).
+- ❌ Don't reference `CLARITY_WORKSPACE_ID` — tenancy is the `X-User-ID` header.
+- ❌ Don't forget `.filter(Model.user_id == user_id)` on user-data queries.
+- ❌ Don't `create_all` new columns — write an Alembic migration.
+- ❌ Don't leave `theme.css` empty, the template `Dashboard.tsx`, the Claritty logo,
+  `appName='Claritty Template'`, or the example agents — the identity gate fails.
+- ❌ Don't rename the CSS token variables (`--brand-accent`, `--accent`, …) — change
+  their values in `theme.css`, not their names.

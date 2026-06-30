@@ -1,0 +1,16 @@
+{
+  "id": "summarize-with-citations",
+  "kind": "skill",
+  "version": "0.1.0",
+  "description": "Produce a faithful, grounded summary that cites its sources, separates fact from inference, preserves the source's weighting, and never invents details.",
+  "intentHints": [
+    "summarize",
+    "write a digest",
+    "give me a summary",
+    "summarize with sources",
+    "brief me on",
+    "daily digest"
+  ],
+  "appliesTo": ["llm.summarize", "llm.extract"],
+  "procedureFile": "procedure.md"
+}

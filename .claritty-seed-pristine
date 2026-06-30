@@ -1,0 +1,12 @@
+This file marks an UNTOUCHED Claritty seed template.
+
+While it exists, the identity gate (scripts/check-not-template.mjs) is inactive,
+so the bare seed's own tests/CI stay green.
+
+👉 DELETE THIS FILE the moment you start building your app.
+
+Deleting it turns on the identity gate, which then refuses to let the build be
+"done" until your app has its own visual identity (palette, landing page, logo,
+name) and the seed's example code is gone.
+
+See IDENTITY.md for the full KEEP-vs-REPLACE manifest and the redesign checklist.

@@ -1,0 +1,25 @@
+# Phase 5.8 — seed pre-commit hook.
+#
+# Runs `claritty seed verify` against the working tree before every
+# commit. The CLI hard-fails on:
+#   * Invalid intelligence.yaml
+#   * Invalid backend/custom/tools/*/impl.py
+#   * Token-shaped strings under backend/
+#
+# Install with:
+#   pip install pre-commit
+#   pre-commit install
+#
+# To bypass (NEVER in CI): pre-commit run --hook-stage commit --files <file>
+repos:
+  - repo: local
+    hooks:
+      - id: claritty-seed-verify
+        name: Claritty seed verify
+        entry: claritty-seed-verify
+        language: system
+        pass_filenames: false
+        # Run only when files that could change the verifier's verdict
+        # are touched. Skips e.g. README-only edits.
+        files: ^(app\.yaml|backend/|catalog/|\.claritty-allowlist)
+        stages: [pre-commit]

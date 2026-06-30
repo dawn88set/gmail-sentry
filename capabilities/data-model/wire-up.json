@@ -1,0 +1,20 @@
+{
+  "$schema": 1,
+  "operations": [
+    {
+      "type": "render-per-entity",
+      "template": "templates/sqlalchemy-model.py.tmpl",
+      "outputPath": "backend/models_{{entitySnake}}.py"
+    },
+    {
+      "type": "render-per-entity",
+      "template": "templates/fastapi-route.py.tmpl",
+      "outputPath": "backend/routes/{{entitySnakePlural}}.py"
+    },
+    {
+      "type": "render-per-entity",
+      "template": "templates/api-types.ts.tmpl",
+      "outputPath": "frontend/src/lib/api/{{entitySnake}}.ts"
+    }
+  ]
+}

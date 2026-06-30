@@ -1,0 +1,26 @@
+{
+  "id": "triage-agent",
+  "kind": "agent",
+  "version": "0.1.0",
+  "description": "Triage a list of items: classify each into the given categories, prioritize by urgency/importance, and return the sorted, labeled list with the top items surfaced.",
+  "intentHints": [
+    "triage my inbox",
+    "sort and prioritize incoming items",
+    "categorize and rank these",
+    "what needs attention first"
+  ],
+  "model": "claude-sonnet-4-6",
+  "input": {
+    "items": { "type": "array", "required": true },
+    "categories": { "type": "array", "required": false },
+    "criterion": { "type": "string", "required": false, "default": "urgency and importance" }
+  },
+  "output": {
+    "triaged": { "type": "array", "required": true },
+    "top": { "type": "array", "required": false }
+  },
+  "defaultTools": ["llm.classify", "llm.rank"],
+  "defaultIntegrations": [],
+  "handler": "claritty_catalog_agents.triage_agent:TriageAgent",
+  "promptFile": "prompt.md"
+}

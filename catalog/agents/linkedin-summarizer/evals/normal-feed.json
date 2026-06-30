@@ -1,0 +1,47 @@
+{
+  "name": "normal-feed",
+  "description": "Happy path: 3 posts arrive, the summarizer calls llm.summarize then finishes with the digest + count.",
+  "input": { "user_id": "u-eval-normal", "limit": 20 },
+  "assertions": [
+    { "type": "schema_match" },
+    { "type": "key_equals", "key": "post_count", "value": 3 },
+    { "type": "key_contains", "key": "summary", "substring": "LinkedIn" }
+  ],
+  "llm": {
+    "stub_responses": [
+      {
+        "tool_calls": [
+          {
+            "id": "tu_fetch",
+            "name": "linkedin__fetch_posts",
+            "arguments": "{\"limit\": 20}"
+          }
+        ],
+        "content": "",
+        "finish_reason": "tool_calls"
+      },
+      {
+        "tool_calls": [
+          {
+            "id": "tu_summarize",
+            "name": "llm__summarize",
+            "arguments": "{\"items\": [\"post 1\", \"post 2\", \"post 3\"], \"style\": \"bullet\"}"
+          }
+        ],
+        "content": "",
+        "finish_reason": "tool_calls"
+      },
+      {
+        "tool_calls": [
+          {
+            "id": "tu_finish",
+            "name": "claritty_finish",
+            "arguments": "{\"summary\": \"Daily LinkedIn digest with 3 highlights.\", \"post_count\": 3}"
+          }
+        ],
+        "content": "",
+        "finish_reason": "tool_calls"
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "empty-feed",
+  "description": "When LinkedIn returns no posts, the agent should finish gracefully with post_count=0 and a sensible summary instead of erroring.",
+  "input": { "user_id": "u-eval-empty", "limit": 20 },
+  "assertions": [
+    { "type": "schema_match" },
+    { "type": "key_equals", "key": "post_count", "value": 0 },
+    { "type": "key_present", "key": "summary" }
+  ],
+  "llm": {
+    "stub_responses": [
+      {
+        "tool_calls": [
+          {
+            "id": "tu_fetch",
+            "name": "linkedin__fetch_posts",
+            "arguments": "{\"limit\": 20}"
+          }
+        ],
+        "content": "",
+        "finish_reason": "tool_calls"
+      },
+      {
+        "tool_calls": [
+          {
+            "id": "tu_finish",
+            "name": "claritty_finish",
+            "arguments": "{\"summary\": \"No new posts in your feed.\", \"post_count\": 0}"
+          }
+        ],
+        "content": "",
+        "finish_reason": "tool_calls"
+      }
+    ]
+  }
+}

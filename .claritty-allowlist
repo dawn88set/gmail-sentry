@@ -1,0 +1,16 @@
+# Phase 5.8 — secret-scanner allowlist.
+#
+# One regex per line. Lines matching any of these patterns are skipped
+# by `claritty seed verify`'s secret-shape scanner. Comments (#) and
+# blank lines are ignored.
+#
+# **Think twice before adding an entry.** Most matches are real
+# secrets. Common legitimate false-positives:
+#   - CSS class names that happen to look like sk-… in test fixtures
+#   - Example values in documentation (prefer placeholder shapes like
+#     "sk-xxxxxxxx" or "sk-FAKE-…" that the scanner ignores by
+#     default — see scanner.py for the FAKE prefix list)
+#   - Test fixtures explicitly named `*_fake_*` / `*_dummy_*`
+#
+# Each entry should carry a comment explaining WHY it's safe, so the
+# next reviewer can decide if it still is.

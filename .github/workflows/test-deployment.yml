@@ -1,0 +1,293 @@
+name: Test Deployment
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy-test:
+    name: Full Deployment Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+          echo "DEBUG=false" >> .env
+          echo "LOG_LEVEL=INFO" >> .env
+
+      - name: Build all services
+        run: |
+          echo "Building all Docker images..."
+          docker compose build
+
+      - name: Start all services
+        run: |
+          echo "Starting all services..."
+          docker compose up -d
+
+      - name: Wait for PostgreSQL
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..30}; do
+            if docker compose exec -T postgres pg_isready -U clarity_user; then
+              echo "PostgreSQL is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/30, waiting 2s..."
+            sleep 2
+          done
+          echo "PostgreSQL failed to start"
+          docker compose logs postgres
+          exit 1
+
+      - name: Wait for backend
+        run: |
+          echo "Waiting for backend to be healthy..."
+          for i in {1..60}; do
+            if curl -f http://localhost:3200/health; then
+              echo "Backend is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i/60, waiting 2s..."
+            sleep 2
+          done
+          echo "Backend failed to start"
+          docker compose logs app
+          exit 1
+
+      - name: Wait for frontend
+        run: |
+          echo "Waiting for frontend to be ready..."
+          for i in {1..30}; do
+            if curl -f http://localhost:3200; then
+              echo "Frontend is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/30, waiting 2s..."
+            sleep 2
+          done
+          echo "Frontend failed to start"
+          docker compose logs app
+          exit 1
+
+      - name: Test health endpoint
+        run: |
+          echo "Testing /health endpoint..."
+          response=$(curl -s http://localhost:3200/health)
+          echo "Response: $response"
+          if echo "$response" | grep -qiE "healthy|ok"; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+
+      - name: Test widget endpoint (small)
+        run: |
+          echo "Testing /api/widget?size=small..."
+          response=$(curl -s -w "\n%{http_code}" http://localhost:3200/api/widget?size=small -H "X-User-ID: test-user")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+
+          echo "HTTP Code: $http_code"
+          echo "Response: $body"
+
+          if [ "$http_code" = "200" ]; then
+            echo "✅ Widget small endpoint passed"
+          else
+            echo "❌ Widget small endpoint failed"
+            exit 1
+          fi
+
+      - name: Test widget endpoint (large)
+        run: |
+          echo "Testing /api/widget?size=large..."
+          response=$(curl -s -w "\n%{http_code}" http://localhost:3200/api/widget?size=large -H "X-User-ID: test-user")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+
+          echo "HTTP Code: $http_code"
+          echo "Response: $body"
+
+          if [ "$http_code" = "200" ]; then
+            echo "✅ Widget large endpoint passed"
+          else
+            echo "❌ Widget large endpoint failed"
+            exit 1
+          fi
+
+      - name: Test agents endpoint
+        run: |
+          echo "Testing /api/agents..."
+          response=$(curl -s http://localhost:3200/api/agents)
+          echo "Response: $response"
+
+          agent_count=$(echo "$response" | jq '.agents | length')
+          echo "Agents registered: $agent_count"
+
+          if [ "$agent_count" -gt 0 ]; then
+            echo "✅ Agents endpoint passed ($agent_count agents)"
+          else
+            echo "❌ No agents registered"
+            exit 1
+          fi
+
+      - name: Test workflows endpoint
+        run: |
+          echo "Testing /api/workflows..."
+          response=$(curl -s http://localhost:3200/api/workflows)
+          echo "Response: $response"
+
+          workflow_count=$(echo "$response" | jq '.workflows | length')
+          echo "Workflows registered: $workflow_count"
+
+          if [ "$workflow_count" -gt 0 ]; then
+            echo "✅ Workflows endpoint passed ($workflow_count workflows)"
+          else
+            echo "❌ No workflows registered"
+            exit 1
+          fi
+
+      - name: Test database connection
+        run: |
+          echo "Testing database connection..."
+          if docker compose exec -T postgres psql -U clarity_user -d clarity_agentic_app -c "SELECT 1;"; then
+            echo "✅ Database connection successful"
+          else
+            echo "❌ Database connection failed"
+            exit 1
+          fi
+
+      - name: Check database tables
+        run: |
+          echo "Checking database tables..."
+          tables=$(docker compose exec -T postgres psql -U clarity_user -d clarity_agentic_app -c "\dt" | grep -c "table")
+          echo "Tables found: $tables"
+
+          if [ "$tables" -gt 0 ]; then
+            echo "✅ Database tables created"
+          else
+            echo "⚠️  No tables found (might be normal for fresh deployment)"
+          fi
+
+      - name: Test frontend loads
+        run: |
+          echo "Testing frontend page load..."
+          response=$(curl -s -w "\n%{http_code}" http://localhost:3200)
+          http_code=$(echo "$response" | tail -n1)
+
+          echo "HTTP Code: $http_code"
+
+          if [ "$http_code" = "200" ]; then
+            echo "✅ Frontend loads successfully"
+          else
+            echo "❌ Frontend failed to load"
+            exit 1
+          fi
+
+      - name: Run integration tests (optional)
+        continue-on-error: true
+        run: |
+          echo "Running integration tests..."
+          # Add your integration tests here
+          # docker compose exec -T app pytest tests/integration/
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker Compose Status ==="
+          docker compose ps
+
+          echo "=== PostgreSQL Logs ==="
+          docker compose logs postgres
+
+          echo "=== App Logs (nginx + FastAPI) ==="
+          docker compose logs app
+
+      - name: Stop services
+        if: always()
+        run: |
+          echo "Stopping all services..."
+          docker compose down -v
+
+      - name: Deployment test summary
+        if: success()
+        run: |
+          echo "================================"
+          echo "✅ DEPLOYMENT TEST PASSED"
+          echo "================================"
+          echo "All services started successfully:"
+          echo "  ✅ PostgreSQL database"
+          echo "  ✅ Backend API (FastAPI)"
+          echo "  ✅ Frontend UI (React)"
+          echo ""
+          echo "All endpoints tested:"
+          echo "  ✅ /health"
+          echo "  ✅ /api/widget (small & large)"
+          echo "  ✅ /api/agents"
+          echo "  ✅ /api/workflows"
+          echo ""
+          echo "Ready for production deployment!"
+
+  performance-test:
+    name: Performance Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+
+      - name: Start services
+        run: |
+          docker compose up -d
+          sleep 30
+
+      - name: Wait for backend
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:3200/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Performance test - Health endpoint
+        run: |
+          echo "Testing health endpoint response time..."
+          for i in {1..10}; do
+            time=$(curl -w "%{time_total}" -o /dev/null -s http://localhost:3200/health)
+            echo "Request $i: ${time}s"
+          done
+
+      - name: Performance test - Widget endpoint
+        run: |
+          echo "Testing widget endpoint response time..."
+          for i in {1..10}; do
+            time=$(curl -w "%{time_total}" -o /dev/null -s "http://localhost:3200/api/widget?size=large" -H "X-User-ID: test-user")
+            echo "Request $i: ${time}s"
+          done
+
+      - name: Stop services
+        if: always()
+        run: |
+          docker compose down -v

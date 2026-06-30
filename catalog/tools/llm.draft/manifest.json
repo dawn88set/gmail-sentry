@@ -1,0 +1,22 @@
+{
+  "id": "llm.draft",
+  "kind": "tool",
+  "version": "1.0.0",
+  "description": "Draft a short message (email reply, post, note, summary blurb) from context in a given tone, using the LLM proxy. Returns text only — pair with a human-in-the-loop approval step before sending anything.",
+  "intentHints": [
+    "draft a reply",
+    "write a response",
+    "compose a follow-up email",
+    "draft a post for me"
+  ],
+  "input": {
+    "purpose": { "type": "string", "required": true },
+    "context": { "type": "string", "required": true },
+    "tone": { "type": "string", "required": false, "default": "professional and concise" },
+    "max_length": { "type": "integer", "required": false, "default": 800 }
+  },
+  "output": {
+    "draft": { "type": "string", "required": true }
+  },
+  "handler": "claritty_catalog_tools.llm_draft:run"
+}

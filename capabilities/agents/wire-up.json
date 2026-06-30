@@ -1,0 +1,20 @@
+{
+  "$schema": 1,
+  "operations": [
+    {
+      "type": "render-once",
+      "template": "templates/agent.py.tmpl",
+      "outputPath": "backend/agents/assistant.py"
+    },
+    {
+      "type": "render-once",
+      "template": "templates/workflow.py.tmpl",
+      "outputPath": "backend/workflows/assistant_workflow.py"
+    },
+    {
+      "type": "render-once",
+      "template": "templates/trigger.py.tmpl",
+      "outputPath": "backend/triggers/assistant_trigger.py"
+    }
+  ]
+}

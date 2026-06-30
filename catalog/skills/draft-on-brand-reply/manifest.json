@@ -1,0 +1,16 @@
+{
+  "id": "draft-on-brand-reply",
+  "kind": "skill",
+  "version": "0.1.0",
+  "description": "Draft a reply that matches the brand voice, leads with the answer, is concrete and safe to send (no commitments it wasn't given, no sensitive data).",
+  "intentHints": [
+    "draft a reply",
+    "respond to a message",
+    "write an on-brand response",
+    "draft an email reply",
+    "compose a response",
+    "reply to customers"
+  ],
+  "appliesTo": ["llm.draft", "gmail.send", "slack.send", "outlook.send"],
+  "procedureFile": "procedure.md"
+}

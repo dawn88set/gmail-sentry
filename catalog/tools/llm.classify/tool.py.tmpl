@@ -1,0 +1,62 @@
+# Catalog tool: llm.classify — picks exactly one label for a piece of
+# text via the LLM proxy. The materializer copies this file into
+# generated apps under backend/catalog_tools/llm_classify.py.
+
+import json
+from typing import Any, Dict, List
+
+from claritty_sdk import tool, ToolCtx
+from claritty_sdk.llm import get_llm_client
+
+
+def _json_slice(s: str) -> str:
+    start, end = s.find("{"), s.rfind("}")
+    return s[start : end + 1] if start != -1 and end != -1 else s
+
+
+@tool(id="llm.classify")
+def run(input: Dict[str, Any], ctx: ToolCtx) -> Dict[str, Any]:
+    text: str = str(input.get("text") or "")
+    labels: List[Any] = input.get("labels") or []
+    instructions: str = str(input.get("instructions") or "")
+
+    label_strs = [str(lbl) for lbl in labels]
+    if not text or not label_strs:
+        return {"label": "", "confidence": 0.0, "reason": "missing text or labels"}
+
+    guidance = f"\nGuidance: {instructions}" if instructions else ""
+    client = get_llm_client("claude-sonnet-4-6")
+    res = client.chat(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "Classify the text below into EXACTLY ONE of these labels: "
+                    f"[{', '.join(label_strs)}].{guidance}\n"
+                    "Respond with ONLY a JSON object: "
+                    '{"label": <one of the labels>, "confidence": <0..1>, '
+                    '"reason": <short>}.\n\nText:\n' + text
+                ),
+            }
+        ]
+    )
+
+    raw = (res.content or "").strip()
+    confidence: Any = None
+    reason: Any = raw[:200]
+    try:
+        data = json.loads(_json_slice(raw))
+        label = str(data.get("label") or "")
+        confidence = data.get("confidence")
+        reason = data.get("reason")
+    except Exception:
+        label = ""
+
+    # Snap to a real label so downstream branching never sees a stray value.
+    if label not in label_strs:
+        label = next(
+            (lbl for lbl in label_strs if lbl.lower() in raw.lower()),
+            label_strs[0],
+        )
+
+    return {"label": label, "confidence": confidence, "reason": reason}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "categories": [
+    { "id": "communication", "label": "Communication", "color": "hsl(210 70% 55%)" },
+    { "id": "email",         "label": "Email",         "color": "hsl(20 80% 55%)"  },
+    { "id": "productivity",  "label": "Productivity",  "color": "hsl(280 60% 60%)" },
+    { "id": "crm",           "label": "CRM",           "color": "hsl(160 60% 45%)" },
+    { "id": "files",         "label": "Files",         "color": "hsl(45 80% 55%)"  },
+    { "id": "calendar",      "label": "Calendar",      "color": "hsl(0 70% 55%)"   },
+    { "id": "dev",           "label": "Developer",     "color": "hsl(220 15% 50%)" },
+    { "id": "data",          "label": "Data",          "color": "hsl(195 70% 50%)" },
+    { "id": "payments",      "label": "Payments",      "color": "hsl(140 60% 45%)" },
+    { "id": "social",        "label": "Social",        "color": "hsl(330 70% 60%)" },
+    { "id": "ai",            "label": "AI",            "color": "hsl(265 80% 65%)" },
+    { "id": "marketing",     "label": "Marketing",     "color": "hsl(15 75% 60%)"  },
+    { "id": "analytics",     "label": "Analytics",     "color": "hsl(175 60% 45%)" }
+  ]
+}
