@@ -634,6 +634,47 @@ export default function Rules() {
             />
           </ListGroup>
 
+          {/* Always-visible Slack setup guide (Slack needs an ID, not a name —
+              the #1 reason a test fails). */}
+          <div className="mt-3 rounded-2xl bg-card p-4 text-[13px] leading-relaxed text-muted-foreground ring-1 ring-border">
+            <p className="mb-2 flex items-center gap-2 text-[14px] font-semibold text-foreground">
+              <Slack className="h-4 w-4" /> Setting a Slack destination
+            </p>
+            <p className="mb-2.5">
+              Slack’s “Send alerts to” field needs an <span className="font-semibold text-foreground">ID</span>{' '}
+              (it starts with <span className="font-mono">U</span> or <span className="font-mono">C</span>) — a channel or
+              user <em>name</em> won’t work and fails with <span className="font-mono">channel_not_found</span>.
+            </p>
+
+            <p className="mb-1 font-medium text-foreground">Option 1 · DM yourself (fastest — no setup)</p>
+            <ol className="mb-3 ml-4 list-decimal space-y-0.5">
+              <li>In Slack, click your avatar (top-right) → <span className="font-medium text-foreground">Profile</span>.</li>
+              <li>
+                Click <span className="font-mono">⋯</span> / <span className="font-medium">More</span> →{' '}
+                <span className="font-medium text-foreground">Copy member ID</span>.
+              </li>
+              <li>Paste it in Slack’s field above — it looks like <span className="font-mono">U0A1B2C3D</span>.</li>
+            </ol>
+
+            <p className="mb-1 font-medium text-foreground">Option 2 · Post to a channel</p>
+            <ol className="ml-4 list-decimal space-y-0.5">
+              <li>
+                In that channel, send <span className="font-mono">/invite @Gmail&nbsp;Sentry</span>{' '}
+                (the bot must be a member).
+              </li>
+              <li>
+                Click the channel name → scroll to the bottom of <span className="font-medium">About</span> → copy the{' '}
+                <span className="font-medium text-foreground">Channel ID</span> (<span className="font-mono">C0…</span>).
+              </li>
+              <li>Paste it in Slack’s field above.</li>
+            </ol>
+
+            <p className="mt-2.5">
+              Then use <span className="font-medium text-foreground">Send test message</span> on the Slack row, or the
+              button below, to confirm delivery.
+            </p>
+          </div>
+
           {/* Send a test alert to every configured channel + show each result. */}
           <div className="mt-3 px-1">
             <IosButton
