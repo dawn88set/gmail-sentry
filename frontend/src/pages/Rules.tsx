@@ -66,8 +66,8 @@ const DEST_FIELD: Record<
   slack: {
     field: 'slack_channel',
     label: 'Send alerts to',
-    placeholder: '#gmail-sentry  ·  or U0123… for a DM',
-    hint: 'Invite the Sentry bot to that channel first (type /invite @Gmail Sentry in Slack), or paste your member ID for a DM.',
+    placeholder: 'U0123… (your member ID, for a DM)  ·  or C0123… (channel ID)',
+    hint: 'Use an ID, not a name (a name fails with channel_not_found). Easiest: your member ID for a DM — in Slack click your avatar → Profile → ⋮ → “Copy member ID” (U0…). For a channel: /invite @Gmail Sentry in it, then open the channel → its name → scroll to “Channel ID” (C0…).',
   },
   telegram: {
     field: 'telegram_chat_id',
@@ -543,10 +543,11 @@ export default function Rules() {
 
                       {it.id === 'slack' && slackConnected && slackChannels.length === 0 && (
                         <div className="mt-1.5 rounded-lg bg-muted/40 p-2.5 text-[12px] leading-relaxed text-muted-foreground">
-                          Can’t list your Slack channels
-                          {slackChannelsError ? ` (${slackChannelsError})` : ''} — this Slack connection
-                          doesn’t have channel access, so a typed name fails with{' '}
-                          <span className="font-mono">channel_not_found</span>.{' '}
+                          <span className="font-semibold text-foreground">Paste an ID above — a typed name fails.</span>{' '}
+                          The quickest test: your own <span className="font-medium">member ID</span>{' '}
+                          (<span className="font-mono">U0…</span>) gets a DM instantly, no channel setup. For a
+                          channel, <span className="font-mono">/invite @Gmail Sentry</span> then paste its{' '}
+                          <span className="font-mono">C0…</span> ID.{' '}
                           <button
                             type="button"
                             className="font-semibold text-accent underline"
@@ -560,10 +561,14 @@ export default function Rules() {
                               });
                             }}
                           >
-                            Reconnect Slack
+                            Reconnecting Slack
                           </button>{' '}
-                          to pick from a list — or invite the bot (<span className="font-mono">/invite @Gmail Sentry</span>)
-                          and paste that channel’s ID like <span className="font-mono">C0123ABC</span> above.
+                          may enable a channel picker.
+                          {slackChannelsError ? (
+                            <span className="mt-1 block text-[11px] opacity-70">
+                              ({slackChannelsError})
+                            </span>
+                          ) : null}
                         </div>
                       )}
                       {dest.hint && (
