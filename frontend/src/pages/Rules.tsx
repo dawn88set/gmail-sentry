@@ -541,39 +541,51 @@ export default function Rules() {
                         onBlur={() => saveConfig({ [dest.field]: config[dest.field] })}
                       />
 
-                      {it.id === 'slack' && slackConnected && slackChannels.length === 0 && (
-                        <div className="mt-1.5 rounded-lg bg-muted/40 p-2.5 text-[12px] leading-relaxed text-muted-foreground">
-                          <span className="font-semibold text-foreground">Paste an ID above — a typed name fails.</span>{' '}
-                          The quickest test: your own <span className="font-medium">member ID</span>{' '}
-                          (<span className="font-mono">U0…</span>) gets a DM instantly, no channel setup. For a
-                          channel, <span className="font-mono">/invite @Gmail Sentry</span> then paste its{' '}
-                          <span className="font-mono">C0…</span> ID.{' '}
-                          <button
-                            type="button"
-                            className="font-semibold text-accent underline"
-                            onClick={() => {
-                              const posted = requestConnectIntegration('slack', appId);
-                              show({
-                                tone: posted ? 'success' : 'error',
-                                text: posted
-                                  ? 'Reconnecting Slack — approve the channel permission…'
-                                  : 'Reconnect Slack on the Integrations tab.',
-                              });
-                            }}
-                          >
-                            Reconnecting Slack
-                          </button>{' '}
-                          may enable a channel picker.
+                      {/* Step-by-step guide: Slack needs an ID (member or
+                          channel) — never a name. Shown whether or not the
+                          channel picker is available. */}
+                      {it.id === 'slack' ? (
+                        <div className="mt-2 rounded-lg bg-muted/40 p-3 text-[12px] leading-relaxed text-muted-foreground">
+                          <p className="mb-2 font-semibold text-foreground">
+                            Slack needs an ID (it starts with <span className="font-mono">U</span> or{' '}
+                            <span className="font-mono">C</span>) — a channel or user <em>name</em> won’t work.
+                          </p>
+
+                          <p className="mb-1 font-medium text-foreground">Option 1 · DM yourself (fastest — no setup)</p>
+                          <ol className="mb-2.5 ml-4 list-decimal space-y-0.5">
+                            <li>In Slack, click your avatar (top-right) → <span className="font-medium text-foreground">Profile</span>.</li>
+                            <li>
+                              Click <span className="font-mono">⋯</span> / <span className="font-medium">More</span> →{' '}
+                              <span className="font-medium text-foreground">Copy member ID</span>.
+                            </li>
+                            <li>Paste it in the box above — it looks like <span className="font-mono">U0A1B2C3D</span>.</li>
+                          </ol>
+
+                          <p className="mb-1 font-medium text-foreground">Option 2 · Post to a channel</p>
+                          <ol className="ml-4 list-decimal space-y-0.5">
+                            <li>
+                              In that channel, send <span className="font-mono">/invite @Gmail&nbsp;Sentry</span>{' '}
+                              (the bot must be a member to post).
+                            </li>
+                            <li>
+                              Click the channel name → scroll to the bottom of <span className="font-medium">About</span> →
+                              copy the <span className="font-medium text-foreground">Channel ID</span> (<span className="font-mono">C0…</span>).
+                            </li>
+                            <li>Paste it in the box above.</li>
+                          </ol>
+
+                          <p className="mt-2">
+                            Then tap <span className="font-medium text-foreground">Send test message</span> below to confirm.
+                          </p>
                           {slackChannelsError ? (
-                            <span className="mt-1 block text-[11px] opacity-70">
-                              ({slackChannelsError})
+                            <span className="mt-1.5 block text-[11px] opacity-70">
+                              Channel list unavailable ({slackChannelsError})
                             </span>
                           ) : null}
                         </div>
-                      )}
-                      {dest.hint && (
+                      ) : dest.hint ? (
                         <p className="mt-1 text-[12px] text-muted-foreground">{dest.hint}</p>
-                      )}
+                      ) : null}
                       {!(config[dest.field] as string)?.trim() ? (
                         <p className="mt-1 text-[12px] text-destructive">
                           Set a destination or {it.name} alerts won’t be sent.
