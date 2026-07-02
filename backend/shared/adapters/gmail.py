@@ -71,6 +71,110 @@ def get_message(db, user_id: str, message_id: str, fmt: str = "full") -> Dict[st
     return msg
 
 
+# --- Gmail Sentry helpers ---------------------------------------------------
+# Higher-level reads/writes used by the scan engine. All go through _client()
+# (the self-host client path), which works locally (encrypted store / FAKE_CREDS)
+# AND on-platform (creds resolved from platform KMS via load_credentials).
+
+
+def search(db, user_id: str, query: str, max_results: int = 25) -> List[Dict[str, Any]]:
+    """Message stubs ({id, threadId}) matching a Gmail query string."""
+    client = _client(db, user_id)
+    try:
+        msgs = client.list_messages(query=query, max_results=max_results)
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"search failed: {e}")
+    _save(db, user_id, client)
+    return msgs
+
+
+def list_page(db, user_id: str, query: str, max_results: int = 20, page_token: str = "") -> Dict[str, Any]:
+    """One page of {messages, nextPageToken} for a query (infinite scroll)."""
+    client = _client(db, user_id)
+    try:
+        page = client.list_page(query=query, max_results=max_results, page_token=page_token)
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"list_page failed: {e}")
+    _save(db, user_id, client)
+    return page
+
+
+def count(db, user_id: str, query: str) -> int:
+    """Estimated count of messages matching a Gmail query (for category sizes)."""
+    client = _client(db, user_id)
+    try:
+        n = client.count_messages(query)
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"count failed: {e}")
+    _save(db, user_id, client)
+    return n
+
+
+def _header(headers: List[Dict[str, str]], name: str) -> str:
+    low = name.lower()
+    for h in headers or []:
+        if (h.get("name") or "").lower() == low:
+            return h.get("value") or ""
+    return ""
+
+
+def get_meta(db, user_id: str, message_id: str) -> Dict[str, Any]:
+    """Parsed metadata for one message: sender, subject, snippet, Message-ID
+    header, thread id, and label ids."""
+    client = _client(db, user_id)
+    try:
+        msg = client.get_message(message_id, fmt="metadata")
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"get_meta failed: {e}")
+    _save(db, user_id, client)
+    headers = (msg.get("payload") or {}).get("headers") or []
+    return {
+        "id": msg.get("id"),
+        "thread_id": msg.get("threadId"),
+        "snippet": msg.get("snippet") or "",
+        "label_ids": msg.get("labelIds") or [],
+        "sender": _header(headers, "From"),
+        "subject": _header(headers, "Subject"),
+        "rfc822_msgid": _header(headers, "Message-ID").strip("<>"),
+    }
+
+
+def apply_label(db, user_id: str, message_id: str, label_name: str, *, archive: bool = False) -> bool:
+    """Add a (user) label to a message, creating the label if needed. When
+    archive=True, also remove it from the inbox."""
+    client = _client(db, user_id)
+    try:
+        label_id = client.ensure_label(label_name)
+        remove = ["INBOX"] if archive else []
+        client.modify_labels(message_id, add=[label_id], remove=remove)
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"apply_label failed: {e}")
+    _save(db, user_id, client)
+    return True
+
+
+def archive(db, user_id: str, message_id: str) -> bool:
+    """Remove a message from the inbox (Gmail's 'archive')."""
+    client = _client(db, user_id)
+    try:
+        client.modify_labels(message_id, remove=["INBOX"])
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"archive failed: {e}")
+    _save(db, user_id, client)
+    return True
+
+
+def trash(db, user_id: str, message_id: str) -> bool:
+    """Move a message to Trash."""
+    client = _client(db, user_id)
+    try:
+        client.trash(message_id)
+    except (httpx.HTTPError, GmailNotConnected) as e:
+        raise IntegrationError(SERVICE, f"trash failed: {e}")
+    _save(db, user_id, client)
+    return True
+
+
 def send(
     db,
     user_id: str,

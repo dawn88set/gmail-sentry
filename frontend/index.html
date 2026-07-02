@@ -7,6 +7,12 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
     <meta name="description" content="__APP_DESCRIPTION__" />
     <meta property="og:title" content="__APP_NAME__" />
     <meta property="og:description" content="__APP_DESCRIPTION__" />
@@ -17,9 +23,11 @@
       // the OS. useClarittyTheme() then takes over (live postMessage updates).
       (function () {
         try {
+          // Gmail Sentry is a dark-first design; default to dark unless the
+          // platform explicitly pins a theme via ?theme=.
           var t = new URLSearchParams(location.search).get('theme');
           if (t !== 'dark' && t !== 'light') {
-            t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            t = 'dark';
           }
           document.documentElement.classList.toggle('dark', t === 'dark');
           document.documentElement.style.colorScheme = t;

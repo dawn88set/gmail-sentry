@@ -5,7 +5,9 @@ import * as api from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   getWidgetData: vi.fn(),
-  toggleTask: vi.fn(),
+  clearCategory: vi.fn(),
+  clearCategoryAll: vi.fn(),
+  toApiError: (e: unknown) => ({ message: String(e) }),
 }));
 
 // Canonical dimensions per size. The widget is built on the UI kit's
@@ -19,27 +21,18 @@ const DIMS = {
 
 const SIZES = ['small', 'medium', 'large'] as const;
 
-const mockSmall = {
-  open_count: 3,
-  top_priority: 'high' as const,
-  top_task: 'Ship the release',
-  top_task_id: 't1',
-  last_updated: 'just now',
-};
-
-const mockList = {
-  open_count: 3,
-  done_today: 1,
-  top_priority: 'urgent' as const,
-  tasks: [
-    { id: 't1', title: 'Ship the release', priority: 'urgent' as const, done: false },
-    { id: 't2', title: 'Review the PR', priority: 'high' as const, done: false },
-    { id: 't3', title: 'Water the plants', priority: 'low' as const, done: false },
+const mockData = {
+  urgent_count: 2,
+  needs_reply_count: 1,
+  all_clear: false,
+  last_scan: 'just now',
+  top_alerts: [
+    { id: 'a1', subject: 'Budget sign-off needed', sender: 'dana@acme.com', tier: 'urgent' as const, reason: 'From your manager', deep_link: 'https://mail.google.com/#a1' },
+    { id: 'a2', subject: 'Invoice due in 2 days', sender: 'billing@vendor.com', tier: 'needs_reply' as const, reason: 'Payment due', deep_link: 'https://mail.google.com/#a2' },
   ],
-  last_updated: 'just now',
+  cleanup: { promo: 142, social: 38, spam: 11 },
+  slack_configured: true,
 };
-
-const dataFor = (size: (typeof SIZES)[number]) => (size === 'small' ? mockSmall : mockList);
 
 function expectCanonical(el: Element | null, size: keyof typeof DIMS) {
   expect(el).toBeInTheDocument();
@@ -58,7 +51,7 @@ describe('Widget', () => {
 
   describe('canonical dimensions + style invariants (all 3 sizes)', () => {
     it.each(SIZES)('renders %s at exact dims, p-4, rounded-3xl, overflow hidden', async (size) => {
-      vi.mocked(api.getWidgetData).mockResolvedValue(dataFor(size) as any);
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       const { container } = render(<Widget size={size} />);
       await waitFor(() => {
         expectCanonical(container.querySelector(`[data-widget-size="${size}"]`), size);
@@ -77,34 +70,35 @@ describe('Widget', () => {
 
   describe('data loading', () => {
     it.each(SIZES)('requests data for size=%s', async (size) => {
-      vi.mocked(api.getWidgetData).mockResolvedValue(dataFor(size) as any);
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       render(<Widget size={size} />);
       await waitFor(() => expect(api.getWidgetData).toHaveBeenCalledWith(size));
     });
 
     it('defaults to medium when no size prop is given', async () => {
-      vi.mocked(api.getWidgetData).mockResolvedValue(mockList as any);
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       render(<Widget />);
       await waitFor(() => expect(api.getWidgetData).toHaveBeenCalledWith('medium'));
     });
   });
 
   describe('content', () => {
-    it('small shows the open-task count', async () => {
-      vi.mocked(api.getWidgetData).mockResolvedValue(mockSmall as any);
+    it('small shows the attention count', async () => {
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       render(<Widget size="small" />);
       await waitFor(() => {
         expect(screen.getByText('3')).toBeInTheDocument();
-        expect(screen.getByText(/open task/)).toBeInTheDocument();
+        expect(screen.getByText(/attention/)).toBeInTheDocument();
       });
     });
 
-    it('large lists task titles', async () => {
-      vi.mocked(api.getWidgetData).mockResolvedValue(mockList as any);
+    it('large lists flagged emails + junk counts', async () => {
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       render(<Widget size="large" />);
       await waitFor(() => {
-        expect(screen.getByText('Ship the release')).toBeInTheDocument();
-        expect(screen.getByText('Review the PR')).toBeInTheDocument();
+        expect(screen.getByText('Budget sign-off needed')).toBeInTheDocument();
+        expect(screen.getByText('Invoice due in 2 days')).toBeInTheDocument();
+        expect(screen.getByText('142')).toBeInTheDocument();
       });
     });
   });
@@ -125,7 +119,7 @@ describe('Widget', () => {
   describe('auto-refresh', () => {
     it('refetches every 30s', async () => {
       vi.useFakeTimers();
-      vi.mocked(api.getWidgetData).mockResolvedValue(mockSmall as any);
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       render(<Widget size="small" />);
       await vi.waitFor(() => expect(api.getWidgetData).toHaveBeenCalledTimes(1));
       vi.advanceTimersByTime(30000);

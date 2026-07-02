@@ -1,6 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { MotionConfig } from 'framer-motion';
 import Dashboard from './pages/Dashboard';
-import Tasks from './pages/Tasks';
+import Rules from './pages/Rules';
+import Attention from './pages/Attention';
+import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
 import Layout from './components/Layout';
 import { ToastProvider } from './components/Toast';
@@ -15,6 +18,7 @@ function App() {
   // page or widget — can `useToast()` to surface errors. Never swallow a failed
   // action; catch it, run toApiError(), and show() it. See CLAUDE.md.
   return (
+    <MotionConfig reducedMotion="user">
     <ToastProvider>
       <Router>
         <Routes>
@@ -23,10 +27,13 @@ function App() {
 
           {/* App routes — with the navigation layout. */}
           <Route path="/" element={<Layout><Dashboard /></Layout>} />
-          <Route path="/tasks" element={<Layout><Tasks /></Layout>} />
+          <Route path="/attention" element={<Layout><Attention /></Layout>} />
+          <Route path="/cleanup/:category" element={<Layout><CategoryList /></Layout>} />
+          <Route path="/rules" element={<Layout><Rules /></Layout>} />
         </Routes>
       </Router>
     </ToastProvider>
+    </MotionConfig>
   );
 }
 

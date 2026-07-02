@@ -53,6 +53,26 @@
           "required": true
         }
       }
+    },
+    {
+      "id": "twilio.send_whatsapp",
+      "description": "Send a WhatsApp message (via a WhatsApp-enabled Twilio sender).",
+      "input": {
+        "to": {
+          "type": "string",
+          "required": true
+        },
+        "body": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "output": {
+        "sid": {
+          "type": "string",
+          "required": true
+        }
+      }
     }
   ],
   "credentialFields": [

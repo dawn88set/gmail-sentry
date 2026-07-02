@@ -17,7 +17,7 @@ import os
 import hmac
 import logging
 
-from backend.database import get_db, init_db, seed_example_tasks, engine
+from backend.database import get_db, init_db, seed_demo_data, engine
 from backend import models
 from claritty_sdk import (
     AgentContext,
@@ -914,9 +914,9 @@ async def startup_event():
     logger.info("📊 Initializing database...")
     init_db()
 
-    # Seed a few example tasks on first run so the widget shows real content
-    # (makes the small/medium/large sizes visibly different). Idempotent.
-    seed_example_tasks()
+    # Seed starter rules + sample alerts on first run so the widget shows real
+    # content (makes the small/medium/large sizes visibly different). Idempotent.
+    seed_demo_data()
 
     # Auto-discover and register all components
     logger.info("🤖 Auto-discovering agents, workflows, and triggers...")

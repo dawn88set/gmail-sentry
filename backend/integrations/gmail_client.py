@@ -79,6 +79,47 @@ class GmailClient:
             params["q"] = query
         return self._request("GET", "/users/me/messages", params=params).get("messages", [])
 
+    def list_page(self, query: str = "", max_results: int = 20, page_token: str = "") -> Dict[str, Any]:
+        """One page of message stubs + a nextPageToken for infinite scroll."""
+        params: Dict[str, Any] = {"maxResults": max_results}
+        if query:
+            params["q"] = query
+        if page_token:
+            params["pageToken"] = page_token
+        data = self._request("GET", "/users/me/messages", params=params)
+        return {"messages": data.get("messages", []), "nextPageToken": data.get("nextPageToken")}
+
+    def count_messages(self, query: str) -> int:
+        """Estimated number of messages matching a Gmail query.
+
+        Uses the listing's `resultSizeEstimate` with maxResults=1 — cheap and
+        accurate enough for category counts (Promotions/Social/Spam).
+        """
+        params: Dict[str, Any] = {"maxResults": 1}
+        if query:
+            params["q"] = query
+        data = self._request("GET", "/users/me/messages", params=params)
+        return int(data.get("resultSizeEstimate", 0) or 0)
+
+    def list_labels(self) -> List[Dict[str, Any]]:
+        return self._request("GET", "/users/me/labels").get("labels", [])
+
+    def ensure_label(self, name: str) -> str:
+        """Return the id of the user label `name`, creating it if it doesn't exist."""
+        for lbl in self.list_labels():
+            if (lbl.get("name") or "").lower() == name.lower():
+                return lbl["id"]
+        created = self._request(
+            "POST",
+            "/users/me/labels",
+            json={
+                "name": name,
+                "labelListVisibility": "labelShow",
+                "messageListVisibility": "show",
+            },
+        )
+        return created["id"]
+
     def get_message(self, message_id: str, fmt: str = "metadata") -> Dict[str, Any]:
         return self._request("GET", f"/users/me/messages/{message_id}", params={"format": fmt})
 

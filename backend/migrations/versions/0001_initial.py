@@ -1,8 +1,8 @@
-"""initial schema (tasks, user_integrations, workflow_executions)
+"""initial schema for Gmail Sentry
 
 Revision ID: 0001_initial
 Revises:
-Create Date: 2026-05-30
+Create Date: 2026-06-30
 """
 from typing import Sequence, Union
 
@@ -17,15 +17,75 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.create_table(
-        "tasks",
+        "triage_rules",
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("user_id", sa.String(), nullable=False, index=True),
-        sa.Column("title", sa.String(), nullable=False),
-        sa.Column("notes", sa.Text(), nullable=True),
-        sa.Column("priority", sa.String(), nullable=True, index=True),
-        sa.Column("suggested_action", sa.Text(), nullable=True),
-        sa.Column("done", sa.Boolean(), nullable=True, index=True),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("kind", sa.String(), nullable=False),
+        sa.Column("value", sa.Text(), nullable=False),
+        sa.Column("tier", sa.String(), nullable=False),
+        sa.Column("active", sa.Boolean(), nullable=False, index=True),
         sa.Column("created_at", sa.DateTime(), nullable=True, index=True),
+    )
+
+    op.create_table(
+        "label_rules",
+        sa.Column("id", sa.String(), primary_key=True),
+        sa.Column("user_id", sa.String(), nullable=False, index=True),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("match_type", sa.String(), nullable=False),
+        sa.Column("match_value", sa.Text(), nullable=False),
+        sa.Column("target_label", sa.String(), nullable=False),
+        sa.Column("archive_after", sa.Boolean(), nullable=False),
+        sa.Column("active", sa.Boolean(), nullable=False, index=True),
+        sa.Column("created_at", sa.DateTime(), nullable=True, index=True),
+    )
+
+    op.create_table(
+        "alerts",
+        sa.Column("id", sa.String(), primary_key=True),
+        sa.Column("user_id", sa.String(), nullable=False, index=True),
+        sa.Column("gmail_message_id", sa.String(), nullable=False, index=True),
+        sa.Column("thread_id", sa.String(), nullable=True),
+        sa.Column("rfc822_msgid", sa.String(), nullable=True),
+        sa.Column("sender", sa.String(), nullable=True),
+        sa.Column("subject", sa.String(), nullable=True),
+        sa.Column("snippet", sa.Text(), nullable=True),
+        sa.Column("tier", sa.String(), nullable=False, index=True),
+        sa.Column("reason", sa.Text(), nullable=True),
+        sa.Column("deep_link", sa.Text(), nullable=True),
+        sa.Column("slack_sent", sa.Boolean(), nullable=False, index=True),
+        sa.Column("status", sa.String(), nullable=False, index=True),
+        sa.Column("snoozed_until", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=True, index=True),
+    )
+
+    op.create_table(
+        "scan_runs",
+        sa.Column("id", sa.String(), primary_key=True),
+        sa.Column("user_id", sa.String(), nullable=False, index=True),
+        sa.Column("scanned", sa.Integer(), nullable=True),
+        sa.Column("flagged", sa.Integer(), nullable=True),
+        sa.Column("labeled", sa.Integer(), nullable=True),
+        sa.Column("notified", sa.Integer(), nullable=True),
+        sa.Column("promo_count", sa.Integer(), nullable=True),
+        sa.Column("social_count", sa.Integer(), nullable=True),
+        sa.Column("spam_count", sa.Integer(), nullable=True),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("started_at", sa.DateTime(), nullable=True, index=True),
+    )
+
+    op.create_table(
+        "sentry_config",
+        sa.Column("id", sa.String(), primary_key=True),
+        sa.Column("user_id", sa.String(), nullable=False, unique=True, index=True),
+        sa.Column("slack_channel", sa.String(), nullable=True),
+        sa.Column("notify_tier", sa.String(), nullable=True),
+        sa.Column("onboarded", sa.Boolean(), nullable=True),
+        sa.Column("intent", sa.Text(), nullable=True),
+        sa.Column("role", sa.String(), nullable=True),
+        sa.Column("muted_senders", sa.JSON(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=True),
         sa.Column("updated_at", sa.DateTime(), nullable=True),
     )
 
@@ -61,4 +121,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("workflow_executions")
     op.drop_table("user_integrations")
-    op.drop_table("tasks")
+    op.drop_table("sentry_config")
+    op.drop_table("scan_runs")
+    op.drop_table("alerts")
+    op.drop_table("label_rules")
+    op.drop_table("triage_rules")

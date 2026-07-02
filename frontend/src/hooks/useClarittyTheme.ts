@@ -26,22 +26,14 @@ export function useClarittyTheme() {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get('theme');
 
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-
-    // 1 + 3: URL param wins; otherwise follow the OS preference.
+    // 1: URL param wins (platform-provided). Otherwise default to DARK — this is
+    // a dark-first "Gmail dark" design, so standalone/local viewing shows the
+    // intended look rather than a light theme that doesn't match.
     if (fromUrl === 'dark' || fromUrl === 'light') {
       applyTheme(fromUrl);
     } else {
-      applyTheme(media.matches ? 'dark' : 'light');
+      applyTheme('dark');
     }
-
-    // Follow OS changes only when the platform hasn't pinned a theme.
-    const onMedia = (e: MediaQueryListEvent) => {
-      if (!new URLSearchParams(window.location.search).get('theme')) {
-        applyTheme(e.matches ? 'dark' : 'light');
-      }
-    };
-    media.addEventListener('change', onMedia);
 
     // 2: live updates from the platform on theme toggle.
     const onMessage = (event: MessageEvent) => {
@@ -58,7 +50,6 @@ export function useClarittyTheme() {
     window.addEventListener('message', onMessage);
 
     return () => {
-      media.removeEventListener('change', onMedia);
       window.removeEventListener('message', onMessage);
     };
   }, []);

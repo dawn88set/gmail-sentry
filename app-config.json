@@ -1,8 +1,8 @@
 {
   "$schema": "https://clarity.ai/schemas/app-config-v1.json",
-  "appName": "App",
+  "appName": "Gmail Sentry",
   "appVersion": "1.0.0",
-  "description": "An AI-powered agentic app.",
+  "description": "Inbox watchdog: triage incoming Gmail against your rules, Slack-ping you with a deep link on what needs attention, and clear Promotions/Social/Spam in one tap.",
   "configSchema": {
     "version": "1.0",
     "sections": [
@@ -38,7 +38,11 @@
               }
             ],
             "validation": {
-              "enum": ["fast", "balanced", "quality"]
+              "enum": [
+                "fast",
+                "balanced",
+                "quality"
+              ]
             }
           },
           {
@@ -210,8 +214,16 @@
   },
   "clarity_marketplace": {
     "version": "1.0.0",
-    "category": "templates",
-    "tags": ["template", "starter", "agentic-app", "ai", "agents", "workflows", "triggers"],
+    "category": "productivity",
+    "tags": [
+      "gmail",
+      "email",
+      "inbox",
+      "triage",
+      "slack",
+      "notifications",
+      "productivity"
+    ],
     "pricing_model": "free",
     "developer": {
       "name": "",
@@ -220,50 +232,12 @@
       "support_email": ""
     },
     "features": [
-      "Complete starter template for building agentic apps",
-      "Working Smart Email Filter example with AI agents",
-      "Auto-discovery system for agents and workflows",
-      "Widget-first design following Apple HIG standards",
-      "Multi-tenant architecture with user isolation",
-      "Docker-ready deployment configuration",
-      "Comprehensive developer documentation",
-      "Production-ready code structure and patterns"
-    ],
-    "screenshots": [
-      {
-        "url": "./screenshots/widget-small.png",
-        "caption": "Small widget - Shows important email count and detection accuracy at a glance",
-        "type": "widget-small",
-        "required": true,
-        "dimensions": {
-          "width": 300,
-          "height": 150,
-          "note": "Approximate - widget is responsive"
-        }
-      },
-      {
-        "url": "./screenshots/widget-large.png",
-        "caption": "Large widget - Displays important emails with sender, subject, urgency levels, and detection metrics",
-        "type": "widget-large",
-        "required": true,
-        "dimensions": {
-          "width": 600,
-          "height": 400,
-          "note": "Approximate - widget is responsive"
-        }
-      },
-      {
-        "url": "./screenshots/dashboard.png",
-        "caption": "Full app dashboard (accessed by clicking widget)",
-        "type": "full-app",
-        "required": false
-      },
-      {
-        "url": "./screenshots/trigger-manager.png",
-        "caption": "Trigger management interface",
-        "type": "feature",
-        "required": false
-      }
+      "AI triage of incoming Gmail into urgent / needs-reply / FYI",
+      "Custom urgency rules: natural-language, VIP senders, keywords, deadline detection",
+      "Slack pings with a deep link straight to the email",
+      "Auto-file mail by sender/subject with label rules",
+      "One-tap bulk clear of Promotions, Social, and Spam",
+      "Runs on a schedule (every 5 minutes by default)"
     ],
     "screenshot_instructions": {
       "required_files": [
@@ -287,20 +261,25 @@
         "Ensure good lighting and contrast for visibility"
       ]
     },
-    "required_integrations": [],
+    "required_integrations": [
+      "gmail",
+      "slack"
+    ],
     "optional_integrations": [],
     "core_action": {
-      "_comment": "Filled during brainstorm. Describes what this app DOES to the outside world + the bar for done. Used by the identity gate's advisory checks. See INTEGRATIONS.md + CLAUDE.md 'Build patterns'.",
-      "description": "",
-      "external_systems": [],
-      "requires_approval": false,
-      "definition_of_done": ""
+      "definition_of_done": "A new urgent email arrives, and within a scan the user gets a Slack message with a working Gmail deep link, sees the email flagged as urgent in the dashboard and widget, has matching mail auto-filed by label rules, and can one-tap clear Promotions/Social/Spam \u2014 or sees a clear connect-Gmail/Slack prompt when an integration is not connected.",
+      "external_systems": [
+        "gmail",
+        "slack"
+      ]
     },
     "api_contract": {
       "health_endpoint": "/health",
       "widget_endpoint": "/api/widget",
       "auth_method": "x-user-id-header",
-      "required_headers": ["X-User-ID"],
+      "required_headers": [
+        "X-User-ID"
+      ],
       "rate_limits": {
         "per_minute": 60,
         "per_hour": 1000
@@ -317,7 +296,11 @@
     },
     "deployment": {
       "docker_compose_version": "3.8",
-      "services": ["postgres", "backend", "frontend"],
+      "services": [
+        "postgres",
+        "backend",
+        "frontend"
+      ],
       "health_check_path": "/health",
       "ready_check_path": "/health",
       "startup_timeout_seconds": 60

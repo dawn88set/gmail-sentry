@@ -1,90 +1,337 @@
+import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
+import { ShieldCheck, RefreshCw, Megaphone, Users, Ban } from 'lucide-react';
+import { useToast } from '@/components/Toast';
+import { AnimatedNumber } from '@/components/AnimatedNumber';
+import { SmartOnboarding } from '@/components/SmartOnboarding';
+import { AlertSheet } from '@/components/AlertSheet';
+import { Avatar, parseSender } from '@/components/Avatar';
+import { ConnectButton } from '@/components/ConnectButtons';
+import { requestConnectIntegration } from '@/lib/integrations';
+import { Screen } from '@/components/ios/Screen';
+import { ListSection, ListGroup, ListRow } from '@/components/ios/List';
+import { IosButton } from '@/components/ios/IosButton';
+import { SkeletonRows } from '@/components/ios/Skeleton';
 import {
-  ArrowRight,
-  Sparkles,
-  Activity,
-  CheckCircle2,
-  Clock,
-} from 'lucide-react';
-import { Link } from 'react-router-dom';
-import {
-  PageHeader,
-  Section,
-  Card,
-  CardContent,
-  Stat,
-  List,
-  Row,
-  Button,
-  EmptyState,
-} from '@clarittyai/app-ui';
-import { appName } from '@/lib/app-meta';
+  getAlerts,
+  getCleanup,
+  getRequiredIntegrations,
+  getOnboardingStatus,
+  runScan,
+  toApiError,
+  type Alert,
+  type CleanupCounts,
+  type Tier,
+  type RequiredIntegration,
+} from '@/lib/api';
+import { cn } from '@/lib/utils';
 
-/**
- * The app's landing page — the STARTER home that generation replaces with the
- * real work screen. It's also a worked example of composing a page from the
- * @clarittyai/app-ui kit: PageHeader (one primary action) → a Stat row → a
- * Section with a List → an EmptyState. Renders inside <Layout> (header + bg).
- */
-export default function Dashboard() {
+const TIER_CHIP: Record<Tier, string> = {
+  urgent: 'bg-accent/15 text-accent',
+  needs_reply: 'bg-muted text-muted-foreground',
+  fyi: 'bg-muted text-muted-foreground',
+};
+const TIER_LABEL: Record<Tier, string> = { urgent: 'Urgent', needs_reply: 'Needs reply', fyi: 'FYI' };
+
+const CATEGORIES = [
+  { key: 'promotions' as const, label: 'Promotions', field: 'promotions' as const, Icon: Megaphone },
+  { key: 'social' as const, label: 'Social', field: 'social' as const, Icon: Users },
+  { key: 'spam' as const, label: 'Spam', field: 'spam' as const, Icon: Ban },
+];
+
+function relativeTime(iso?: string | null): string {
+  if (!iso) return '';
+  const then = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`).getTime();
+  if (Number.isNaN(then)) return '';
+  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (secs < 60) return 'now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+  return `${Math.floor(secs / 86400)}d`;
+}
+
+function LiveDot() {
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-4 py-8 sm:px-6 lg:py-10">
-      <PageHeader
-        title={appName}
-        description="Your starter app. Replace this page with the real work your users came for."
-        action={
-          <Button icon={<Sparkles className="h-4 w-4" />}>Get started</Button>
+    <span className="relative flex h-2 w-2">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+    </span>
+  );
+}
+
+export default function Dashboard() {
+  const { show } = useToast();
+  const navigate = useNavigate();
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [cleanup, setCleanup] = useState<CleanupCounts | null>(null);
+  const [integrations, setIntegrations] = useState<RequiredIntegration[]>([]);
+  const [appId, setAppId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  const [onboarding, setOnboarding] = useState(() => {
+    try {
+      return localStorage.getItem('gs_onboarded') !== '1';
+    } catch {
+      return false;
+    }
+  });
+  const [obRole, setObRole] = useState('');
+  const [obIntent, setObIntent] = useState('');
+
+  const finishOnboarding = (applied: boolean) => {
+    try {
+      localStorage.setItem('gs_onboarded', '1');
+    } catch {
+      /* ignore */
+    }
+    setOnboarding(false);
+    if (applied) void refresh();
+  };
+
+  const refresh = useCallback(async () => {
+    try {
+      const [a, c] = await Promise.all([getAlerts('active'), getCleanup()]);
+      setAlerts(a);
+      setCleanup(c);
+    } catch (err) {
+      show({ tone: 'error', text: `Couldn’t load inbox: ${toApiError(err).message}` });
+    } finally {
+      setLoading(false);
+    }
+  }, [show]);
+
+  useEffect(() => {
+    void refresh();
+    getRequiredIntegrations()
+      .then((s) => {
+        setIntegrations(s.integrations || []);
+        setAppId(s.app_id ?? null);
+      })
+      .catch(() => undefined);
+    getOnboardingStatus()
+      .then((s) => {
+        setObRole(s.role || '');
+        setObIntent(s.intent || '');
+        if (s.onboarded) {
+          try {
+            localStorage.setItem('gs_onboarded', '1');
+          } catch {
+            /* ignore */
+          }
+          setOnboarding(false);
+        } else {
+          setOnboarding(true);
         }
-      />
+      })
+      .catch(() => undefined);
+  }, [refresh]);
 
-      {/* A Stat row — the at-a-glance metrics a home screen opens with. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Card>
-          <CardContent className="pt-5">
-            <Stat label="Active" value="—" icon={<Activity className="h-4 w-4" />} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-5">
-            <Stat
-              label="Done today"
-              value="—"
-              icon={<CheckCircle2 className="h-4 w-4" />}
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-5">
-            <Stat label="Pending" value="—" icon={<Clock className="h-4 w-4" />} />
-          </CardContent>
-        </Card>
-      </div>
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const s = await runScan();
+      show({
+        tone: 'success',
+        text: `Scanned ${s.scanned} email${s.scanned === 1 ? '' : 's'} — flagged ${s.flagged}, filed ${s.labeled}, notified ${s.notified}.`,
+      });
+      await refresh();
+    } catch (err) {
+      const e = toApiError(err);
+      show({
+        tone: 'error',
+        text: e.status === 409 ? 'Connect Gmail to start scanning.' : `Scan failed: ${e.message}`,
+      });
+    } finally {
+      setScanning(false);
+    }
+  };
 
-      <Section title="Build your app">
-        <List>
-          <Row
-            title="Compose from the kit"
-            subtitle="Use @clarittyai/app-ui primitives (PageHeader, Section, Card, Stat, List, Table, Dialog, EmptyState/ErrorState) so every screen stays on-brand and handles its states."
-          />
-          <Row
-            title="Wire your data"
-            subtitle="Add backend agents, workflows, and triggers; surface a glance in the widget — then route this page to your real home screen."
-          />
-        </List>
-        <Link
-          to="/tasks"
-          className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-accent"
-        >
-          See the example task screen <ArrowRight className="h-4 w-4" />
-        </Link>
-      </Section>
+  const urgent = alerts.filter((a) => a.tier === 'urgent').length;
+  const needsReply = alerts.filter((a) => a.tier === 'needs_reply').length;
+  const attention = urgent + needsReply;
+  const calm = attention === 0;
+  const notConnected = integrations.filter((i) => !i.connected);
 
-      <Section title="Your home screen">
-        <EmptyState
-          title="Nothing here yet"
-          description="This is where your app's primary content will live once you build it."
-          action={<Button variant="secondary">Open the example</Button>}
-        />
-      </Section>
-    </div>
+  return (
+    <>
+      <AnimatePresence>
+        {onboarding && (
+          <SmartOnboarding onDone={finishOnboarding} initialRole={obRole} initialIntent={obIntent} />
+        )}
+      </AnimatePresence>
+
+      <Screen
+        title="Inbox"
+        action={
+          <IosButton
+            variant="tinted"
+            onClick={handleScan}
+            disabled={scanning}
+            icon={<RefreshCw className={cn('h-4 w-4', scanning && 'animate-spin')} />}
+          >
+            {scanning ? 'Scanning' : 'Scan'}
+          </IosButton>
+        }
+      >
+        {/* Status */}
+        <ListGroup variant="plain-mobile">
+          <div className="p-5">
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <LiveDot /> Watching
+            </div>
+            {calm ? (
+              <div className="flex items-center gap-3">
+                <ShieldCheck className="h-8 w-8 text-accent" />
+                <div>
+                  <div className="text-2xl font-bold text-foreground">All clear</div>
+                  <div className="text-[13px] text-muted-foreground">Scanned {cleanup?.last_scan ?? 'recently'}</div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-2.5">
+                  <AnimatedNumber value={attention} className="text-6xl font-bold leading-none tracking-tighter text-foreground" />
+                  <span className="text-[15px] font-medium text-muted-foreground">need attention</span>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {urgent > 0 && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-[13px] font-semibold text-accent">
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent" /> {urgent} urgent
+                    </span>
+                  )}
+                  {needsReply > 0 && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-[13px] font-semibold text-muted-foreground">
+                      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" /> {needsReply} to reply
+                    </span>
+                  )}
+                  <span className="text-[13px] text-muted-foreground">· scanned {cleanup?.last_scan ?? '—'}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </ListGroup>
+
+        {/* Connect */}
+        {notConnected.length > 0 && (
+          <ListSection footer="Connecting is handled by Claritty — your credentials stay on the platform.">
+            <ListGroup variant="plain-mobile">
+              <div className="space-y-3 p-4">
+                <p className="text-[13px] text-muted-foreground">
+                  Connect your accounts to scan your real inbox and send Slack pings.
+                  <span className="text-muted-foreground/70"> Showing sample data for now.</span>
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  {notConnected.map((i) => (
+                    <ConnectButton
+                      key={i.id}
+                      integrationId={i.id}
+                      className="w-full justify-center sm:w-auto"
+                      onClick={() => {
+                        const posted = requestConnectIntegration(i.id, appId);
+                        show({
+                          tone: posted ? 'success' : 'error',
+                          text: posted ? `Opening ${i.name} connection…` : `Connect ${i.name} on the Integrations tab.`,
+                        });
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </ListGroup>
+          </ListSection>
+        )}
+
+        {/* Cleanup — tap a category to see exactly what's there before clearing */}
+        <ListSection title="Clear the noise" footer="Tap a category to review what will be cleared. Clear all moves the whole category to Trash (recoverable 30 days), in batches.">
+          <ListGroup variant="plain-mobile">
+            {CATEGORIES.map(({ key, label, field, Icon }) => {
+              const count = cleanup ? (cleanup[field] as number) : 0;
+              return (
+                <ListRow
+                  key={key}
+                  onClick={() => navigate(`/cleanup/${key}`)}
+                  leading={
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <Icon className="h-[18px] w-[18px]" />
+                    </span>
+                  }
+                  title={label}
+                  trailing={<span className="text-[15px] tabular-nums text-muted-foreground">{count}</span>}
+                  chevron
+                />
+              );
+            })}
+          </ListGroup>
+        </ListSection>
+
+        {/* Attention */}
+        <ListSection title="Needs your attention">
+          {loading ? (
+            <ListGroup variant="plain-mobile">
+              <SkeletonRows count={4} />
+            </ListGroup>
+          ) : alerts.length === 0 ? (
+            <ListGroup variant="plain-mobile">
+              <div className="flex flex-col items-center gap-2 p-8 text-center">
+                <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15">
+                  <ShieldCheck className="h-6 w-6 text-accent" />
+                </div>
+                <p className="text-[15px] font-semibold text-foreground">Inbox is calm</p>
+                <p className="max-w-xs text-[13px] text-muted-foreground">
+                  Nothing needs your attention. Run a scan, or set up rules on the Rules tab.
+                </p>
+              </div>
+            </ListGroup>
+          ) : (
+            <ListGroup variant="plain-mobile">
+              {alerts.slice(0, 5).map((a) => {
+                const who = parseSender(a.sender || '');
+                const chip = TIER_CHIP[a.tier] ?? TIER_CHIP.fyi;
+                return (
+                  <ListRow
+                    key={a.id}
+                    onClick={() => setSelectedAlert(a)}
+                    leading={<Avatar name={who.name} email={who.email} className="h-9 w-9 text-sm" />}
+                    title={
+                      <div className="flex items-baseline gap-2">
+                        <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-foreground">
+                          {a.subject || '(no subject)'}
+                        </span>
+                        <span className="flex-shrink-0 text-[12px] text-muted-foreground">{relativeTime(a.created_at)}</span>
+                      </div>
+                    }
+                    subtitle={
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        <span className={cn('flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold', chip)}>
+                          {TIER_LABEL[a.tier]}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">
+                          <span className="text-foreground/70">{who.name || a.sender}</span>
+                          {a.reason ? ` — ${a.reason}` : ''}
+                        </span>
+                      </div>
+                    }
+                    chevron
+                  />
+                );
+              })}
+              <ListRow
+                onClick={() => navigate('/attention')}
+                title={<span className="font-medium text-accent">See all &amp; take action</span>}
+                chevron
+              />
+            </ListGroup>
+          )}
+        </ListSection>
+      </Screen>
+
+      <AnimatePresence>
+        {selectedAlert && (
+          <AlertSheet alert={selectedAlert} onClose={() => setSelectedAlert(null)} onChanged={() => void refresh()} />
+        )}
+      </AnimatePresence>
+    </>
   );
 }

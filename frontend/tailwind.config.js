@@ -97,6 +97,31 @@ export default {
           DEFAULT: '#FF9500',
           foreground: '#FFFFFF',
         },
+        // Gmail's four brand hues — kept for the mark / optional semantics.
+        gmail: {
+          blue: { 50: '#E8F0FE', 100: '#D2E3FC', 500: '#1A73E8', 600: '#1967D2', 700: '#174EA6' },
+          red: { 50: '#FCE8E6', 100: '#FAD2CF', 500: '#EA4335', 600: '#D93025', 700: '#B31412' },
+          yellow: { 50: '#FEF7E0', 100: '#FEEFC3', 500: '#FBBC04', 600: '#F9AB00', 700: '#E37400' },
+          green: { 50: '#E6F4EA', 100: '#CEEAD6', 500: '#34A853', 600: '#1E8E3E', 700: '#0D652D' },
+        },
+        // Slack brand colors (for the official "Add to Slack" mark).
+        slack: {
+          blue: '#36C5F0',
+          green: '#2EB67D',
+          yellow: '#ECB22E',
+          red: '#E01E5A',
+        },
+        // Gmail-style initial-avatar colors — solid, white-legible circles.
+        av: {
+          blue: '#1A73E8',
+          teal: '#00897B',
+          indigo: '#5C6BC0',
+          purple: '#8E24AA',
+          pink: '#D81B60',
+          green: '#0F9D58',
+          red: '#D93025',
+          brown: '#795548',
+        },
       },
       fontFamily: {
         // Theme-driven: --brand-font holds the full stack (default in index.css).
@@ -115,11 +140,15 @@ export default {
         'xl': '1rem',
         '2xl': '1.5rem',
         '3xl': '2rem',
+        '4xl': '2.5rem',
       },
       boxShadow: {
         'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.1)',
         'lift': '0 10px 40px -10px rgba(0, 0, 0, 0.1)',
         'lift-lg': '0 20px 60px -15px rgba(0, 0, 0, 0.15)',
+        // Apple-style soft elevation — diffuse, low-contrast, layered.
+        'apple': '0 1px 2px rgba(0,0,0,0.04), 0 8px 24px -8px rgba(0,0,0,0.10)',
+        'apple-lg': '0 2px 4px rgba(0,0,0,0.04), 0 24px 48px -16px rgba(0,0,0,0.16)',
       },
       animation: {
         // Subtle entrance motion only. The looping `float`/`glow` (decorative

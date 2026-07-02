@@ -66,19 +66,41 @@ def _humanize(integration_id: str) -> str:
 
 
 def _is_connected(integration_id: str, user_id: str) -> bool:
-    """Probe the platform credential store for this user+integration. A
-    successful fetch ⇒ connected; CredentialsNotAvailable ⇒ not connected.
-    Credentials themselves are discarded here — only the boolean escapes."""
-    try:
-        from claritty_sdk.integrations import platform_creds
-    except Exception:  # noqa: BLE001 — SDK not importable in bare seed dev
+    """True only when the integration is connected for THIS (user, app) — the
+    exact strict, app-scoped check `execute_tool` performs, via the broker's
+    liveness endpoint (POST /internal/integrations/state with this app's id).
+
+    Why not the old `platform_creds.fetch_for_user`: that probed the credential
+    store at USER level (no app_id), so it reported "connected" whenever any
+    user-level credential existed — e.g. a Slack connected on the platform's
+    Integrations tab — even though no APP-SCOPED connection existed. The badge
+    then said Connected while every send 409'd (`findConnected` is per-(user,app)).
+    This lies no more: badge status now matches what a real send will do."""
+    import httpx
+
+    base = (os.environ.get("CLARITTY_PLATFORM_URL") or "").rstrip("/")
+    secret = (
+        os.environ.get("CLARITY_INTERNAL_SECRET")
+        or os.environ.get("CLARITTY_INTERNAL_SECRET")
+        or ""
+    )
+    app_id = os.environ.get("CLARITY_APP_ID") or os.environ.get("CLARITTY_APP_ID") or ""
+    if not base:
         return False
+    body: Dict[str, Any] = {"userId": user_id, "integrationCatalogId": integration_id}
+    if app_id:
+        body["appId"] = app_id
     try:
-        platform_creds.fetch_for_user(integration_id, user_id)
-        return True
-    except platform_creds.CredentialsNotAvailable:
-        return False
-    except Exception as exc:  # noqa: BLE001 — treat transient errors as "unknown/not connected"
+        resp = httpx.post(
+            f"{base}/internal/integrations/state",
+            headers={"X-Claritty-Internal": secret},
+            json=body,
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            return False
+        return bool(resp.json().get("connected"))
+    except Exception as exc:  # noqa: BLE001 — transient errors ⇒ "unknown/not connected"
         logger.warning("connection probe for %s failed: %s", integration_id, exc)
         return False
 

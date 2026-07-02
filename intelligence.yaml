@@ -1,75 +1,95 @@
-# Claritty seed app — v2 manifest.
+# Gmail Sentry — v2 manifest.
 #
-# This file is the SINGLE source of truth for the four runtime
-# primitives the SDK reads at boot: integrations, tools, agents,
-# workflows, triggers. Decorators in backend/{agents,tools}/ bind a
-# Python symbol to an entry by id; they do not carry data this
-# manifest doesn't already declare.
-#
-# The catalog/ tree next to this file is the closed library the
-# generator composes from. The `catalog:` block below pins the
-# specific catalog versions this app was generated against — bumping
-# requires regeneration.
+# Single source of truth for the runtime primitives: integrations, tools,
+# agents, workflows, triggers. Decorators in backend/{agents,tools}/ bind a
+# Python symbol to an entry by id.
 
 schemaVersion: 1
-id: claritty-seed-example
-version: 2.0.0
+id: gmail-sentry
+version: 1.0.0
 
 catalog: []
 
-integrations: []
+# Built-in catalog integrations. The Claritty platform owns connecting these
+# (OAuth on the app's Intelligence / Settings → Integrations tabs); the app
+# declares them here and calls their tools. No API keys, no OAuth code.
+integrations:
+  - id: gmail
+  - id: slack
+  - id: telegram
+  - id: discord
+  - id: twilio
 
 tools:
-  - id: app.echo
-    handler: backend.tools.example_tool:echo
+  - id: app.run_inbox_scan
+    handler: backend.tools.sentry_tools:run_inbox_scan
     input:
-      message: { type: string, required: true }
+      user_id: { type: string, required: false }
     output:
-      reply: { type: string, required: true }
+      ok: { type: boolean, required: false }
+      scanned: { type: number, required: false }
+      flagged: { type: number, required: false }
+      labeled: { type: number, required: false }
+      notified: { type: number, required: false }
+      slack_configured: { type: boolean, required: false }
+      promo_count: { type: number, required: false }
+      social_count: { type: number, required: false }
+      spam_count: { type: number, required: false }
+      error: { type: string, required: false }
 
 agents:
-  - id: example-agent
+  - id: triage-agent
     source: custom
-    handler: backend.agents.example_agent:ExampleAgent
+    handler: backend.agents.triage_agent:TriageAgent
     description: |
-      Echoes a greeting back to the caller, demonstrating the v2
-      manifest-first runtime: the SDK reads input/output/tools from
-      this manifest entry; the agent class only carries the system
-      prompt and any before/after hooks.
+      Gmail Sentry's inbox watchdog. Each run it scans recent inbox mail, files
+      messages by the user's label rules, classifies each into urgent /
+      needs_reply / fyi (fusing natural-language rules, VIP senders, keywords,
+      and deadline/action detection), records alerts, and Slack-pings the user
+      about the ones that need attention — with a deep link to the email.
     model: claude-sonnet-4-6
-    # Reasoning tier: standard | deep | light. A trivial echo is "standard"; an
-    # agent that synthesises multi-source data into the app's valuable output
-    # should be "deep" (→ a strong model + extended thinking + a grounded,
-    # self-critiquing prompt). See .claude/prompts/implement-agent.md.
     reasoning: standard
-    integrations: []
-    tools: [app.echo]
+    integrations: [gmail, slack, telegram, discord, twilio]
+    # app.run_inbox_scan orchestrates a full scan; the gmail.*/slack.* catalog
+    # tools are the concrete integration capabilities it exercises (read inbox,
+    # label mail, post the Slack alert) — declared so the platform sees the
+    # Gmail + Slack integrations as actually used.
+    tools:
+      - app.run_inbox_scan
+      - gmail.list_messages
+      - gmail.search
+      - gmail.add_label
+      - slack.post_message
+      - slack.list_channels
+      - telegram.send_message
+      - discord.send_message
+      - twilio.send_whatsapp
     input:
-      name: { type: string, required: true }
+      user_id: { type: string, required: true }
     output:
-      greeting: { type: string, required: true }
-    timeout: 30
+      summary: { type: string, required: true }
+    timeout: 120
 
 workflows:
-  - id: example-workflow
+  - id: scan-inbox
     inputs:
-      name: { type: string, required: true }
+      user_id: { type: string, required: true }
     steps:
-      - id: greet
-        agent: example-agent
+      - id: scan
+        agent: triage-agent
         input:
-          name: "${input.name}"
+          user_id: "${input.user_id}"
     outputs:
-      greeting: "${steps.greet.output.greeting}"
+      summary: "${steps.scan.output.summary}"
 
 triggers:
-  - id: example_manual
+  - id: sentry-scan
     type: SCHEDULE
-    workflow: example-workflow
-    name: Daily greeting
-    description: Demo trigger — fires the example workflow on a schedule.
-    supportedSchedules: [DAILY]
+    workflow: scan-inbox
+    name: Sentry inbox scan
+    description: Scan the inbox on an interval and alert on urgent mail.
+    supportedSchedules: [INTERVAL]
     maxInstancesPerUser: 1
     configFields:
-      - { key: time, type: time, required: true, default: "09:00" }
-      - { key: timezone, type: timezone, required: true }
+      - { key: interval_minutes, type: number, required: true, label: "Scan every (minutes)", default: 5 }
+      - { key: timezone, type: timezone, required: true, label: "Timezone" }

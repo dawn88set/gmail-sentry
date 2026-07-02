@@ -88,18 +88,17 @@ function ToastView({
   const success = toast.tone === 'success';
   const Icon = success ? CheckCircle2 : AlertCircle;
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] z-[60] flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-[60] flex justify-center px-4 lg:bottom-[calc(env(safe-area-inset-bottom)+1.5rem)]">
       <div
         role="status"
         className={cn(
-          'pointer-events-auto flex max-w-md items-start gap-3 rounded-2xl border bg-card px-4 py-3 shadow-lg',
-          success ? 'border-green-500/30' : 'border-red-500/30',
+          'pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-apple-lg',
         )}
       >
         <span
           className={cn(
-            'mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
-            success ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500',
+            'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
+            success ? 'bg-accent/15 text-accent' : 'bg-destructive/15 text-destructive',
           )}
         >
           <Icon className="h-4 w-4" />

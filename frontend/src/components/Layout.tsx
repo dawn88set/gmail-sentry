@@ -1,107 +1,60 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, ListTodo } from 'lucide-react';
+import { Inbox, SlidersHorizontal } from 'lucide-react';
+import { TabBar } from '@/components/ios/TabBar';
+import { SentryMark } from '@/components/SentryMark';
 import { cn } from '@/lib/utils';
-import { appName } from '@/lib/app-meta';
+
+const NAV = [
+  { name: 'Inbox', href: '/', icon: Inbox },
+  { name: 'Rules', href: '/rules', icon: SlidersHorizontal },
+];
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
+/**
+ * Responsive shell:
+ *  - Desktop (lg+): a top bar with the brand + a segmented tab control.
+ *  - Mobile (<lg): the iOS bottom tab bar.
+ */
 export default function Layout({ children }: LayoutProps) {
-  const location = useLocation();
-
-  // Integration connection is owned by the Claritty platform (the app's
-  // Intelligence / Settings → Integrations tabs). The app declares integrations
-  // in intelligence.yaml and ships NO in-app connect surface — so no
-  // Integrations nav item or setup banner here.
-  const navigation = [
-    { name: 'Home', href: '/', icon: Home },
-    { name: 'Tasks', href: '/tasks', icon: ListTodo },
-  ];
-
-  // App glyph — the app's own initial in a themed tile. Derived from the
-  // stamped appName so every generated app brands its OWN header (never the
-  // platform mark). Theme-token driven so it follows the per-app palette.
-  const appInitial = (appName.trim()[0] || 'A').toUpperCase();
-
+  const { pathname } = useLocation();
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header — glass morphism over the page (semantic tokens for dark mode) */}
-      <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16 lg:h-20">
-            {/* Brand — the app's OWN initial glyph + name. Generation stamps
-                appName per app; the glyph follows the per-app theme accent. */}
-            <Link to="/" className="flex items-center gap-2.5 group">
-              <span
-                aria-hidden="true"
-                className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent/15 text-sm font-bold text-foreground"
-              >
-                {appInitial}
-              </span>
-              <span className="inline-block text-lg lg:text-xl font-bold text-foreground transition-colors group-hover:text-accent">
-                {appName}
-              </span>
-            </Link>
-
-            {/* Navigation */}
-            <nav className="flex items-center gap-1 lg:gap-2">
-              {navigation.map((item) => {
-                const isActive = location.pathname === item.href;
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.name}
-                    to={item.href}
-                    className="relative px-4 lg:px-5 py-2 rounded-lg group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-4 w-4" />
-                      <span
-                        className={cn(
-                          'text-sm lg:text-base font-medium transition-colors',
-                          isActive
-                            ? 'text-foreground'
-                            : 'text-muted-foreground group-hover:text-foreground'
-                        )}
-                      >
-                        {item.name}
-                      </span>
-                    </div>
-
-                    {/* Active indicator */}
-                    {isActive && (
-                      <span className="absolute inset-0 bg-accent/10 rounded-lg -z-10" />
-                    )}
-
-                    {/* Hover effect — background tint (no scale, per brand) */}
-                    <span className="absolute inset-0 bg-muted rounded-lg opacity-0 group-hover:opacity-100 transition-opacity -z-20" />
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
+    <div className="relative min-h-screen bg-background">
+      {/* Desktop top tabs */}
+      <header className="sticky top-0 z-40 hidden border-b border-border/60 bg-background/70 backdrop-blur-xl lg:block">
+        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
+          <Link to="/" className="flex items-center gap-2.5">
+            <SentryMark className="h-8 w-8" />
+            <span className="text-[15px] font-semibold tracking-tight text-foreground">Gmail Sentry</span>
+          </Link>
+          <nav className="flex items-center gap-1 rounded-full border border-border/60 bg-muted/50 p-1">
+            {NAV.map((it) => {
+              const active = pathname === it.href;
+              const Icon = it.icon;
+              return (
+                <Link
+                  key={it.name}
+                  to={it.href}
+                  className={cn(
+                    'flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                    active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {it.name}
+                </Link>
+              );
+            })}
+          </nav>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="min-h-[calc(100vh-16rem)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 space-y-6">
-          {children}
-        </div>
-      </main>
+      <main className="min-h-screen">{children}</main>
 
-      {/* Footer - Minimal Apple style */}
-      <footer className="border-t border-border py-8 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
-            <p className="text-center font-medium text-foreground sm:text-left">{appName}</p>
-            <p className="text-center text-xs text-muted-foreground sm:text-right">
-              © {new Date().getFullYear()} {appName}
-            </p>
-          </div>
-        </div>
-      </footer>
+      {/* Mobile bottom tab bar */}
+      <TabBar />
     </div>
   );
 }

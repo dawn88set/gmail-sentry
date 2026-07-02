@@ -156,59 +156,88 @@ def init_db():
     print("✅ Database schema reconciled to models (additive, data-preserving)")
 
 
-def seed_example_tasks():
+def seed_demo_data():
     """
-    Populate the example "Tasks" app with a few sample rows on first run so the
-    template's widget (and dashboard) show real, varied content out of the box —
-    this is what makes the small/medium/large widget sizes visibly different.
+    Seed Gmail Sentry with a couple of starter triage rules + sample alerts on
+    first run, so the dashboard and the small/medium/large widget sizes show
+    real, varied content out of the box (before Gmail is connected and a real
+    scan runs).
 
-    Idempotent: only seeds when the tasks table is completely empty. Seeds for
-    the local identity ("dev-user" — what backend/security.py:require_user returns
-    in local dev, when no Claritty edge is present to stamp a real user), so the
-    template's data shows out of the box when you run it locally.
+    Idempotent: only seeds when there are no triage rules yet. Seeds for the
+    local identity ("dev-user" — what backend/security.py:require_user returns
+    in local dev, when no Claritty edge is present to stamp a real user).
 
-    This is template/example data only — generated apps overwrite the models and
-    this layer with their own, so it never leaks into a real app.
+    Sample alerts are clearly placeholder content; a real scan replaces the
+    picture with live mail. Generated apps own this layer, so it never leaks
+    into someone else's app.
     """
     from backend import models
+    from datetime import datetime, timedelta
 
     db = SessionLocal()
     try:
-        if db.query(models.Task).count() > 0:
-            return  # already has data — don't duplicate
-
         DEMO_USER = "dev-user"
-        # (title, priority, suggested_action, done) — mixed so open_count,
-        # top_priority, and done_today are all non-zero.
-        samples = [
-            ("Fix the failing checkout webhook", "urgent",
-             "Replay the last failed event and check the signature.", False),
-            ("Reply to the partnership email", "high",
-             "Draft a short yes and propose three times.", False),
-            ("Review the Q3 roadmap draft", "high",
-             "Skim for scope creep, flag the top two risks.", False),
-            ("Prep slides for the demo", "medium",
-             "Reuse last month's deck, swap in new metrics.", False),
-            ("Refill coffee beans", "low",
-             "Order the usual two bags.", False),
-            ("Book dentist appointment", "medium",
-             "Call before noon, they close early today.", False),
-            ("Submit expense report", "medium", None, True),
-            ("Merge the docs PR", "low", None, True),
-        ]
+        if db.query(models.TriageRule).filter(models.TriageRule.user_id == DEMO_USER).count() > 0:
+            return  # already seeded — don't duplicate
 
-        for title, priority, action, done in samples:
-            db.add(models.Task(
+        rules = [
+            models.TriageRule(user_id=DEMO_USER, name="Anything from my manager",
+                              kind="nl", value="Any email from my manager or a company executive",
+                              tier="urgent"),
+            models.TriageRule(user_id=DEMO_USER, name="Invoices & payments due",
+                              kind="nl", value="Invoices, bills, or payments that are due soon",
+                              tier="needs_reply"),
+            models.TriageRule(user_id=DEMO_USER, name="Keyword: contract",
+                              kind="keyword", value="contract", tier="needs_reply"),
+        ]
+        for r in rules:
+            db.add(r)
+
+        label_rules = [
+            models.LabelRule(user_id=DEMO_USER, name="Newsletters → Reading",
+                             match_type="subject_keyword", match_value="newsletter",
+                             target_label="Reading", archive_after=True),
+        ]
+        for lr in label_rules:
+            db.add(lr)
+
+        now = datetime.utcnow()
+        sample_alerts = [
+            ("Re: Q3 budget sign-off needed today", "Dana Levi <dana@acme.com>",
+             "Can you approve the revised Q3 budget before 5pm? Finance is waiting on it.",
+             "urgent", "Matches 'Anything from my manager' + a same-day deadline", 4),
+            ("Invoice #4821 is due in 2 days", "billing@vendorco.com",
+             "Your invoice of $2,400 is due on the 2nd. Pay now to avoid a late fee.",
+             "needs_reply", "Matches 'Invoices & payments due'", 30),
+            ("Contract draft for review", "legal@partner.io",
+             "Attached is the partnership contract — please review the redlines.",
+             "needs_reply", "Matches keyword 'contract'", 90),
+        ]
+        for subj, sender, snippet, tier, reason, mins_ago in sample_alerts:
+            db.add(models.Alert(
                 user_id=DEMO_USER,
-                title=title,
-                priority=priority,
-                suggested_action=action,
-                done=done,
+                gmail_message_id=f"demo-{abs(hash(subj)) % 10_000_000}",
+                thread_id=None,
+                rfc822_msgid=None,
+                sender=sender, subject=subj, snippet=snippet,
+                tier=tier, reason=reason,
+                deep_link="https://mail.google.com/mail/u/0/#inbox",
+                slack_sent=True, status="new",
+                created_at=now - timedelta(minutes=mins_ago),
             ))
+
+        db.add(models.ScanRun(
+            user_id=DEMO_USER, scanned=42, flagged=3, labeled=1, notified=3,
+            promo_count=142, social_count=38, spam_count=11,
+            started_at=now - timedelta(minutes=4),
+        ))
+
+        db.add(models.SentryConfig(user_id=DEMO_USER, slack_channel="", notify_tier="urgent"))
+
         db.commit()
-        print(f"✅ Seeded {len(samples)} example tasks for '{DEMO_USER}'")
+        print(f"✅ Seeded Gmail Sentry demo data for '{DEMO_USER}'")
     except Exception as e:  # never block startup on seed failure
         db.rollback()
-        print(f"⚠️  Failed to seed example tasks: {e}")
+        print(f"⚠️  Failed to seed demo data: {e}")
     finally:
         db.close()

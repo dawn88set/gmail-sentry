@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Check } from 'lucide-react';
-import { WidgetContainer, WidgetButton, WidgetBadge } from '@clarittyai/widget-toolkit';
-import { getWidgetData, toggleTask, toApiError, type WidgetData, type TaskPriority, type WidgetTask } from '@/lib/api';
-import { runQuickAction, notifyWidgetStateChanged } from '@/lib/widget-actions';
+import { ArrowUpRight, ShieldCheck, Shield } from 'lucide-react';
+import { WidgetContainer, WidgetButton } from '@clarittyai/widget-toolkit';
+import {
+  getWidgetData,
+  clearCategoryAll,
+  toApiError,
+  type WidgetData,
+  type WidgetAlert,
+  type Tier,
+} from '@/lib/api';
+import { runQuickAction, triggerDeepLink, notifyWidgetStateChanged } from '@/lib/widget-actions';
 import { useToast } from '@/components/Toast';
 import { cn } from '@/lib/utils';
 import type { WidgetSize } from '@/lib/widget-sizes';
@@ -14,25 +21,37 @@ interface WidgetProps {
   className?: string;
 }
 
-// Priority → Claritty UI-kit badge variant (consistent across all apps).
-type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral';
-const PRIORITY_BADGE: Record<TaskPriority, { variant: BadgeVariant; label: string }> = {
-  urgent: { variant: 'error', label: 'Urgent' },
-  high: { variant: 'warning', label: 'High' },
-  medium: { variant: 'info', label: 'Medium' },
-  low: { variant: 'neutral', label: 'Low' },
-};
-function pBadge(p?: TaskPriority | null) {
-  return PRIORITY_BADGE[(p as TaskPriority) || 'medium'] ?? PRIORITY_BADGE.medium;
+const TIER_LABEL: Record<Tier, string> = { urgent: 'Urgent', needs_reply: 'Reply', fyi: 'FYI' };
+
+/** Rich, state-aware gradient backdrop + soft glows + a shield watermark. */
+function Backdrop({ calm }: { calm: boolean }) {
+  return (
+    <>
+      <div
+        className={cn(
+          'absolute inset-0 bg-gradient-to-br',
+          calm ? 'from-gmail-green-500 to-gmail-green-700' : 'from-accent to-accent-600',
+        )}
+      />
+      {/* soft light blooms for depth */}
+      <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full bg-white/25 blur-2xl" />
+      <div className="absolute -bottom-12 -left-8 h-32 w-32 rounded-full bg-black/10 blur-2xl" />
+      {/* subtle brand watermark */}
+      <Shield className="absolute -bottom-5 -right-4 h-28 w-28 text-white/10" strokeWidth={1.5} />
+    </>
+  );
 }
 
-/**
- * The dashboard widget — built from the published Claritty UI kit
- * (@clarittyai/widget-toolkit): WidgetContainer owns the liquid-glass surface,
- * rounded-3xl, exact sizes, padding, overflow, and the data-widget-size attr;
- * WidgetButton / WidgetBadge keep actions + chips on-brand. This is the shape
- * every generated app follows (see the platform's WIDGET_RULES).
- */
+/** White "watching" pulse for the colored surface. */
+function LiveDot() {
+  return (
+    <span className="relative flex h-2 w-2">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-70" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+    </span>
+  );
+}
+
 export default function Widget({ size = 'medium', className }: WidgetProps) {
   const [data, setData] = useState<WidgetData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,8 +61,6 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
   useEffect(() => {
     void fetchData();
     const interval = setInterval(() => void fetchData(), 30000);
-    // Refetch immediately when something in the same page mutates task data
-    // (e.g. the agent-graph runner's "Run trigger" creates a task).
     const onRefresh = () => void fetchData();
     window.addEventListener('claritty:widget-refresh', onRefresh);
     return () => {
@@ -58,41 +75,28 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
       setData(await getWidgetData(size));
       setError(null);
     } catch (err) {
-      setError('Failed to load tasks');
+      setError('Failed to load inbox');
       console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Meaningful action: complete a task in place. Optimistic, real API, then resync.
-  const completeTask = async (id?: string | null) => {
-    if (!id) return;
-    setData((d) =>
-      d
-        ? {
-            ...d,
-            open_count: Math.max(0, (d.open_count ?? 0) - 1),
-            done_today: (d.done_today ?? 0) + 1,
-            tasks: (d.tasks ?? []).filter((t) => t.id !== id),
-            top_task: undefined,
-          }
-        : d,
-    );
+  const openApp = () => triggerDeepLink({ path: '/' });
+
+  const clearJunk = async (category: 'promotions' | 'social' | 'spam') => {
     try {
-      await runQuickAction({ actionId: 'complete-task', run: () => toggleTask(id) });
+      const res = await runQuickAction({ actionId: `clear-${category}`, run: () => clearCategoryAll(category) });
+      show({ tone: 'success', text: `Cleared ${res.cleared.toLocaleString()} ${category} email${res.cleared === 1 ? '' : 's'} to Trash.` });
       notifyWidgetStateChanged();
     } catch (err) {
-      // Never fail silently — tell the user why. A 409 means an integration this
-      // action needs isn't connected; everything else shows the real message. The
-      // finally-block refetch restores the optimistic change.
       const e = toApiError(err);
       show({
         tone: 'error',
         text:
           e.status === 409 || e.code === 'not_connected'
-            ? 'Connect the required integration, then try again.'
-            : `Couldn’t complete that: ${e.message}`,
+            ? 'Connect Gmail on the Integrations tab, then try again.'
+            : `Couldn’t clear ${category}: ${e.message}`,
       });
     } finally {
       void fetchData();
@@ -101,23 +105,20 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
 
   if (loading) {
     return (
-      <WidgetContainer size={size} className={cn('animate-pulse', className)}>
-        <div className="mb-4 h-4 w-3/4 rounded bg-muted" />
-        <div className="h-8 w-1/2 rounded bg-muted" />
+      <WidgetContainer size={size} className={cn('animate-pulse bg-accent/20', className)}>
+        <div className="mb-4 h-4 w-3/4 rounded bg-white/25" />
+        <div className="h-8 w-1/2 rounded bg-white/25" />
       </WidgetContainer>
     );
   }
 
   if (error || !data) {
-    // High-contrast on the glass surface in BOTH themes: the headline uses
-    // text-foreground (muted-on-glass is ~2:1 and reads as invisible), and the
-    // Retry uses the themed WidgetButton — never a hardcoded blue.
     return (
       <WidgetContainer
         size={size}
         className={cn('flex flex-col items-center justify-center gap-2 text-center', className)}
       >
-        <p className="text-sm font-medium text-foreground">{error ?? 'No data yet'}</p>
+        <p className="text-sm font-semibold text-foreground">{error ?? 'No data yet'}</p>
         <WidgetButton variant="secondary" onClick={() => void fetchData()}>
           Retry
         </WidgetButton>
@@ -125,121 +126,153 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
     );
   }
 
-  const open = data.open_count ?? 0;
-  const done = data.done_today ?? 0;
-  const tasks = data.tasks ?? [];
+  const attention = (data.urgent_count ?? 0) + (data.needs_reply_count ?? 0);
+  const allClear = data.all_clear ?? attention === 0;
 
-  // ---- Small: headline metric + one meaningful action ----------------------
+  // ---- Small ---------------------------------------------------------------
   if (size === 'small') {
     return (
-      <WidgetContainer size="small" className={cn('flex flex-col justify-between', className)}>
-        <div>
-          <div className={cn('text-5xl font-bold leading-none', open > 0 ? 'text-foreground' : 'text-muted-foreground')}>
-            {open}
+      <WidgetContainer size="small" className={cn('relative text-white', className)}>
+        <Backdrop calm={allClear} />
+        <div className="relative z-10 flex h-full flex-col justify-between">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/80">
+            <LiveDot /> Watching
           </div>
-          <div className="mt-1 text-xs font-medium text-muted-foreground">
-            open task{open === 1 ? '' : 's'}
+          <div>
+            <div className="text-6xl font-bold leading-none tracking-tighter">{attention}</div>
+            <div className="mt-1 text-xs font-medium text-white/80">
+              need{attention === 1 ? 's' : ''} attention
+            </div>
           </div>
-        </div>
-        {open > 0 ? (
-          <WidgetButton
-            variant="primary"
-            onClick={() => void completeTask(data.top_task_id)}
-            icon={<Check className="h-4 w-4" />}
-            className="w-full"
-          >
-            Complete top
-          </WidgetButton>
-        ) : (
-          <span className="text-sm font-medium text-muted-foreground">All caught up ✓</span>
-        )}
-      </WidgetContainer>
-    );
-  }
-
-  // ---- Medium: count + a 2-task peek you can complete ----------------------
-  if (size === 'medium') {
-    const shown = tasks.slice(0, 2);
-    return (
-      <WidgetContainer size="medium" className={cn('flex flex-row items-center gap-4', className)}>
-        <div className="flex w-[34%] flex-shrink-0 flex-col justify-center">
-          <div className={cn('text-4xl font-bold leading-none', open > 0 ? 'text-foreground' : 'text-muted-foreground')}>
-            {open}
-          </div>
-          <div className="mt-1 text-xs font-medium text-muted-foreground">open</div>
-          {done > 0 && <div className="mt-0.5 text-xs text-success">{done} done</div>}
-        </div>
-        <div className="flex min-w-0 flex-1 flex-col justify-center gap-2.5">
-          {shown.length > 0 ? (
-            shown.map((t) => <TaskRow key={t.id} task={t} onComplete={completeTask} />)
+          {allClear ? (
+            <span className="flex items-center gap-1 text-sm font-semibold text-white">
+              <ShieldCheck className="h-4 w-4" /> All clear
+            </span>
           ) : (
-            <span className="text-sm text-muted-foreground">All caught up ✓</span>
+            <button
+              onClick={openApp}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-full bg-white/25 py-2 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-white/35 active:scale-95"
+            >
+              Review <ArrowUpRight className="h-4 w-4" />
+            </button>
           )}
         </div>
       </WidgetContainer>
     );
   }
 
-  // ---- Large: header + up to 3 completable tasks + footer ------------------
-  const shown = tasks.slice(0, 3);
-  const hidden = Math.max(0, open - shown.length);
-  return (
-    <WidgetContainer size="large" className={cn('flex flex-col', className)}>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold leading-none text-foreground">{open}</span>
-          <span className="text-sm text-muted-foreground">open</span>
-        </div>
-        {done > 0 && <WidgetBadge variant="success">{done} done</WidgetBadge>}
-      </div>
-
-      <div className="flex flex-1 flex-col gap-3 overflow-hidden">
-        {shown.length > 0 ? (
-          shown.map((t, i) => <TaskRow key={t.id} task={t} detail={i === 0} onComplete={completeTask} />)
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            All caught up ✓
+  // ---- Medium --------------------------------------------------------------
+  if (size === 'medium') {
+    const top = data.top_alerts?.[0];
+    return (
+      <WidgetContainer size="medium" className={cn('relative text-white', className)}>
+        <Backdrop calm={allClear} />
+        <div className="relative z-10 flex h-full flex-row items-center gap-4">
+          <div className="flex w-[38%] flex-shrink-0 flex-col justify-center">
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/80">
+              <LiveDot /> Live
+            </div>
+            <div className="text-5xl font-bold leading-none tracking-tighter">{attention}</div>
+            <div className="mt-1 text-xs font-medium text-white/80">need attention</div>
+            <div className="mt-0.5 text-[11px] text-white/60">scanned {data.last_scan}</div>
           </div>
-        )}
-      </div>
-
-      {(hidden > 0 || data.last_updated) && (
-        <div className="mt-3 truncate text-xs text-muted-foreground">
-          {hidden > 0 ? `+${hidden} more · ` : ''}updated {data.last_updated}
+          <button onClick={openApp} className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left" aria-label="Open Gmail Sentry">
+            {top ? (
+              <AlertPeek alert={top} />
+            ) : (
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                <ShieldCheck className="h-4 w-4" /> Inbox is calm
+              </span>
+            )}
+          </button>
         </div>
-      )}
+      </WidgetContainer>
+    );
+  }
+
+  // ---- Large ---------------------------------------------------------------
+  const shown = (data.top_alerts ?? []).slice(0, 2);
+  const cleanup = data.cleanup ?? { promo: 0, social: 0, spam: 0 };
+  return (
+    <WidgetContainer size="large" className={cn('relative text-white', className)}>
+      <Backdrop calm={allClear} />
+      <div className="relative z-10 flex h-full flex-col">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-bold leading-none tracking-tighter">{attention}</span>
+            <span className="text-sm text-white/80">need attention</span>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
+            <LiveDot /> Watching
+          </span>
+        </div>
+
+        <div className="flex flex-1 flex-col gap-2 overflow-hidden">
+          {shown.length > 0 ? (
+            shown.map((a) => <AlertRow key={a.id} alert={a} />)
+          ) : (
+            <div className="flex flex-1 items-center justify-center gap-1.5 text-sm font-semibold text-white">
+              <ShieldCheck className="h-4 w-4" /> Inbox is calm
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <JunkButton label="Promo" count={cleanup.promo} onClick={() => void clearJunk('promotions')} />
+          <JunkButton label="Social" count={cleanup.social} onClick={() => void clearJunk('social')} />
+          <JunkButton label="Spam" count={cleanup.spam} onClick={() => void clearJunk('spam')} />
+          <button
+            onClick={openApp}
+            aria-label="Open Gmail Sentry"
+            className="flex h-full flex-shrink-0 items-center rounded-2xl bg-white px-3 py-2 text-accent shadow-sm transition-transform active:scale-95"
+          >
+            <ArrowUpRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
     </WidgetContainer>
   );
 }
 
-// A completable task row: a tap-to-complete circle + title (+ optional detail on
-// the large widget's top row) + a UI-kit priority badge.
-function TaskRow({
-  task,
-  detail = false,
-  onComplete,
-}: {
-  task: WidgetTask & { suggested_action?: string | null };
-  detail?: boolean;
-  onComplete: (id: string) => void;
-}) {
-  const b = pBadge(task.priority);
+function AlertPeek({ alert }: { alert: WidgetAlert }) {
   return (
-    <div className="flex items-start gap-2.5">
-      <button
-        onClick={() => onComplete(task.id)}
-        aria-label={`Complete "${task.title}"`}
-        className="group mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 border-slate-300 transition-colors hover:border-success hover:bg-success dark:border-white/30"
-      >
-        <Check className="h-3 w-3 text-transparent group-hover:text-white" />
-      </button>
+    <>
+      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
+        {TIER_LABEL[alert.tier] ?? 'FYI'}
+      </span>
+      <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
+      <span className="block truncate text-xs text-white/70">{alert.sender}</span>
+    </>
+  );
+}
+
+function AlertRow({ alert }: { alert: WidgetAlert }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl bg-white/10 px-2.5 py-2 backdrop-blur">
+      <span className="flex-shrink-0 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+        {TIER_LABEL[alert.tier] ?? 'FYI'}
+      </span>
       <div className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground">{task.title}</span>
-        {detail && task.suggested_action && (
-          <span className="block truncate text-xs text-muted-foreground">{task.suggested_action}</span>
-        )}
+        <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
+        <span className="block truncate text-xs text-white/70">{alert.sender}</span>
       </div>
-      <WidgetBadge variant={b.variant}>{b.label}</WidgetBadge>
     </div>
+  );
+}
+
+function JunkButton({ label, count, onClick }: { label: string; count: number; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={count === 0}
+      aria-label={`Clear ${count} ${label} emails`}
+      className={cn(
+        'flex min-w-0 flex-1 flex-col items-center rounded-2xl bg-white/15 px-2 py-2 text-white backdrop-blur transition-transform active:scale-95',
+        count === 0 && 'opacity-50',
+      )}
+    >
+      <span className="text-base font-bold leading-none">{count}</span>
+      <span className="mt-0.5 truncate text-[11px] font-medium text-white/80">{label}</span>
+    </button>
   );
 }

@@ -18,7 +18,7 @@
   "providedTools": [
     {
       "id": "gmail.send",
-      "description": "Send an email.",
+      "description": "Send an email (optionally as a reply in a thread).",
       "input": {
         "to": {
           "type": "string",
@@ -31,6 +31,14 @@
         "body": {
           "type": "string",
           "required": true
+        },
+        "threadId": {
+          "type": "string",
+          "required": false
+        },
+        "inReplyTo": {
+          "type": "string",
+          "required": false
         }
       },
       "output": {
@@ -42,10 +50,18 @@
     },
     {
       "id": "gmail.list_messages",
-      "description": "List recent messages.",
+      "description": "List recent messages (stubs); supports paging.",
       "input": {
         "limit": {
           "type": "integer",
+          "required": false
+        },
+        "query": {
+          "type": "string",
+          "required": false
+        },
+        "pageToken": {
+          "type": "string",
           "required": false
         }
       },
@@ -53,28 +69,100 @@
         "messages": {
           "type": "array",
           "required": true
+        },
+        "nextPageToken": {
+          "type": "string",
+          "required": false
         }
       }
     },
     {
       "id": "gmail.search",
-      "description": "Search messages by query (Gmail syntax).",
+      "description": "Search messages by query (Gmail syntax); supports paging.",
       "input": {
         "query": {
           "type": "string",
           "required": true
+        },
+        "limit": {
+          "type": "integer",
+          "required": false
+        },
+        "pageToken": {
+          "type": "string",
+          "required": false
         }
       },
       "output": {
         "messages": {
           "type": "array",
           "required": true
+        },
+        "nextPageToken": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "gmail.get_message",
+      "description": "Fetch one message's parsed metadata (sender, subject, snippet, ids).",
+      "input": {
+        "message_id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "output": {
+        "id": {
+          "type": "string",
+          "required": true
+        },
+        "thread_id": {
+          "type": "string",
+          "required": false
+        },
+        "snippet": {
+          "type": "string",
+          "required": false
+        },
+        "label_ids": {
+          "type": "array",
+          "required": false
+        },
+        "sender": {
+          "type": "string",
+          "required": false
+        },
+        "subject": {
+          "type": "string",
+          "required": false
+        },
+        "rfc822_msgid": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "gmail.count",
+      "description": "Estimated count of messages matching a query.",
+      "input": {
+        "query": {
+          "type": "string",
+          "required": false
+        }
+      },
+      "output": {
+        "count": {
+          "type": "integer",
+          "required": true
         }
       }
     },
     {
       "id": "gmail.add_label",
-      "description": "Add a label to a message.",
+      "description": "Add a label to a message (created if it doesn't exist).",
       "input": {
         "message_id": {
           "type": "string",
@@ -88,6 +176,74 @@
       "output": {
         "ok": {
           "type": "boolean",
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "gmail.modify_labels",
+      "description": "Add and/or remove labels by name; remove INBOX to archive.",
+      "input": {
+        "message_id": {
+          "type": "string",
+          "required": true
+        },
+        "add": {
+          "type": "array",
+          "required": false
+        },
+        "remove": {
+          "type": "array",
+          "required": false
+        }
+      },
+      "output": {
+        "ok": {
+          "type": "boolean",
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "gmail.trash",
+      "description": "Move a message to Trash.",
+      "input": {
+        "message_id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "output": {
+        "ok": {
+          "type": "boolean",
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "gmail.batch_modify",
+      "description": "Add/remove labels across up to 1000 messages in one call (bulk trash: add TRASH; archive: remove INBOX).",
+      "input": {
+        "ids": {
+          "type": "array",
+          "required": true
+        },
+        "add": {
+          "type": "array",
+          "required": false
+        },
+        "remove": {
+          "type": "array",
+          "required": false
+        }
+      },
+      "output": {
+        "ok": {
+          "type": "boolean",
+          "required": true
+        },
+        "modified": {
+          "type": "integer",
           "required": true
         }
       }
