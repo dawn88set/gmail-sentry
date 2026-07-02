@@ -66,21 +66,22 @@ def _humanize(integration_id: str) -> str:
 
 
 def _is_connected(integration_id: str, user_id: str) -> bool:
-    """True only when the integration is connected for THIS (user, app).
+    """Whether the integration is connected — resilient, FAIL-OPEN across signals.
 
-    Uses the SDK's canonical app-scoped probe `platform_creds.is_connected`
-    (POST /internal/integrations/state). Crucially it sends BOTH the internal
-    transport secret AND this app's per-app identity secret
-    (`X-Claritty-App-Secret` from `CLARITY_APP_INTEGRATION_SECRET`) — the exact
-    auth the send path uses — so a strict-identity broker accepts it. A raw call
-    that omits the app-secret is 403'd in strict mode, which reads back as "not
-    connected" for EVERY integration (even Gmail).
+    The connection state has proven fragile to probe in isolation, so we never
+    show "not connected" off a single check that can false-negative:
 
-    Why not the old `platform_creds.fetch_for_user`: it probed at USER level (no
-    app_id), so it reported "connected" for any user-level credential — e.g. a
-    Slack connected on the platform's Integrations tab — even when no APP-SCOPED
-    connection existed. The badge said Connected while every send 409'd
-    (`findConnected` is strictly per-(user,app)). This matches send reality."""
+      1. app-scoped broker probe (`platform_creds.is_connected` → /state). This
+         matches the send path exactly, BUT the SDK's copy fail-closes to False
+         whenever `CLARITY_INTERNAL_SECRET` (one spelling only) is empty, while
+         the send path reads both spellings — so it can report False for an
+         integration that actually works (Gmail scans, but badge says off).
+      2. user-level credential probe (`fetch_for_user`) as a fallback.
+
+    Connected if EITHER says so. A wrong "connected" is recoverable (the Send-
+    test button surfaces the real error); a wrong "disconnected" hides a working
+    integration and blocks the user — the worse failure. So we bias to showing
+    connected and let the actual send be the source of truth."""
     try:
         from claritty_sdk.integrations import platform_creds
     except Exception:  # noqa: BLE001 — SDK not importable in bare seed dev
@@ -89,12 +90,13 @@ def _is_connected(integration_id: str, user_id: str) -> bool:
     probe = getattr(platform_creds, "is_connected", None)
     if probe is not None:
         try:
-            return bool(probe(integration_id, user_id))
-        except Exception as exc:  # noqa: BLE001 — transient ⇒ unknown/not connected
-            logger.warning("connection probe for %s failed: %s", integration_id, exc)
-            return False
+            if probe(integration_id, user_id):
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("is_connected probe for %s failed: %s", integration_id, exc)
 
-    # Older SDK without the app-scoped probe — best-effort user-level fetch.
+    # Fallback / cross-check: a user-level credential exists → treat as connected
+    # rather than hide a working integration behind a probe false-negative.
     try:
         platform_creds.fetch_for_user(integration_id, user_id)
         return True

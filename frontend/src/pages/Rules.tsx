@@ -503,9 +503,11 @@ export default function Rules() {
                     />
                   )}
                   </div>
-                  {/* Where this channel's alerts go — shown right under it once
-                      connected, so "connect" and "which channel" live together. */}
-                  {it.connected && dest && (
+                  {/* Where this channel's alerts go. Shown regardless of the
+                      connection badge (which can false-negative) so configuring +
+                      testing is never blocked — the Send-test result is the real
+                      source of truth for whether it works. */}
+                  {dest && (
                     <div className="mt-3 sm:pl-[52px]">
                       <div className="mb-1 flex items-center gap-2">
                         <label className="text-[13px] font-medium text-foreground">{dest.label}</label>
