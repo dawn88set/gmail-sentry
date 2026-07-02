@@ -22,7 +22,7 @@ python-multipart==0.0.32
 # Floor pinned to 2.0.0: the v2 manifest-first runtime + the agent fallback(ctx)
 # offline-degradation hook ship in 2.0.0. (>=1.0.2 first shipped the two-t
 # `claritty_sdk` module; <2.0.0 predates the v2 runtime this seed depends on.)
-claritty-sdk>=2.0.0,<3.0.0
+claritty-sdk>=2.4.0,<3.0.0
 
 # Encryption — backend/integrations/crypto.py imports Fernet DIRECTLY for
 # at-rest encryption of integration credentials. Not a transitive dep of

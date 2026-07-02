@@ -66,42 +66,39 @@ def _humanize(integration_id: str) -> str:
 
 
 def _is_connected(integration_id: str, user_id: str) -> bool:
-    """True only when the integration is connected for THIS (user, app) — the
-    exact strict, app-scoped check `execute_tool` performs, via the broker's
-    liveness endpoint (POST /internal/integrations/state with this app's id).
+    """True only when the integration is connected for THIS (user, app).
 
-    Why not the old `platform_creds.fetch_for_user`: that probed the credential
-    store at USER level (no app_id), so it reported "connected" whenever any
-    user-level credential existed — e.g. a Slack connected on the platform's
-    Integrations tab — even though no APP-SCOPED connection existed. The badge
-    then said Connected while every send 409'd (`findConnected` is per-(user,app)).
-    This lies no more: badge status now matches what a real send will do."""
-    import httpx
+    Uses the SDK's canonical app-scoped probe `platform_creds.is_connected`
+    (POST /internal/integrations/state). Crucially it sends BOTH the internal
+    transport secret AND this app's per-app identity secret
+    (`X-Claritty-App-Secret` from `CLARITY_APP_INTEGRATION_SECRET`) — the exact
+    auth the send path uses — so a strict-identity broker accepts it. A raw call
+    that omits the app-secret is 403'd in strict mode, which reads back as "not
+    connected" for EVERY integration (even Gmail).
 
-    base = (os.environ.get("CLARITTY_PLATFORM_URL") or "").rstrip("/")
-    secret = (
-        os.environ.get("CLARITY_INTERNAL_SECRET")
-        or os.environ.get("CLARITTY_INTERNAL_SECRET")
-        or ""
-    )
-    app_id = os.environ.get("CLARITY_APP_ID") or os.environ.get("CLARITTY_APP_ID") or ""
-    if not base:
-        return False
-    body: Dict[str, Any] = {"userId": user_id, "integrationCatalogId": integration_id}
-    if app_id:
-        body["appId"] = app_id
+    Why not the old `platform_creds.fetch_for_user`: it probed at USER level (no
+    app_id), so it reported "connected" for any user-level credential — e.g. a
+    Slack connected on the platform's Integrations tab — even when no APP-SCOPED
+    connection existed. The badge said Connected while every send 409'd
+    (`findConnected` is strictly per-(user,app)). This matches send reality."""
     try:
-        resp = httpx.post(
-            f"{base}/internal/integrations/state",
-            headers={"X-Claritty-Internal": secret},
-            json=body,
-            timeout=15,
-        )
-        if resp.status_code >= 400:
+        from claritty_sdk.integrations import platform_creds
+    except Exception:  # noqa: BLE001 — SDK not importable in bare seed dev
+        return False
+
+    probe = getattr(platform_creds, "is_connected", None)
+    if probe is not None:
+        try:
+            return bool(probe(integration_id, user_id))
+        except Exception as exc:  # noqa: BLE001 — transient ⇒ unknown/not connected
+            logger.warning("connection probe for %s failed: %s", integration_id, exc)
             return False
-        return bool(resp.json().get("connected"))
-    except Exception as exc:  # noqa: BLE001 — transient errors ⇒ "unknown/not connected"
-        logger.warning("connection probe for %s failed: %s", integration_id, exc)
+
+    # Older SDK without the app-scoped probe — best-effort user-level fetch.
+    try:
+        platform_creds.fetch_for_user(integration_id, user_id)
+        return True
+    except Exception:  # noqa: BLE001
         return False
 
 
