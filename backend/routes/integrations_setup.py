@@ -82,22 +82,49 @@ def _is_connected(integration_id: str, user_id: str) -> bool:
     test button surfaces the real error); a wrong "disconnected" hides a working
     integration and blocks the user — the worse failure. So we bias to showing
     connected and let the actual send be the source of truth."""
-    try:
-        from claritty_sdk.integrations import platform_creds
-    except Exception:  # noqa: BLE001 — SDK not importable in bare seed dev
-        return False
+    # 1) Primary: broker /state, called with the SAME resilient auth the send path
+    #    (execute_tool) uses — read BOTH secret spellings + include the per-app
+    #    secret. The SDK's is_connected reads only `CLARITY_INTERNAL_SECRET` and
+    #    fail-closes to False when it's empty, so it reports "disconnected" for a
+    #    Gmail that actually works (the deployment sets `CLARITTY_INTERNAL_SECRET`).
+    import httpx
 
-    probe = getattr(platform_creds, "is_connected", None)
-    if probe is not None:
+    base = (os.environ.get("CLARITTY_PLATFORM_URL") or "").rstrip("/")
+    secret = (
+        os.environ.get("CLARITY_INTERNAL_SECRET")
+        or os.environ.get("CLARITTY_INTERNAL_SECRET")
+        or ""
+    )
+    app_id = os.environ.get("CLARITY_APP_ID") or os.environ.get("CLARITTY_APP_ID") or ""
+    app_secret = (
+        os.environ.get("CLARITY_APP_INTEGRATION_SECRET")
+        or os.environ.get("CLARITTY_APP_INTEGRATION_SECRET")
+        or ""
+    )
+    if base and secret:
+        headers = {"X-Claritty-Internal": secret}
+        if app_secret:  # proves app identity for a strict-identity broker
+            headers["X-Claritty-App-Secret"] = app_secret
+        body: Dict[str, Any] = {"userId": user_id, "integrationCatalogId": integration_id}
+        if app_id:
+            body["appId"] = app_id
         try:
-            if probe(integration_id, user_id):
+            resp = httpx.post(
+                f"{base}/internal/integrations/state",
+                headers=headers,
+                json=body,
+                timeout=15,
+            )
+            if resp.status_code < 400 and bool((resp.json() or {}).get("connected")):
                 return True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("is_connected probe for %s failed: %s", integration_id, exc)
+            logger.warning("state probe for %s failed: %s", integration_id, exc)
 
-    # Fallback / cross-check: a user-level credential exists → treat as connected
-    # rather than hide a working integration behind a probe false-negative.
+    # 2) Fallback: user-level credential probe — rather than hide a working
+    #    integration behind a probe false-negative.
     try:
+        from claritty_sdk.integrations import platform_creds
+
         platform_creds.fetch_for_user(integration_id, user_id)
         return True
     except Exception:  # noqa: BLE001
