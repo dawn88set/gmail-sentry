@@ -1,11 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Inbox, SlidersHorizontal } from 'lucide-react';
+import { NAV_ITEMS } from '@/lib/nav';
 import { cn } from '@/lib/utils';
-
-const TABS = [
-  { name: 'Inbox', href: '/', icon: Inbox },
-  { name: 'Rules', href: '/rules', icon: SlidersHorizontal },
-];
 
 /** iOS bottom tab bar — blurred, hairline top, safe-area aware. */
 export function TabBar() {
@@ -13,7 +8,7 @@ export function TabBar() {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-card/80 backdrop-blur-xl lg:hidden">
       <div className="mx-auto flex w-full max-w-sm items-stretch justify-around px-6 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
-        {TABS.map((t) => {
+        {NAV_ITEMS.map((t) => {
           const active = pathname === t.href;
           const Icon = t.icon;
           return (

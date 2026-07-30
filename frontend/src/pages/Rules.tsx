@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, Sparkles, Slack, Mail, Check, Send, MessageSquare, Phone, Loader2, MessageSquareText } from 'lucide-react';
+import { Button } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { SmartOnboarding } from '@/components/SmartOnboarding';
 import { ConnectButton } from '@/components/ConnectButtons';
@@ -143,13 +144,15 @@ function FieldCell({ label, children }: { label: string; children: React.ReactNo
 
 function DeleteButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       aria-label={label}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+      className="h-8 w-8 justify-center px-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
     >
       <Trash2 className="h-[18px] w-[18px]" />
-    </button>
+    </Button>
   );
 }
 
@@ -524,8 +527,8 @@ export default function Rules() {
                     )}
                   </div>
                   {it.connected ? (
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
                       onClick={() => {
                         const posted = requestDisconnectIntegration(it.id, appId);
                         show({
@@ -538,10 +541,10 @@ export default function Rules() {
                         setTimeout(() => void refreshIntegrations(), 1500);
                         setTimeout(() => void refreshIntegrations(), 4000);
                       }}
-                      className="w-full flex-shrink-0 rounded-xl border border-border px-3 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:w-auto"
+                      className="w-full flex-shrink-0 justify-center sm:w-auto"
                     >
                       Disconnect
-                    </button>
+                    </Button>
                   ) : (
                     <ConnectButton
                       integrationId={it.id}
@@ -704,19 +707,22 @@ export default function Rules() {
                           Set a destination or {it.name} alerts won’t be sent.
                         </p>
                       ) : it.id === 'slack' && slackDestError(config[dest.field] as string) ? null : (
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           disabled={testingChannel === it.id}
                           onClick={() => testOne(it.id, it.name)}
-                          className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-1.5 text-[13px] font-semibold text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                          className="mt-2 bg-accent/10 text-accent hover:bg-accent/20"
+                          icon={
+                            testingChannel === it.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Send className="h-3.5 w-3.5" />
+                            )
+                          }
                         >
-                          {testingChannel === it.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Send className="h-3.5 w-3.5" />
-                          )}
                           Send test message
-                        </button>
+                        </Button>
                       )}
                     </div>
                   )}

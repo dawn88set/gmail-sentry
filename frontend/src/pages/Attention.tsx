@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { ShieldCheck } from 'lucide-react';
+import { Button, EmptyState, ErrorState, Tabs } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { Avatar, parseSender } from '@/components/Avatar';
 import { AlertSheet } from '@/components/AlertSheet';
@@ -41,6 +42,9 @@ export default function Attention() {
   const [filter, setFilter] = useState('all');
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
+  // Distinct from "loaded and empty" — without it a failed load renders the
+  // all-clear state, which claims nothing needs attention when we don't know.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Alert | null>(null);
   // The alert id whose reply should auto-open (arrived via a notification link).
   const [autoReplyId, setAutoReplyId] = useState<string | null>(null);
@@ -49,8 +53,11 @@ export default function Attention() {
     const f = FILTERS.find((x) => x.key === filter);
     try {
       setAlerts(await getAlerts('active', f?.tier));
+      setLoadError(null);
     } catch (err) {
-      show({ tone: 'error', text: `Couldn’t load: ${toApiError(err).message}` });
+      const e = toApiError(err);
+      setLoadError(e.message);
+      show({ tone: 'error', text: `Couldn’t load: ${e.message}` });
     } finally {
       setLoading(false);
     }
@@ -95,34 +102,43 @@ export default function Attention() {
 
       <Screen title="Attention">
         {/* Segmented filter */}
-        <div className="flex gap-1 rounded-full border border-border/70 bg-muted/50 p-1">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                'flex-1 rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
-                filter === f.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          variant="pill"
+          items={FILTERS.map((f) => ({ value: f.key, label: f.label }))}
+          value={filter}
+          onValueChange={setFilter}
+        />
 
         {loading ? (
           <ListGroup variant="plain-mobile">
             <SkeletonRows count={6} />
           </ListGroup>
+        ) : loadError ? (
+          <ListGroup variant="plain-mobile">
+            <ErrorState
+              title="Couldn’t load your alerts"
+              description={loadError}
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setLoading(true);
+                    void load();
+                  }}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          </ListGroup>
         ) : alerts.length === 0 ? (
           <ListGroup variant="plain-mobile">
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15">
-                <ShieldCheck className="h-6 w-6 text-accent" />
-              </div>
-              <p className="text-[15px] font-semibold text-foreground">All clear</p>
-              <p className="text-[13px] text-muted-foreground">Nothing needs your attention here.</p>
-            </div>
+            <EmptyState
+              icon={<ShieldCheck className="h-6 w-6 text-accent" />}
+              title="All clear"
+              description="Nothing needs your attention here."
+            />
           </ListGroup>
         ) : (
           <ListGroup variant="plain-mobile">

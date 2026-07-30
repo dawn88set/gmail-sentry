@@ -9,7 +9,14 @@ function hash(s: string): number {
   return Math.abs(h);
 }
 
-/** Parse "Dana Levi <dana@acme.com>" → { name, email }. */
+/**
+ * Parse "Dana Levi <dana@acme.com>" → { name, email }.
+ *
+ * Co-located with <Avatar> on purpose: every caller that renders an avatar first
+ * parses a sender, so splitting them costs a second import for no runtime
+ * benefit. The lint rule below is about dev-server hot reload, not correctness.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseSender(raw: string): { name: string; email: string } {
   const m = /<([^>]+)>/.exec(raw || '');
   const email = (m ? m[1] : (/\S+@\S+/.exec(raw || '')?.[0] ?? '')).trim();

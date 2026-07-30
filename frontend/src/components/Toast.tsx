@@ -73,6 +73,10 @@ const NOOP_TOAST: ToastContextValue = { show: () => {}, dismiss: () => {} };
  * provider never crashes the widget. In the app, <ToastProvider> wraps everything
  * (incl. the /widget route), so toasts render normally.
  */
+// The hook lives beside the provider whose context it reads; moving it out would
+// mean exporting the context object instead, which is worse. The lint rule below
+// is about dev-server hot reload, not correctness.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast(): ToastContextValue {
   return useContext(ToastContext) ?? NOOP_TOAST;
 }

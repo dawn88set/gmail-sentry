@@ -1,5 +1,5 @@
 import { ChevronRight } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ElementType, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /** iOS grouped-list section: small-caps header + a rounded group + optional footer. */
@@ -74,7 +74,9 @@ export function ListRow({
   className?: string;
 }) {
   const interactive = !!onClick;
-  const Comp: any = interactive ? 'button' : 'div';
+  // A tappable row renders a real <button> (keyboard + a11y for free); a static
+  // one stays a <div> so it isn't announced as interactive.
+  const Comp: ElementType = interactive ? 'button' : 'div';
   return (
     <Comp
       onClick={onClick}

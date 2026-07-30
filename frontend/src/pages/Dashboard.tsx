@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { ShieldCheck, RefreshCw, Megaphone, Users, Ban, Bell, ChevronRight } from 'lucide-react';
+import { ShieldCheck, RefreshCw, Megaphone, Users, Ban, Bell } from 'lucide-react';
+import { EmptyState } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { AnimatedNumber } from '@/components/AnimatedNumber';
 import { SmartOnboarding } from '@/components/SmartOnboarding';
@@ -252,22 +253,20 @@ export default function Dashboard() {
         {showAlertSetup && (
           <ListSection>
             <ListGroup variant="plain-mobile">
-              <button
-                type="button"
+              <ListRow
                 onClick={() => navigate('/rules?setup=alerts')}
-                className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-muted/50"
-              >
-                <span className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent">
-                  <Bell className="h-5 w-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-semibold text-foreground">Get alerts in Slack</span>
-                  <span className="block text-[13px] text-muted-foreground">
-                    Pick where urgent mail pings you — Slack, Telegram, Discord or WhatsApp.
+                className="py-4"
+                leading={
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                    <Bell className="h-5 w-5" />
                   </span>
-                </span>
-                <ChevronRight className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
-              </button>
+                }
+                title={
+                  <span className="block text-[15px] font-semibold text-foreground">Get alerts in Slack</span>
+                }
+                subtitle="Pick where urgent mail pings you — Slack, Telegram, Discord or WhatsApp."
+                chevron
+              />
             </ListGroup>
           </ListSection>
         )}
@@ -333,15 +332,11 @@ export default function Dashboard() {
             </ListGroup>
           ) : alerts.length === 0 ? (
             <ListGroup variant="plain-mobile">
-              <div className="flex flex-col items-center gap-2 p-8 text-center">
-                <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15">
-                  <ShieldCheck className="h-6 w-6 text-accent" />
-                </div>
-                <p className="text-[15px] font-semibold text-foreground">Inbox is calm</p>
-                <p className="max-w-xs text-[13px] text-muted-foreground">
-                  Nothing needs your attention. Run a scan, or set up rules on the Rules tab.
-                </p>
-              </div>
+              <EmptyState
+                icon={<ShieldCheck className="h-6 w-6 text-accent" />}
+                title="Inbox is calm"
+                description="Nothing needs your attention. Run a scan, or set up rules on the Rules tab."
+              />
             </ListGroup>
           ) : (
             <ListGroup variant="plain-mobile">

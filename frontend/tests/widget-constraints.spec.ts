@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
  *   small  170×170 (1:1 square)
  *   medium 360×170 (2.1:1 wide)
  *   large  360×360 (2:2 square)
- * plus the shared invariants: 16px padding (p-4), 24px radius (rounded-3xl),
+ * plus the shared invariants: 16px padding (p-4), the `rounded-3xl` radius,
  * overflow-hidden, no scrollbars, and window-size invariance.
  *
  * Each size is rendered standalone at /widget?size=<size>.
@@ -39,19 +39,34 @@ test.describe('Widget visual constraints', () => {
         }
       });
 
-      test('has 16px padding, 24px radius, overflow hidden, no shadow', async ({ page }) => {
+      test('has 16px padding, rounded-3xl radius, overflow hidden, no shadow', async ({ page }) => {
         const widget = await gotoWidget(page, size);
         const css = await widget.evaluate((el) => {
           const s = window.getComputedStyle(el);
+          // Resolve what `rounded-3xl` actually means in THIS app's Tailwind
+          // config rather than hardcoding stock Tailwind's 24px. The contract is
+          // "the widget uses rounded-3xl"; the pixel value is a theme decision
+          // (IDENTITY.md explicitly invites reskinning the radius ramp), and
+          // this app sets 3xl to 2rem. Probing keeps the test enforcing the
+          // contract without freezing a number the theme owns.
+          const probe = document.createElement('div');
+          probe.className = 'rounded-3xl';
+          probe.style.position = 'absolute';
+          probe.style.visibility = 'hidden';
+          document.body.appendChild(probe);
+          const expected = parseFloat(window.getComputedStyle(probe).borderTopLeftRadius);
+          probe.remove();
           return {
             pad: [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map(parseFloat),
             radius: parseFloat(s.borderTopLeftRadius),
+            expectedRadius: expected,
             overflow: s.overflow,
             shadow: s.boxShadow,
           };
         });
         expect(css.pad).toEqual([16, 16, 16, 16]);   // internal content padding stays
-        expect(css.radius).toBe(24);                 // rounded tile stays
+        expect(css.expectedRadius).toBeGreaterThan(0); // probe resolved a real value
+        expect(css.radius).toBe(css.expectedRadius);   // rounded tile stays (rounded-3xl)
         expect(css.overflow).toBe('hidden');
         // The iframe is sized exactly to the widget, so a drop-shadow would be
         // clipped — the widget must cast none.
@@ -96,25 +111,34 @@ test.describe('Widget visual constraints', () => {
   }
 
   test('loading + error states keep dimensions', async ({ page }) => {
-    // Loading: delay the API and assert the skeleton holds the size box.
-    await page.route('**/api/widget*', (route) => setTimeout(() => route.continue(), 4000));
-    await page.goto(`${BASE}/widget?size=medium`);
-    const loading = page.locator('.animate-pulse').first();
+    // Loading. Two things this test used to get wrong:
+    //  1. It waited for `load` before looking. WebKit counts the still-pending
+    //     /api/widget request toward that, so the skeleton had already been
+    //     replaced by the time the assertion ran — hence a webkit-only failure.
+    //     `waitUntil: 'commit'` returns as soon as navigation commits.
+    //  2. It located `.animate-pulse` and then guarded on `if (lbox)`, so a
+    //     missing skeleton silently passed instead of failing. The skeleton is
+    //     itself a WidgetContainer, so it carries data-widget-size — assert on
+    //     that stable locator and check the pulse class on it.
+    await page.route('**/api/widget*', (route) => setTimeout(() => route.abort('failed'), 8000));
+    await page.goto(`${BASE}/widget?size=medium`, { waitUntil: 'commit' });
+    const loading = page.locator('[data-widget-size="medium"]');
+    await expect(loading).toHaveClass(/animate-pulse/);
     const lbox = await loading.boundingBox();
-    if (lbox) {
-      expect(lbox.width).toBeCloseTo(360, 0);
-      expect(lbox.height).toBeCloseTo(170, 0);
-    }
+    expect(lbox).not.toBeNull();
+    expect(lbox!.width).toBeCloseTo(360, 0);
+    expect(lbox!.height).toBeCloseTo(170, 0);
     await page.unroute('**/api/widget*');
 
-    // Error: abort the API and assert the error box holds the size.
+    // Error: abort the API and assert the settled error box holds the size.
     await page.route('**/api/widget*', (route) => route.abort('failed'));
     await page.goto(`${BASE}/widget?size=large`);
     const err = page.locator('[data-widget-size="large"]');
+    await expect(err).toBeVisible();
+    await expect(err).not.toHaveClass(/animate-pulse/);
     const ebox = await err.boundingBox();
-    if (ebox) {
-      expect(ebox.width).toBeCloseTo(360, 0);
-      expect(ebox.height).toBeCloseTo(360, 0);
-    }
+    expect(ebox).not.toBeNull();
+    expect(ebox!.width).toBeCloseTo(360, 0);
+    expect(ebox!.height).toBeCloseTo(360, 0);
   });
 });

@@ -14,6 +14,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Avatar, parseSender } from '@/components/Avatar';
+import { ActionTile } from '@/components/ios/ActionTile';
 import { useToast } from '@/components/Toast';
 import {
   doneAlert,
@@ -275,12 +276,12 @@ export function AlertSheet({
 
         {/* Actions */}
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <Action icon={<ExternalLink className="h-5 w-5" />} label="Open" onClick={() => alert.deep_link && window.open(alert.deep_link, '_blank', 'noopener')} />
-          <Action icon={busy === 'reply' ? <Loader2 className="h-5 w-5 animate-spin" /> : <CornerUpLeft className="h-5 w-5" />} label="Reply" onClick={() => void genReply()} />
-          <Action icon={<Clock className="h-5 w-5" />} label="Snooze" active={snoozeOpen} onClick={() => setSnoozeOpen((v) => !v)} />
-          <Action icon={busy === 'done' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />} label="Done" onClick={() => void run('done', () => doneAlert(alert.id))} />
-          <Action icon={busy === 'mute' ? <Loader2 className="h-5 w-5 animate-spin" /> : <BellOff className="h-5 w-5" />} label="Mute sender" onClick={() => void run('mute', () => muteAlert(alert.id))} />
-          <Action icon={<Plus className="h-5 w-5" />} label="Make rule" onClick={() => void run('rule', () => createRuleFromAlert(alert.id, alert.tier === 'urgent' ? 'urgent' : 'needs_reply'), false).then(() => show({ tone: 'success', text: 'Rule created from this sender.' }))} />
+          <ActionTile icon={<ExternalLink className="h-5 w-5" />} label="Open" onClick={() => alert.deep_link && window.open(alert.deep_link, '_blank', 'noopener')} />
+          <ActionTile icon={busy === 'reply' ? <Loader2 className="h-5 w-5 animate-spin" /> : <CornerUpLeft className="h-5 w-5" />} label="Reply" onClick={() => void genReply()} />
+          <ActionTile icon={<Clock className="h-5 w-5" />} label="Snooze" active={snoozeOpen} onClick={() => setSnoozeOpen((v) => !v)} />
+          <ActionTile icon={busy === 'done' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />} label="Done" onClick={() => void run('done', () => doneAlert(alert.id))} />
+          <ActionTile icon={busy === 'mute' ? <Loader2 className="h-5 w-5 animate-spin" /> : <BellOff className="h-5 w-5" />} label="Mute sender" onClick={() => void run('mute', () => muteAlert(alert.id))} />
+          <ActionTile icon={<Plus className="h-5 w-5" />} label="Make rule" onClick={() => void run('rule', () => createRuleFromAlert(alert.id, alert.tier === 'urgent' ? 'urgent' : 'needs_reply'), false).then(() => show({ tone: 'success', text: 'Rule created from this sender.' }))} />
         </div>
 
         <button
@@ -291,31 +292,6 @@ export function AlertSheet({
         </button>
       </motion.div>
     </motion.div>
-  );
-}
-
-function Action({
-  icon,
-  label,
-  onClick,
-  active,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  active?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'flex flex-col items-center justify-center gap-1.5 rounded-2xl border px-2 py-3 text-[12px] font-medium transition-colors',
-        active ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-background text-foreground hover:bg-muted',
-      )}
-    >
-      {icon}
-      <span className="text-center leading-tight">{label}</span>
-    </button>
   );
 }
 

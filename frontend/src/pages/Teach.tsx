@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Send, Loader2, RefreshCw, Check, Users, ChevronLeft } from 'lucide-react';
+import { Button } from '@clarittyai/app-ui';
 import { Screen } from '@/components/ios/Screen';
 import { useToast } from '@/components/Toast';
 import {
@@ -136,12 +137,9 @@ export default function Teach() {
     <Screen
       title="Teach Sentry"
       action={
-        <button
-          onClick={() => navigate('/rules')}
-          className="inline-flex items-center gap-1 text-[15px] font-medium text-accent transition-opacity hover:opacity-80"
-        >
-          <ChevronLeft className="h-4 w-4" /> Rules
-        </button>
+        <Button variant="ghost" size="sm" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => navigate('/rules')}>
+          Rules
+        </Button>
       }
     >
       {/* Intro */}
@@ -156,14 +154,9 @@ export default function Teach() {
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {QUICK.map((q) => (
-            <button
-              key={q}
-              onClick={() => void ask(q)}
-              disabled={sending}
-              className="rounded-full border border-border bg-card px-3 py-1.5 text-[12.5px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
+            <Button key={q} variant="secondary" size="sm" onClick={() => void ask(q)} disabled={sending}>
               {q}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -212,14 +205,15 @@ export default function Teach() {
                   </div>
                 ))}
               </div>
-              <button
+              <Button
+                variant="primary"
                 onClick={() => void apply()}
                 disabled={applying}
-                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground disabled:opacity-50"
+                className="mt-3 w-full justify-center"
+                icon={applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
               >
-                {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                 Apply these rules
-              </button>
+              </Button>
             </div>
           )}
           <div ref={endRef} />
@@ -243,14 +237,15 @@ export default function Teach() {
         />
         <div className="flex items-center justify-between px-1">
           <span className="text-[11px] text-muted-foreground">⌘↵ to send</span>
-          <button
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => void ask(input)}
             disabled={sending || !input.trim()}
-            className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-50"
+            icon={sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Send
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -261,14 +256,15 @@ export default function Teach() {
             <Users className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-[15px] font-semibold text-foreground">What I’ve learned about you</h3>
           </div>
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => void relearn()}
             disabled={learning}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[12.5px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            icon={learning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           >
-            {learning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Re-learn
-          </button>
+          </Button>
         </div>
 
         {profile && (profile.tone || profile.vip_senders.length > 0) ? (
