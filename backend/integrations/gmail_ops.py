@@ -73,6 +73,24 @@ def get_meta(db, user_id: str, message_id: str) -> Dict[str, Any]:
     }
 
 
+def get_body(db, user_id: str, message_id: str) -> str:
+    """The full plain-text body of one message (not the truncated snippet).
+
+    Used to learn the user's writing voice from their real sent emails — the
+    snippet alone is too short and often cut off before the sign-off. Asks the
+    broker for the full message and reads whichever body field it returns
+    (`text`/`body`/`body_text`/`plain`), falling back to the snippet if the broker
+    doesn't include a body."""
+    res = execute_tool(
+        SERVICE, "get_message", user_id, {"message_id": message_id, "format": "full"}
+    )
+    for key in ("text", "body", "body_text", "plain", "body_plain"):
+        val = res.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    return res.get("snippet") or ""
+
+
 def apply_label(db, user_id: str, message_id: str, label_name: str, *, archive: bool = False) -> bool:
     """Add a (user) label to a message, creating it if needed. When archive=True,
     also remove it from the inbox. The broker resolves label names → ids."""
@@ -93,6 +111,33 @@ def trash(db, user_id: str, message_id: str) -> bool:
     """Move a message to Trash."""
     execute_tool(SERVICE, "trash", user_id, {"message_id": message_id})
     return True
+
+
+def send(
+    db,
+    user_id: str,
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    thread_id: str = "",
+    in_reply_to: str = "",
+) -> Dict[str, Any]:
+    """Send an email through the broker (`gmail.send`), optionally threaded as a
+    reply. `thread_id` keeps it in the same Gmail conversation; `in_reply_to` is
+    the original message's RFC822 Message-ID (sets In-Reply-To/References headers).
+    Returns the broker result ({message_id}). Raises IntegrationNotConnected (→409)
+    when Gmail isn't connected, IntegrationError (→5xx) on any other failure — so
+    a reply is only ever marked sent on a real returned message id."""
+    args: Dict[str, Any] = {"to": to, "subject": subject, "body": body}
+    if thread_id:
+        args["threadId"] = thread_id
+    if in_reply_to:
+        # The broker sets In-Reply-To/References from the bare Message-ID; wrap in
+        # angle brackets per RFC 5322 (get_meta strips them off).
+        mid = in_reply_to.strip()
+        args["inReplyTo"] = mid if mid.startswith("<") else f"<{mid}>"
+    return execute_tool(SERVICE, "send", user_id, args)
 
 
 def batch_modify(db, user_id: str, ids, add=None, remove=None) -> int:

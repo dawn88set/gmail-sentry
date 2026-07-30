@@ -6,8 +6,9 @@ deployed serverless (Lambda + Function URL behind CloudFront); the container
 deployment keeps using uvicorn (see the __main__ block in backend/main.py).
 
 lifespan="auto" lets FastAPI's startup event run on cold start so component
-discovery (agents/workflows/triggers) populates the registries. The in-process
-scheduler stays disabled on Lambda (see ENABLE_INPROCESS_SCHEDULER in main.py).
+discovery (agents/workflows/triggers) populates the registries. There is no
+in-process scheduler anywhere — the Claritty platform owns scheduling and fires
+due triggers via POST /internal/run-due-triggers (see backend/main.py).
 
 Configure the Lambda handler as: backend.lambda_handler.handler
 """

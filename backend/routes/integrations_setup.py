@@ -89,13 +89,20 @@ def _is_connected(integration_id: str, user_id: str) -> bool:
     #    Gmail that actually works (the deployment sets `CLARITTY_INTERNAL_SECRET`).
     import httpx
 
-    base = (os.environ.get("CLARITTY_PLATFORM_URL") or "").rstrip("/")
+    from backend.shared.adapters import _platform_base
+
+    base = _platform_base()  # reads BOTH env spellings (one-t / two-t)
     secret = (
         os.environ.get("CLARITY_INTERNAL_SECRET")
         or os.environ.get("CLARITTY_INTERNAL_SECRET")
         or ""
     )
-    app_id = os.environ.get("CLARITY_APP_ID") or os.environ.get("CLARITTY_APP_ID") or ""
+    # Resolve app id the SAME way the action path (execute_tool) does — env in
+    # either spelling, then parsed config — so the badge and the scan agree on
+    # app-scoping (otherwise the badge can read connected while the scan 409s).
+    from backend.shared.adapters import resolve_app_id
+
+    app_id = resolve_app_id()
     app_secret = (
         os.environ.get("CLARITY_APP_INTEGRATION_SECRET")
         or os.environ.get("CLARITTY_APP_INTEGRATION_SECRET")

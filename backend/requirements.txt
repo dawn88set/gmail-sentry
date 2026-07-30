@@ -43,8 +43,8 @@ alembic==1.13.1
 # stays: validate_startup.py imports it as a boot sanity check.
 anthropic==0.18.1
 
-# Scheduling
-apscheduler==3.10.4
+# Timezones (trigger config). No in-process scheduler — the Claritty platform
+# owns scheduling and fires due triggers via /internal/run-due-triggers.
 pytz==2024.1
 
 # HTTP Client

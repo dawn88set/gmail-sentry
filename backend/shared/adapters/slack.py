@@ -16,6 +16,7 @@ Usage from a publish callable:
                                   channel=item.payload["channel"], text=item.body)
     # returns {"external_id": "<ts>", "account": "<channel id>"}
 """
+import json
 from typing import Any, Dict
 
 import httpx
@@ -25,6 +26,7 @@ from backend.shared.adapters import (
     IntegrationError,
     load_credentials,
     execute_tool,
+    friendly_tool_error,
     _use_executor,
 )
 
@@ -55,7 +57,7 @@ def _call(db, user_id: str, method: str, payload: Dict[str, Any]) -> Dict[str, A
         raise IntegrationError(SERVICE, f"{method} failed: {e}")
     # Slack returns 200 with {"ok": false, "error": "..."} for logical errors.
     if not data.get("ok"):
-        raise IntegrationError(SERVICE, f"{method} error: {data.get('error', 'unknown')}")
+        raise IntegrationError(SERVICE, friendly_tool_error(SERVICE, 0, json.dumps(data)))
     return data
 
 
@@ -79,6 +81,38 @@ def post_message(db, user_id: str, *, channel: str, text: str) -> Dict[str, Any]
     if not ts:
         raise IntegrationError(SERVICE, "postMessage returned no ts")
     return {"external_id": ts, "account": data.get("channel")}
+
+
+def connected_workspace(db, user_id: str) -> Dict[str, str]:
+    """Best-effort `{team, team_id, url}` for the CONNECTED Slack workspace via
+    `auth.test`, so the user can SEE which workspace alerts post to. A channel id
+    from a *different* workspace fails with `channel_not_found` even when the bot is
+    a member there — surfacing the connected workspace name is how the user spots
+    that mismatch. Returns `{}` when unavailable (best-effort, never raises)."""
+    def _shape(data: Dict[str, Any]) -> Dict[str, str]:
+        return {
+            "team": str(data.get("team") or data.get("team_name") or ""),
+            "team_id": str(data.get("team_id") or ""),
+            "url": str(data.get("url") or ""),
+        }
+
+    try:
+        if _use_executor():
+            # The platform executor tool id isn't guaranteed; try both spellings.
+            for tool in ("auth_test", "auth.test"):
+                try:
+                    res = execute_tool(SERVICE, tool, user_id, {})
+                    shaped = _shape(res if isinstance(res, dict) else {})
+                    if shaped["team"] or shaped["team_id"]:
+                        return shaped
+                except IntegrationNotConnected:
+                    return {}
+                except IntegrationError:
+                    continue
+            return {}
+        return _shape(_call(db, user_id, "auth.test", {}))
+    except (IntegrationNotConnected, IntegrationError):
+        return {}
 
 
 def test_connection(db, user_id: str) -> Dict[str, Any]:

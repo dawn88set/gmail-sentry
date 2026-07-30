@@ -14,6 +14,7 @@ SentryConfig; the credentials (bot token, SID, OAuth) live in the platform broke
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Callable, Dict, List, Tuple
 
 from backend.shared.adapters import (
@@ -23,6 +24,29 @@ from backend.shared.adapters import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _app_base_url() -> str:
+    """The app's own externally-reachable base URL, for links inside notifications
+    (e.g. the one-tap approve deep link). Prefers PUBLIC_APP_URL; falls back to the
+    platform-provided FRONTEND_URL. Empty when neither is set → callers degrade to
+    the Gmail deep link instead of emitting a broken link."""
+    url = (os.getenv("PUBLIC_APP_URL") or "").strip()
+    if not url:
+        try:
+            from backend.config import get_platform_config
+
+            url = (get_platform_config().frontend_url or "").strip()
+        except Exception:  # noqa: BLE001
+            url = ""
+    return url.rstrip("/")
+
+
+def app_focus_link(alert_id: str) -> str:
+    """Deep link that opens the app straight to this alert with Approve & Send
+    ready. A normal web URL to the app's own frontend — no inbound webhook needed."""
+    base = _app_base_url()
+    return f"{base}/attention?focus={alert_id}" if base else ""
 
 
 def _slack(dest: str, text: str) -> Dict[str, Any]:
@@ -57,6 +81,9 @@ CHANNELS: List[Tuple[str, str, str, str, Callable[[str, str], Dict[str, Any]]]] 
 ]
 
 
+_TIER_RANK = {"fyi": 0, "needs_reply": 1, "urgent": 2}
+
+
 def configured_channels(cfg) -> List[str]:
     """Channel labels that have a destination set (for UI / status)."""
     return [
@@ -64,6 +91,22 @@ def configured_channels(cfg) -> List[str]:
         for (label, _svc, _tool, attr, _b) in CHANNELS
         if (getattr(cfg, attr, "") or "").strip()
     ]
+
+
+def channel_min_tier(cfg, label: str) -> str:
+    """The effective minimum urgency for one channel: its own override in
+    `channel_tiers`, else the global `notify_tier` (default 'urgent')."""
+    overrides = getattr(cfg, "channel_tiers", None) or {}
+    val = str(overrides.get(label) or "").strip().lower()
+    if val in _TIER_RANK:
+        return val
+    fallback = str(getattr(cfg, "notify_tier", "") or "urgent").strip().lower()
+    return fallback if fallback in _TIER_RANK else "urgent"
+
+
+def _tier_allows(cfg, label: str, tier: str) -> bool:
+    """Whether an alert of `tier` clears this channel's minimum urgency."""
+    return _TIER_RANK.get(tier, 0) >= _TIER_RANK.get(channel_min_tier(cfg, label), 2)
 
 
 def _send_one(user_id: str, service: str, tool: str, build, dest: str, text: str):
@@ -80,13 +123,19 @@ def _send_one(user_id: str, service: str, tool: str, build, dest: str, text: str
         return False, f"{type(e).__name__}: {e}"
 
 
-def notify_all(db, user_id: str, cfg, text: str) -> List[Dict[str, Any]]:
+def notify_all(db, user_id: str, cfg, text: str, tier: str = "") -> List[Dict[str, Any]]:
     """Send `text` to every configured channel. Returns a per-channel result list
-    ``[{channel, ok, error}]``. Never raises — channels are best-effort + isolated."""
+    ``[{channel, ok, error}]``. Never raises — channels are best-effort + isolated.
+
+    When `tier` is given (a real-time alert's urgency), each channel is skipped
+    unless the alert clears that channel's minimum urgency (per-channel routing).
+    Omit `tier` (e.g. the daily digest / a test) to reach every configured channel."""
     results: List[Dict[str, Any]] = []
     for label, service, tool, attr, build in CHANNELS:
         dest = (getattr(cfg, attr, "") or "").strip()
         if not dest:
+            continue
+        if tier and not _tier_allows(cfg, label, tier):
             continue
         ok, err = _send_one(user_id, service, tool, build, dest, text)
         if not ok:

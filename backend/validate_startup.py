@@ -77,9 +77,6 @@ def validate_imports():
         import anthropic
         print("  ✅ Anthropic")
 
-        import apscheduler
-        print("  ✅ APScheduler")
-
         import pytz
         print("  ✅ pytz")
 
