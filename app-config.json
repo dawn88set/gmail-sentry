@@ -7,210 +7,55 @@
     "version": "1.0",
     "sections": [
       {
-        "id": "ai_settings",
-        "label": "AI Configuration",
-        "description": "Configure how AI agents operate in your application",
-        "icon": "sparkles",
+        "id": "triage",
+        "label": "Triage & alerts",
+        "description": "Starting defaults for a new user. Everything here can be changed later in the app on the Rules screen, which then owns the value.",
+        "icon": "bell",
         "order": 1,
         "fields": [
           {
-            "key": "AI_OPERATION_MODE",
-            "label": "AI Operation Mode",
-            "description": "How should AI agents behave?",
+            "key": "SENTRY_NOTIFY_TIER",
+            "label": "Ping me about",
+            "description": "Which mail is worth interrupting you for.",
             "type": "select",
-            "required": true,
-            "default": "balanced",
+            "required": false,
+            "default": "urgent",
             "options": [
               {
-                "value": "fast",
-                "label": "Fast",
-                "description": "Quick responses, lower cost, good for simple tasks"
+                "value": "urgent",
+                "label": "Urgent only",
+                "description": "Only mail Sentry classifies as urgent."
               },
               {
-                "value": "balanced",
-                "label": "Balanced",
-                "description": "Good balance of speed and quality"
-              },
-              {
-                "value": "quality",
-                "label": "Quality",
-                "description": "Best quality responses, slower, higher cost"
+                "value": "needs_reply",
+                "label": "Urgent + needs a reply",
+                "description": "Also ping for mail that's waiting on an answer from you."
               }
             ],
             "validation": {
               "enum": [
-                "fast",
-                "balanced",
-                "quality"
+                "urgent",
+                "needs_reply"
               ]
             }
           },
           {
-            "key": "AI_RESPONSE_TEMPERATURE",
-            "label": "AI Creativity Level",
-            "description": "How creative should AI responses be? (0 = consistent, 100 = very creative)",
-            "type": "number",
-            "required": false,
-            "default": 70,
-            "validation": {
-              "min": 0,
-              "max": 100
-            },
-            "help_text": "Lower values produce more consistent responses, higher values more creative"
-          }
-        ]
-      },
-      {
-        "id": "workflow_settings",
-        "label": "Workflow Execution",
-        "description": "Configure how workflows execute",
-        "icon": "workflow",
-        "order": 2,
-        "fields": [
-          {
-            "key": "WORKFLOW_RETRY_FAILED",
-            "label": "Auto-Retry Failed Workflows",
-            "description": "Automatically retry workflows that fail",
+            "key": "SENTRY_AUTO_DRAFT",
+            "label": "Draft replies automatically",
+            "description": "Write a reply in your voice as soon as mail is flagged, so the notification carries a ready-to-send draft. Nothing is ever sent without your approval.",
             "type": "boolean",
             "required": false,
             "default": true
-          },
-          {
-            "key": "WORKFLOW_MAX_RETRIES",
-            "label": "Maximum Retries",
-            "description": "How many times to retry failed workflows",
-            "type": "number",
-            "required": false,
-            "default": 2,
-            "validation": {
-              "min": 0,
-              "max": 5
-            },
-            "condition": {
-              "field": "WORKFLOW_RETRY_FAILED",
-              "equals": true
-            }
-          },
-          {
-            "key": "WORKFLOW_PARALLEL_LIMIT",
-            "label": "Parallel Workflow Limit",
-            "description": "Maximum number of workflows to run simultaneously",
-            "type": "number",
-            "required": false,
-            "default": 3,
-            "validation": {
-              "min": 1,
-              "max": 10
-            },
-            "help_text": "Higher values allow more concurrent workflows but use more resources"
-          }
-        ]
-      },
-      {
-        "id": "notification_settings",
-        "label": "Notifications",
-        "description": "Configure when and how you receive notifications",
-        "icon": "bell",
-        "order": 3,
-        "fields": [
-          {
-            "key": "NOTIFY_ON_WORKFLOW_COMPLETE",
-            "label": "Workflow Completion Notifications",
-            "description": "Get notified when workflows complete",
-            "type": "boolean",
-            "required": false,
-            "default": true
-          },
-          {
-            "key": "NOTIFY_ON_WORKFLOW_FAILURE",
-            "label": "Workflow Failure Notifications",
-            "description": "Get notified when workflows fail",
-            "type": "boolean",
-            "required": false,
-            "default": true
-          },
-          {
-            "key": "NOTIFICATION_EMAIL",
-            "label": "Notification Email Address",
-            "description": "Where to send notifications",
-            "type": "email",
-            "required": false,
-            "validation": {
-              "email": true
-            },
-            "help_text": "Leave empty to use your account email"
-          }
-        ]
-      },
-      {
-        "id": "integration_settings",
-        "label": "External Integrations",
-        "description": "Connect to external services (optional)",
-        "icon": "plug",
-        "order": 4,
-        "fields": [
-          {
-            "key": "ENABLE_SLACK_INTEGRATION",
-            "label": "Enable Slack Integration",
-            "description": "Send notifications to Slack",
-            "type": "boolean",
-            "required": false,
-            "default": false
-          },
-          {
-            "key": "SLACK_WEBHOOK_URL",
-            "label": "Slack Webhook URL",
-            "description": "Webhook URL from Slack",
-            "type": "url",
-            "secure": true,
-            "required": false,
-            "validation": {
-              "url": true,
-              "pattern": "^https://hooks\\.slack\\.com/.*$"
-            },
-            "condition": {
-              "field": "ENABLE_SLACK_INTEGRATION",
-              "equals": true
-            },
-            "help_text": "Get this from Slack: Settings > Incoming Webhooks"
-          }
-        ]
-      },
-      {
-        "id": "advanced_settings",
-        "label": "Advanced",
-        "description": "Advanced configuration options",
-        "icon": "settings",
-        "order": 5,
-        "collapsible": true,
-        "collapsed": true,
-        "fields": [
-          {
-            "key": "DEBUG_MODE",
-            "label": "Debug Mode",
-            "description": "Enable verbose logging for troubleshooting",
-            "type": "boolean",
-            "required": false,
-            "default": false,
-            "help_text": "Only enable when debugging issues. Performance impact."
-          },
-          {
-            "key": "CUSTOM_METADATA",
-            "label": "Custom Metadata",
-            "description": "Add custom metadata (JSON format)",
-            "type": "json",
-            "required": false,
-            "help_text": "Advanced users only. Must be valid JSON."
           }
         ]
       }
     ]
   },
   "metadata": {
-    "author": "",
+    "author": "Shahar Cohen",
     "license": "MIT",
-    "documentation": "",
-    "support": ""
+    "documentation": "https://github.com/dawn88set/gmail-sentry#readme",
+    "support": "https://github.com/dawn88set/gmail-sentry/issues"
   },
   "clarity_marketplace": {
     "version": "1.0.0",
@@ -224,21 +69,21 @@
       "whatsapp",
       "telegram",
       "notifications",
-      "auto-reply",
+      "reply-drafting",
       "productivity"
     ],
     "pricing_model": "free",
     "developer": {
-      "name": "",
+      "name": "Shahar Cohen",
       "email": "",
-      "website": "",
+      "website": "https://github.com/dawn88set/gmail-sentry",
       "support_email": ""
     },
     "features": [
-      "Teach it in plain language what to watch for — it turns your words into triage rules, grounded in your real inbox",
+      "Teach it in plain language what to watch for \u2014 it turns your words into triage rules, grounded in your real inbox",
       "Learns how you actually communicate: VIPs you correspond with + your writing voice",
       "AI triage of incoming Gmail into urgent / needs-reply / FYI",
-      "Notify via Slack, WhatsApp, Telegram, or Discord — with a ready-to-send reply in your voice",
+      "Notify via Slack, WhatsApp, Telegram, or Discord \u2014 with a ready-to-send reply in your voice",
       "Approve & send a reply in one tap, from the app or straight from the notification",
       "Daily inbox report of what needs attention + the replies waiting",
       "Auto-file mail by sender/subject with label rules",

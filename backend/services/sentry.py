@@ -18,6 +18,7 @@ connected. Never fakes success.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -68,6 +69,27 @@ def _latest_scan_run(db: Session, user_id: str) -> Optional[models.ScanRun]:
     )
 
 
+#: Install-time defaults, declared in app-config.json#configSchema and set by the
+#: user (or the platform) at install. They seed a NEW user's SentryConfig row
+#: only — once a row exists the in-app Rules screen owns these values, so
+#: changing the install config never overwrites a choice someone made in the UI.
+_VALID_TIERS = ("urgent", "needs_reply")
+
+
+def _default_notify_tier() -> str:
+    tier = (os.getenv("SENTRY_NOTIFY_TIER") or "").strip().lower()
+    return tier if tier in _VALID_TIERS else "urgent"
+
+
+def _default_auto_draft() -> bool:
+    raw = (os.getenv("SENTRY_AUTO_DRAFT") or "").strip().lower()
+    if raw in ("0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    return True  # model default: drafting a reply costs nothing until it's sent
+
+
 def get_config(db: Session, user_id: str) -> models.SentryConfig:
     cfg = (
         db.query(models.SentryConfig)
@@ -75,7 +97,12 @@ def get_config(db: Session, user_id: str) -> models.SentryConfig:
         .first()
     )
     if cfg is None:
-        cfg = models.SentryConfig(user_id=user_id, slack_channel="", notify_tier="urgent")
+        cfg = models.SentryConfig(
+            user_id=user_id,
+            slack_channel="",
+            notify_tier=_default_notify_tier(),
+            auto_draft=_default_auto_draft(),
+        )
         db.add(cfg)
         db.commit()
         db.refresh(cfg)
