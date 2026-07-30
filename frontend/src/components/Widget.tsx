@@ -10,6 +10,7 @@ import {
   type Tier,
 } from '@/lib/api';
 import { runQuickAction, triggerDeepLink, notifyWidgetStateChanged } from '@/lib/widget-actions';
+import { parseSender } from '@/components/Avatar';
 import { useToast } from '@/components/Toast';
 import { cn } from '@/lib/utils';
 import type { WidgetSize } from '@/lib/widget-sizes';
@@ -194,7 +195,10 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
   }
 
   // ---- Large ---------------------------------------------------------------
-  const shown = (data.top_alerts ?? []).slice(0, 2);
+  // Three rows, not two: at 360×360 two rows leave a dead band above the junk
+  // bar. The "does not scroll (content fits)" constraint test is the backstop
+  // if a third ever stops fitting.
+  const shown = (data.top_alerts ?? []).slice(0, 3);
   const cleanup = data.cleanup ?? { promo: 0, social: 0, spam: 0 };
   return (
     <WidgetContainer size="large" className={cn('relative text-white', className)}>
@@ -251,7 +255,7 @@ function AlertPeek({ alert }: { alert: WidgetAlert }) {
         )}
       </span>
       <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
-      <span className="block truncate text-xs text-white/70">{alert.sender}</span>
+      <span className="block truncate text-xs text-white/70">{parseSender(alert.sender).name}</span>
     </>
   );
 }
@@ -267,7 +271,7 @@ function AlertRow({ alert, onClick }: { alert: WidgetAlert; onClick: () => void 
       </span>
       <div className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
-        <span className="block truncate text-xs text-white/70">{alert.sender}</span>
+        <span className="block truncate text-xs text-white/70">{parseSender(alert.sender).name}</span>
       </div>
       {alert.reply_ready && (
         <span className="flex-shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-accent">

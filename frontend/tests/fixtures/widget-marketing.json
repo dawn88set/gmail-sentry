@@ -1,0 +1,42 @@
+{
+  "_comment": "Marketing fixture for screenshots.spec.ts. Deliberately realistic: plausible people, companies and asks, a mix of ages, exactly one reply-ready draft. Never 'test'/'foo'/'example.com'/'John Doe' — the marketplace guidance explicitly rejects obvious placeholder data. last_scan is a pre-rendered relative string, not a timestamp, so screenshots are byte-stable across runs.",
+  "urgent_count": 2,
+  "needs_reply_count": 3,
+  "all_clear": false,
+  "last_scan": "4m ago",
+  "slack_configured": true,
+  "top_alerts": [
+    {
+      "id": "a1f4c2",
+      "subject": "Re: Q3 quote — need the revised numbers",
+      "sender": "Dana Levi <dana@northwind.co>",
+      "tier": "urgent",
+      "reason": "Asks for the revised quote before Friday",
+      "deep_link": "https://mail.google.com/mail/u/0/#all/a1f4c2",
+      "reply_ready": true
+    },
+    {
+      "id": "b7e9d1",
+      "subject": "Security questionnaire for the Lumen rollout",
+      "sender": "Priya Shah <priya@lumenlabs.io>",
+      "tier": "urgent",
+      "reason": "Blocking their procurement review",
+      "deep_link": "https://mail.google.com/mail/u/0/#all/b7e9d1",
+      "reply_ready": false
+    },
+    {
+      "id": "c3a8f5",
+      "subject": "Invoice #4821 — due in 2 days",
+      "sender": "Meridian Supply <accounts@meridiansupply.com>",
+      "tier": "needs_reply",
+      "reason": "Payment due date approaching",
+      "deep_link": "https://mail.google.com/mail/u/0/#all/c3a8f5",
+      "reply_ready": false
+    }
+  ],
+  "cleanup": {
+    "promo": 142,
+    "social": 68,
+    "spam": 23
+  }
+}

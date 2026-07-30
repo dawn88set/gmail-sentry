@@ -19,6 +19,7 @@
     "test:visual:debug": "playwright test tests/widget-constraints.spec.ts --debug",
     "check:design": "playwright test tests/page-design.spec.ts --project=chromium",
     "check:design:score": "playwright test tests/design-goldenset.spec.ts --project=chromium",
+    "screenshots": "playwright test tests/screenshots.spec.ts --project=chromium",
     "test:all": "npm run check:identity && npm run check:coherence && npm run validate:widgets && npm run test:widgets && npm run test:visual && npm run check:design && npm run check:design:score"
   },
   "dependencies": {

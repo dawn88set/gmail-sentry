@@ -93,23 +93,18 @@
     "screenshot_instructions": {
       "required_files": [
         "./screenshots/widget-small.png",
+        "./screenshots/widget-medium.png",
         "./screenshots/widget-large.png"
       ],
       "how_to_capture": [
-        "1. Run your app: docker-compose up",
-        "2. Open frontend at http://localhost:3200",
-        "3. For widget-small.png: Capture the small widget from /widget page",
-        "4. For widget-large.png: Capture the large widget from /widget page",
-        "5. Save screenshots to ./screenshots/ directory in your app root",
-        "6. Use PNG format with transparent or white background",
-        "7. Ensure screenshots show REAL DATA, not empty states"
+        "Run `cd frontend && npm run screenshots` \u2014 regenerates every declared file at 2x from the live widget.",
+        "Re-run it after any widget change; the PNGs are build output, not hand-captured art."
       ],
       "best_practices": [
-        "Use high-quality screenshots (2x resolution recommended)",
-        "Show the widget in action with realistic data",
-        "Avoid screenshots with obvious test/placeholder data",
-        "Widget screenshots are PRIMARY - users see these in marketplace",
-        "Ensure good lighting and contrast for visibility"
+        "Element screenshots at deviceScaleFactor 2 \u2014 exactly 170\u00d7170 / 360\u00d7170 / 360\u00d7360 at 2x, no page chrome.",
+        "Data comes from frontend/tests/fixtures/widget-marketing.json: plausible people, companies and asks.",
+        "The fixture uses pre-rendered relative strings ('4m ago'), so re-running gives byte-identical files.",
+        "Never ship 'test'/'foo'/'lorem'/'example.com'/'John Doe' \u2014 obvious placeholder data reads as unfinished."
       ]
     },
     "required_integrations": [
