@@ -37,6 +37,16 @@ tools:
       spam_count: { type: number, required: false }
       error: { type: string, required: false }
 
+  - id: app.send_digest
+    handler: backend.tools.sentry_tools:send_digest
+    input:
+      user_id: { type: string, required: false }
+    output:
+      ok: { type: boolean, required: false }
+      sent: { type: boolean, required: false }
+      reason: { type: string, required: false }
+      error: { type: string, required: false }
+
 agents:
   - id: triage-agent
     source: custom
@@ -59,8 +69,32 @@ agents:
       - gmail.list_messages
       - gmail.search
       - gmail.add_label
+      - gmail.send
       - slack.post_message
       - slack.list_channels
+      - telegram.send_message
+      - discord.send_message
+      - twilio.send_whatsapp
+    input:
+      user_id: { type: string, required: true }
+    output:
+      summary: { type: string, required: true }
+    timeout: 120
+
+  - id: digest-agent
+    source: custom
+    handler: backend.agents.digest_agent:DigestAgent
+    description: |
+      Gmail Sentry's daily reporter. Gathers the user's still-open alerts, groups
+      them into urgent / to-reply (each to-reply item carries a one-tap approve
+      link to the drafted reply), and sends a single report to every channel the
+      user configured. Sends nothing when the inbox is calm.
+    model: claude-sonnet-4-6
+    reasoning: standard
+    integrations: [slack, telegram, discord, twilio]
+    tools:
+      - app.send_digest
+      - slack.post_message
       - telegram.send_message
       - discord.send_message
       - twilio.send_whatsapp
@@ -82,6 +116,17 @@ workflows:
     outputs:
       summary: "${steps.scan.output.summary}"
 
+  - id: send-digest
+    inputs:
+      user_id: { type: string, required: true }
+    steps:
+      - id: digest
+        agent: digest-agent
+        input:
+          user_id: "${input.user_id}"
+    outputs:
+      summary: "${steps.digest.output.summary}"
+
 triggers:
   - id: sentry-scan
     type: SCHEDULE
@@ -92,4 +137,15 @@ triggers:
     maxInstancesPerUser: 1
     configFields:
       - { key: interval_minutes, type: number, required: true, label: "Scan every (minutes)", default: 5 }
+      - { key: timezone, type: timezone, required: true, label: "Timezone" }
+
+  - id: sentry-digest
+    type: SCHEDULE
+    workflow: send-digest
+    name: Daily inbox report
+    description: Send a grouped report of what needs attention + replies waiting.
+    supportedSchedules: [DAILY]
+    maxInstancesPerUser: 2
+    configFields:
+      - { key: time, type: time, required: true, label: "Send at", default: "08:00" }
       - { key: timezone, type: timezone, required: true, label: "Timezone" }
