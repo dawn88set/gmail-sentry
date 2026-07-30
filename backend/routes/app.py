@@ -19,12 +19,14 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 from urllib.parse import quote
 import logging
+import re
 
 from backend.database import get_db
 from backend.security import require_user
 from backend import models
 from backend.services.sentry import run_scan, get_config
-from backend.services.reply import draft_reply
+from backend.services.reply import draft_reply, style_for
+from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
@@ -180,48 +182,129 @@ async def mute_alert(alert_id: str, user_id: str = Depends(require_user), db: Se
     return {"success": True, "muted": key}
 
 
-def _voice_samples(db, user_id: str, limit: int = 6) -> list:
-    """Excerpts of the user's own recent sent emails, to match their voice.
-    Best-effort — returns [] if Gmail isn't connected or the read fails."""
-    samples: list = []
-    try:
-        stubs = gmail_adapter.search(db, user_id, "in:sent", max_results=limit)
-        for stub in stubs[:limit]:
-            mid = stub.get("id")
-            if not mid:
-                continue
-            try:
-                meta = gmail_adapter.get_meta(db, user_id, mid)
-            except IntegrationError:
-                continue
-            snip = (meta.get("snippet") or "").strip()
-            if snip:
-                samples.append(snip)
-    except (IntegrationNotConnected, IntegrationError):
-        return []
-    return samples
+def _sender_email(sender: str) -> str:
+    """The bare email address out of a "Name <a@b.com>" sender string."""
+    import re as _re
+
+    match = _re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", sender or "")
+    return match.group(0) if match else ""
+
+
+def _reply_subject(subject: str) -> str:
+    su = subject or ""
+    return su if su.lower().startswith("re:") else f"Re: {su}".strip()
+
+
+class DraftReplyBody(BaseModel):
+    # Optional scrappy note of what the user wants to say — the draft expands it
+    # into a polished email in their voice. Omit for an auto-drafted reply.
+    intent: Optional[str] = None
 
 
 @router.post("/api/alerts/{alert_id}/draft-reply")
-async def draft_reply_alert(alert_id: str, user_id: str = Depends(require_user), db: Session = Depends(get_db)):
-    """Draft a reply (human-in-the-loop) in the user's own voice, and return a
-    Gmail compose deep link."""
+async def draft_reply_alert(
+    alert_id: str,
+    payload: DraftReplyBody = DraftReplyBody(),
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Draft a reply in the user's own voice and persist it on the alert (so the
+    user can approve & send it in-app, and so a scan-time draft is reusable). When
+    an `intent` note is given, the draft conveys that intent, expanded in their
+    voice. Also returns a Gmail compose deep link as a fallback for hand-editing."""
     alert = _get_alert(db, alert_id, user_id)
-    samples = _voice_samples(db, user_id)
-    draft = draft_reply(alert.sender or "", alert.subject or "", alert.snippet or "", style_samples=samples)
-    m = None
-    import re as _re
+    from backend.services.reply import split_fallback
 
-    match = _re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", alert.sender or "")
-    to = match.group(0) if match else ""
-    su = alert.subject or ""
-    if su and not su.lower().startswith("re:"):
-        su = f"Re: {su}"
+    samples, tone, signature = style_for(db, user_id)
+    draft, is_fallback = split_fallback(
+        draft_reply(
+            alert.sender or "",
+            alert.subject or "",
+            alert.snippet or "",
+            style_samples=samples,
+            tone=tone,
+            intent=(payload.intent or ""),
+            signature=signature,
+        )
+    )
+    alert.reply_draft = draft
+    if (alert.reply_status or "none") in ("none", "failed"):
+        alert.reply_status = "drafted"
+    alert.reply_error = None
+    db.commit()
+
+    to = _sender_email(alert.sender or "")
     compose_url = (
         "https://mail.google.com/mail/?view=cm&fs=1"
-        f"&to={quote(to)}&su={quote(su)}&body={quote(draft)}"
+        f"&to={quote(to)}&su={quote(_reply_subject(alert.subject or ''))}&body={quote(draft)}"
     )
-    return {"draft": draft, "compose_url": compose_url, "voice_matched": len(samples) > 0}
+    # voice_matched=False when the LLM was unavailable (placeholder text) so the UI
+    # can tell the user this isn't their learned voice yet.
+    return {
+        "draft": draft,
+        "compose_url": compose_url,
+        "voice_matched": bool(samples or tone) and not is_fallback,
+    }
+
+
+class ReplySendBody(BaseModel):
+    body: Optional[str] = None  # the (possibly edited) reply text; falls back to the stored draft
+
+
+@router.post("/api/alerts/{alert_id}/reply/send")
+async def send_reply_alert(
+    alert_id: str,
+    payload: ReplySendBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Approve & SEND the drafted reply through Gmail (threaded). Honest lifecycle:
+    Gmail not connected → 409 (row untouched); a real send failure → 5xx with the
+    error recorded (row survives for retry); only a real returned message id flips
+    reply_status to 'sent' and closes the alert."""
+    alert = _get_alert(db, alert_id, user_id)
+    body = (payload.body if payload.body is not None else alert.reply_draft) or ""
+    body = body.strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="No reply body to send — draft one first.")
+    to = _sender_email(alert.sender or "")
+    if not to:
+        raise HTTPException(status_code=400, detail="No recipient address on this email.")
+
+    alert.reply_draft = body
+    try:
+        result = gmail_adapter.send(
+            db,
+            user_id,
+            to=to,
+            subject=_reply_subject(alert.subject or ""),
+            body=body,
+            thread_id=alert.thread_id or "",
+            in_reply_to=alert.rfc822_msgid or "",
+        )
+    except IntegrationNotConnected:
+        db.commit()  # persist the possibly-edited draft; don't mark sent/failed
+        _not_connected("gmail")
+    except IntegrationError as e:
+        alert.reply_status = "failed"
+        alert.reply_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Couldn’t send the reply: {e}")
+
+    message_id = (result or {}).get("message_id") or ""
+    if not message_id:
+        alert.reply_status = "failed"
+        alert.reply_error = "Gmail returned no message id."
+        db.commit()
+        raise HTTPException(status_code=502, detail="Gmail didn’t confirm the send. Try again.")
+
+    alert.reply_status = "sent"
+    alert.reply_external_id = message_id
+    alert.reply_sent_at = datetime.utcnow()
+    alert.reply_error = None
+    alert.status = "done"
+    db.commit()
+    return {"success": True, "reply_status": "sent", "message_id": message_id}
 
 
 class AlertRuleBody(BaseModel):
@@ -440,6 +523,8 @@ class ConfigUpdate(BaseModel):
     discord_channel_id: Optional[str] = None
     teams_chat_id: Optional[str] = None
     whatsapp_to: Optional[str] = None
+    auto_draft: Optional[bool] = None
+    channel_tiers: Optional[dict] = None
 
 
 @router.get("/api/config")
@@ -458,7 +543,16 @@ async def update_settings(
 ):
     cfg = get_config(db, user_id)
     if payload.slack_channel is not None:
-        cfg.slack_channel = payload.slack_channel.strip()
+        chan = payload.slack_channel.strip()
+        # Reject a Slack name/@handle server-side — only an ID (C…/U…/W…/G…/D…)
+        # routes; a name is silently unreachable (channel_not_found on every send).
+        # Empty clears the destination. Mirrors the client-side slackDestError.
+        if chan and not re.fullmatch(r"[CDGUW][A-Z0-9]{6,}", chan):
+            raise HTTPException(
+                status_code=400,
+                detail="Slack needs a channel ID (starts with C) or member ID (starts with U), not a name. Open the channel → About → Channel ID, or pick from the list.",
+            )
+        cfg.slack_channel = chan
     if payload.notify_tier is not None:
         if payload.notify_tier not in ("urgent", "needs_reply"):
             raise HTTPException(status_code=400, detail="Invalid notify tier")
@@ -471,9 +565,54 @@ async def update_settings(
         cfg.teams_chat_id = payload.teams_chat_id.strip()
     if payload.whatsapp_to is not None:
         cfg.whatsapp_to = payload.whatsapp_to.strip()
+    if payload.auto_draft is not None:
+        cfg.auto_draft = bool(payload.auto_draft)
+    if payload.channel_tiers is not None:
+        # Keep only known channels + valid tiers; "" / other → drop (falls back to
+        # the global notify_tier for that channel).
+        valid = {"urgent", "needs_reply"}
+        known = {"slack", "telegram", "discord", "whatsapp"}
+        cfg.channel_tiers = {
+            k: v
+            for k, v in payload.channel_tiers.items()
+            if k in known and v in valid
+        }
     db.commit()
     db.refresh(cfg)
     return cfg.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Communication-pattern profile ("what I've learned about you")
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/profile")
+async def get_comm_profile(user_id: str = Depends(require_user), db: Session = Depends(get_db)):
+    """What Gmail Sentry has learned about how the user communicates (VIPs, tone,
+    style). Empty-but-valid shape when nothing's been learned yet."""
+    prof = get_profile(db, user_id)
+    if prof is None:
+        return {
+            "vip_senders": [],
+            "response_habits": {},
+            "tone": "",
+            "style_exemplars": [],
+            "signature": "",
+            "refreshed_at": None,
+        }
+    return prof.to_dict()
+
+
+@router.post("/api/profile/learn")
+async def learn_comm_profile(user_id: str = Depends(require_user), db: Session = Depends(get_db)):
+    """Re-learn the user's communication patterns from their real sent + inbox mail.
+    Best-effort — returns the (possibly unchanged) profile; a 409 only if reading
+    the mailbox is impossible because Gmail isn't connected."""
+    try:
+        return learn_patterns(db, user_id)
+    except IntegrationNotConnected:
+        _not_connected("gmail")
 
 
 class NotifyTest(BaseModel):
@@ -499,10 +638,16 @@ async def slack_channels(
     db: Session = Depends(get_db),
 ):
     """Channels the connected Slack bot can see, so the user PICKS one instead of
-    typing a name (free-text names cause `channel_not_found`). Returns
-    ``{connected, channels:[{id,name}]}``; a not-connected Slack yields
-    ``connected: false`` (not an error) so the UI can prompt to connect."""
+    typing a name (free-text names cause `channel_not_found`). Also returns the
+    connected `workspace` name so the user can confirm they're on the right
+    workspace (a channel id from another workspace fails even with the bot present).
+    Returns ``{connected, workspace, channels:[{id,name}]}``; a not-connected Slack
+    yields ``connected: false`` (not an error) so the UI can prompt to connect."""
     from backend.shared.adapters import execute_tool
+    from backend.shared.adapters import slack as slack_adapter
+
+    # Which workspace is the token on — best-effort, shown regardless of list result.
+    workspace = slack_adapter.connected_workspace(db, user_id).get("team", "")
 
     try:
         res = execute_tool("slack", "list_channels", user_id, {})
@@ -512,12 +657,12 @@ async def slack_channels(
             [{"id": c.get("id", ""), "name": c.get("name", "")} for c in chans if c.get("id")],
             key=lambda c: c["name"].lower(),
         )
-        return {"connected": True, "channels": chans}
+        return {"connected": True, "workspace": workspace, "channels": chans}
     except IntegrationNotConnected:
-        return {"connected": False, "channels": []}
+        return {"connected": False, "workspace": workspace, "channels": []}
     except IntegrationError as e:
         # Surface the real reason (e.g. missing channels:read scope) but don't 500.
-        return {"connected": True, "channels": [], "error": str(e)}
+        return {"connected": True, "workspace": workspace, "channels": [], "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -536,13 +681,46 @@ async def get_cleanup(
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """Latest known category sizes (snapshot from the last scan) + scan time."""
+    """Latest known category sizes (snapshot from the last scan) + scan time.
+    `last_scan_error` is set when the most recent run couldn't complete (e.g. Gmail
+    disconnected) so the UI can show why 'last scan' isn't advancing normally."""
     run = _latest_run(db, user_id)
     return {
         "promotions": (run.promo_count if run else 0) or 0,
         "social": (run.social_count if run else 0) or 0,
         "spam": (run.spam_count if run else 0) or 0,
         "last_scan": _relative_time(run.started_at if run else None),
+        "last_scan_error": (run.error if run else None) or None,
+    }
+
+
+@router.get("/api/scans/recent")
+async def recent_scans(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The last few scan runs (newest first) so the user can SEE the actual cadence
+    — the interval is owned by the Claritty platform, and this makes any drift or
+    gaps visible + diagnosable. Returns [{at, ago, scanned, flagged, notified, error}]."""
+    runs = (
+        db.query(models.ScanRun)
+        .filter(models.ScanRun.user_id == user_id)
+        .order_by(models.ScanRun.started_at.desc())
+        .limit(10)
+        .all()
+    )
+    return {
+        "runs": [
+            {
+                "at": r.started_at.isoformat() if r.started_at else None,
+                "ago": _relative_time(r.started_at),
+                "scanned": r.scanned or 0,
+                "flagged": r.flagged or 0,
+                "notified": r.notified or 0,
+                "error": r.error or None,
+            }
+            for r in runs
+        ]
     }
 
 
@@ -719,6 +897,8 @@ async def get_widget_data(
                 "tier": a.tier,
                 "reason": a.reason or "",
                 "deep_link": a.deep_link or "",
+                # A reply is drafted and waiting for one-tap approval in-app.
+                "reply_ready": bool((a.reply_draft or "").strip()) and a.reply_status != "sent",
             }
             for a in ranked[:3]
         ]

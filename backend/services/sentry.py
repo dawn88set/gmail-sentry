@@ -21,9 +21,12 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from backend import models
 from backend.services.triage import classify_email, TIER_RANK
+from backend.services.reply import draft_reply, style_for
+from backend.services.learn import get_profile
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
@@ -32,6 +35,37 @@ logger = logging.getLogger(__name__)
 
 MAX_MESSAGES = 20
 TIER_LABEL = {"urgent": "🔴 Urgent", "needs_reply": "🟡 Needs reply", "fyi": "FYI"}
+
+
+def _alert_message(alert: models.Alert) -> str:
+    """The notification text for one alert. For needs_reply alerts that already
+    have a drafted reply, it carries a preview + a one-tap approve deep link; for
+    everything else it's the attention line + Gmail deep link. Plain text so it
+    renders on every channel."""
+    lines = [
+        f"🔔 {TIER_LABEL.get(alert.tier, alert.tier)} — {alert.subject or '(no subject)'}",
+        f"From: {alert.sender}",
+    ]
+    if alert.reason:
+        lines.append(alert.reason)
+    draft = (alert.reply_draft or "").strip()
+    if alert.tier == "needs_reply" and draft:
+        preview = draft if len(draft) <= 240 else draft[:240].rstrip() + "…"
+        approve = notify.app_focus_link(alert.id) or alert.deep_link or ""
+        lines += ["", "✍️ Draft reply ready:", f"“{preview}”", "", f"👉 Approve & send: {approve}"]
+    else:
+        lines.append(alert.deep_link or "")
+    return "\n".join(x for x in lines if x is not None).strip()
+
+
+def _latest_scan_run(db: Session, user_id: str) -> Optional[models.ScanRun]:
+    """The user's most recent ScanRun (for carrying forward cleanup counts)."""
+    return (
+        db.query(models.ScanRun)
+        .filter(models.ScanRun.user_id == user_id)
+        .order_by(models.ScanRun.started_at.desc())
+        .first()
+    )
 
 
 def get_config(db: Session, user_id: str) -> models.SentryConfig:
@@ -101,6 +135,20 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
         .all()
     )
 
+    # Behavioral VIPs from the learned communication profile: surface mail from the
+    # people the user actually corresponds with, even without an explicit rule.
+    prof = get_profile(db, user_id)
+    if prof:
+        for v in (prof.vip_senders or [])[:5]:
+            email = (v.get("email") or "").strip()
+            if email:
+                rules.append({
+                    "name": f"Frequent contact {email}",
+                    "kind": "vip_sender",
+                    "value": email,
+                    "tier": "needs_reply",
+                })
+
     run = models.ScanRun(user_id=user_id)
 
     try:
@@ -108,11 +156,20 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
             db, user_id, "in:inbox newer_than:2d", max_results=max_messages
         )
     except IntegrationNotConnected:
-        # Don't persist a ScanRun here — a failed attempt shouldn't clobber the
-        # last good cleanup snapshot / scan time with zeros. Just signal upward.
+        # Record the attempt (with an error) so the widget's "last scan" reflects
+        # that scans ARE firing — otherwise a run that fires while Gmail is
+        # disconnected writes nothing and the UI looks like scheduling stopped.
+        # Carry forward the last-good cleanup counts so the snapshot isn't zeroed.
+        prev = _latest_scan_run(db, user_id)
+        run.error = "gmail_not_connected"
+        if prev:
+            run.promo_count = prev.promo_count or 0
+            run.social_count = prev.social_count or 0
+            run.spam_count = prev.spam_count or 0
+        db.add(run)
+        db.commit()
         raise
 
-    notify_floor = TIER_RANK.get(cfg.notify_tier or "urgent", 2)
     muted = [m.lower() for m in (cfg.muted_senders or []) if m]
     scanned = flagged = labeled = notified = 0
     new_alerts: List[models.Alert] = []
@@ -172,7 +229,6 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
         if TIER_RANK.get(tier, 0) <= TIER_RANK["fyi"]:
             continue  # only urgent / needs_reply become alerts
 
-        flagged += 1
         deep = _deep_link(meta.get("rfc822_msgid"), msg_id)
         alert = models.Alert(
             user_id=user_id,
@@ -188,25 +244,54 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
             slack_sent=False,
             status="new",
         )
-        db.add(alert)
+        # Insert inside a savepoint so a concurrent scan that already created this
+        # alert (unique (user_id, gmail_message_id)) drops just THIS row — never the
+        # whole batch, and never a duplicate alert/ping. Belt to the pre-insert
+        # SELECT's suspenders (which races under overlapping runs).
+        try:
+            with db.begin_nested():
+                db.add(alert)
+                db.flush()
+        except IntegrityError:
+            logger.info(f"duplicate alert skipped for {msg_id} (concurrent scan)")
+            continue
+        flagged += 1
         new_alerts.append(alert)
 
     # Persist alerts before notifying so they have ids.
     db.commit()
 
-    # 3) Fan out fresh alerts at/above the notify tier to EVERY configured
-    #    channel (Slack, Telegram, Discord, Teams, WhatsApp). Plain text so it
-    #    reads well everywhere (URLs auto-link on all of them).
+    # 2.5) Pre-draft replies for needs_reply alerts (in the user's voice) so the
+    #      notification can carry the reply and the user can approve in one tap.
+    #      Best-effort and NEVER auto-sends — approval is always explicit.
+    if cfg.auto_draft:
+        to_reply = [a for a in new_alerts if a.tier == "needs_reply"]
+        if to_reply:
+            from backend.services.reply import split_fallback
+
+            samples, tone, signature = style_for(db, user_id)
+            for a in to_reply:
+                try:
+                    draft, is_fallback = split_fallback(
+                        draft_reply(
+                            a.sender or "", a.subject or "", a.snippet or "",
+                            style_samples=samples, tone=tone, signature=signature,
+                        )
+                    )
+                    a.reply_draft = draft
+                    # Only advertise a ready draft when it's the real (LLM) voice —
+                    # a template placeholder shouldn't claim "draft ready".
+                    a.reply_status = "drafted" if not is_fallback else a.reply_status
+                except Exception as e:  # noqa: BLE001 — drafting is best-effort
+                    logger.info(f"pre-draft failed for alert {a.id}: {type(e).__name__}: {e}")
+            db.commit()
+
+    # 3) Fan each fresh alert out to the channels whose urgency routing accepts it
+    #    (per-channel tier, falling back to the global notify_tier). Plain text so
+    #    it reads well everywhere; needs_reply pings carry the drafted reply + a
+    #    one-tap approve link (see _alert_message).
     for alert in new_alerts:
-        if TIER_RANK.get(alert.tier, 0) < notify_floor:
-            continue
-        text = (
-            f"🔔 {TIER_LABEL.get(alert.tier, alert.tier)} — {alert.subject or '(no subject)'}\n"
-            f"From: {alert.sender}\n"
-            f"{alert.reason or ''}\n"
-            f"{alert.deep_link or ''}"
-        ).strip()
-        results = notify.notify_all(db, user_id, cfg, text)
+        results = notify.notify_all(db, user_id, cfg, _alert_message(alert), tier=alert.tier)
         if any(r["ok"] for r in results):
             alert.slack_sent = True  # reused as the "notified" flag
             notified += 1
