@@ -32,3 +32,27 @@ def test_graph_builds():
     assert isinstance(graph, dict)
     assert "nodes" in graph and "edges" in graph
     assert len(graph["nodes"]) >= 1
+
+
+def test_no_in_app_credential_or_oauth_surface():
+    """Connecting is PLATFORM-OWNED.
+
+    The app reads connection *status* and nothing else — it must never expose an
+    endpoint that accepts credentials or runs an OAuth code exchange. The seed
+    shipped one (backend/integrations/routes.py); it was removed because nothing
+    called it and it was a live credential-write surface. This guards the
+    deletion: it fails if that router, or anything shaped like it, comes back.
+    """
+    from backend.main import app
+
+    paths = {r.path for r in app.routes if getattr(r, "path", "").startswith("/api/integrations")}
+
+    # The two read-only routes the frontend actually calls.
+    assert "/api/integrations/required" in paths
+    assert "/api/integrations/slack/channels" in paths
+
+    # Nothing else. In particular no catch-all /{integration_id}, which would
+    # also shadow /required depending on registration order.
+    assert paths == {"/api/integrations/required", "/api/integrations/slack/channels"}, (
+        f"unexpected /api/integrations routes: {sorted(paths)}"
+    )

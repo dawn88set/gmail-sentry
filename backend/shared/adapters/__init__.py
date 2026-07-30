@@ -346,8 +346,8 @@ _LIVENESS = {
 def run_liveness(db, user_id: str, service: str):
     """Run a provider's liveness check, or return None if it has no adapter.
 
-    Lets backend/integrations/routes.py `/test` work for every provider with an
-    adapter instead of a hardcoded gmail branch.
+    Generic over providers instead of a hardcoded gmail branch, so any
+    connection-health check works for every service that has an adapter.
     """
     import importlib
 

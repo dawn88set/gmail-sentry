@@ -143,13 +143,11 @@ try:
 except Exception as _e:  # noqa: BLE001
     logger.warning(f"No app routers package to include: {_e}")
 
-# Generic Connect/OAuth API (catalog + connect + oauth/callback + test + disconnect),
-# prefix /api/integrations — drives the Settings → Integrations UI. Included AFTER
-# backend/routes/* so the specific /api/integrations/required route
-# (integrations_setup) registers BEFORE this router's catch-all
-# /api/integrations/{id} — otherwise {id} would shadow /required.
-from backend.integrations.routes import router as integrations_router
-app.include_router(integrations_router)
+# Connecting an integration is PLATFORM-OWNED: the frontend postMessages
+# `claritty:connect-integration` to the host, which runs its own OAuth gate, and
+# the broker holds the token. The app only reads connection *status*, via
+# GET /api/integrations/required (backend/routes/integrations_setup.py). There is
+# deliberately no in-app credential-write or oauth/callback endpoint here.
 
 # Triggers are managed by the Claritty platform; the app only exposes the
 # /internal dispatch endpoints below (no in-app scheduler).
@@ -914,9 +912,14 @@ async def startup_event():
     logger.info("📊 Initializing database...")
     init_db()
 
-    # Seed starter rules + sample alerts on first run so the widget shows real
-    # content (makes the small/medium/large sizes visibly different). Idempotent.
-    seed_demo_data()
+    # Fabricated starter rules + sample alerts, so the dashboard and the three
+    # widget sizes show varied content before Gmail is connected. Local dev and
+    # screenshot fixtures only — OFF by default, and deliberately an explicit
+    # opt-in rather than an ENVIRONMENT check, so a preview deploy can't turn it
+    # on by accident and write placeholder rows to a production database.
+    if os.getenv("SEED_DEMO_DATA", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("🌱 SEED_DEMO_DATA is set — seeding demo content")
+        seed_demo_data()
 
     # Auto-discover and register all components
     logger.info("🤖 Auto-discovering agents, workflows, and triggers...")

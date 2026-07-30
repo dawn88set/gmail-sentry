@@ -98,5 +98,14 @@ def test_record_audit_requires_user_id():
 
 def test_status_sets_are_disjoint_and_complete():
     assert set(ItemStatus.OPEN).isdisjoint(ItemStatus.CLOSED)
-    # APPROVED is a transient state (mid-publish), intentionally in neither set.
-    assert set(ItemStatus.OPEN) | set(ItemStatus.CLOSED) | {ItemStatus.APPROVED} == set(ItemStatus.ALL)
+    # APPROVED and SCHEDULED are transient (post-approval, pre-publish) and are
+    # deliberately in neither set — the sweep advances them with no human
+    # attention. spine.py groups them as SCHEDULED_PENDING; assert against that
+    # rather than restating the members, so a new transient status can't make
+    # ALL silently incomplete again.
+    assert set(ItemStatus.OPEN).isdisjoint(ItemStatus.SCHEDULED_PENDING)
+    assert set(ItemStatus.CLOSED).isdisjoint(ItemStatus.SCHEDULED_PENDING)
+    assert (
+        set(ItemStatus.OPEN) | set(ItemStatus.CLOSED) | set(ItemStatus.SCHEDULED_PENDING)
+        == set(ItemStatus.ALL)
+    )

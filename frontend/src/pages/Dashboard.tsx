@@ -76,13 +76,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
-  const [onboarding, setOnboarding] = useState(() => {
-    try {
-      return localStorage.getItem('gs_onboarded') !== '1';
-    } catch {
-      return false;
-    }
-  });
+  // Start closed and let the SERVER decide. Opening it optimistically means a
+  // fresh browser (or an unreachable API — the status call below is a soft
+  // catch) shows the setup wizard over the dashboard, which is both a bad first
+  // frame and why the rendered design audit was scoring the modal, not the page.
+  const [onboarding, setOnboarding] = useState(false);
   const [obRole, setObRole] = useState('');
   const [obIntent, setObIntent] = useState('');
 
@@ -134,10 +132,17 @@ export default function Dashboard() {
           } catch {
             /* ignore */
           }
-          setOnboarding(false);
-        } else {
-          setOnboarding(true);
+          return;
         }
+        // Not onboarded server-side. localStorage is only a SUPPRESSOR — if the
+        // user already dismissed the wizard on this device, don't re-open it.
+        let dismissed = false;
+        try {
+          dismissed = localStorage.getItem('gs_onboarded') === '1';
+        } catch {
+          /* ignore */
+        }
+        if (!dismissed) setOnboarding(true);
       })
       .catch(() => undefined);
   }, [refresh]);
