@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { ShieldCheck, RefreshCw, Megaphone, Users, Ban } from 'lucide-react';
+import { ShieldCheck, RefreshCw, Megaphone, Users, Ban, Bell, ChevronRight } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { AnimatedNumber } from '@/components/AnimatedNumber';
 import { SmartOnboarding } from '@/components/SmartOnboarding';
@@ -16,12 +16,16 @@ import { SkeletonRows } from '@/components/ios/Skeleton';
 import {
   getAlerts,
   getCleanup,
+  getConfig,
+  getRecentScans,
   getRequiredIntegrations,
   getOnboardingStatus,
   runScan,
   toApiError,
   type Alert,
   type CleanupCounts,
+  type SentryConfig,
+  type ScanRunItem,
   type Tier,
   type RequiredIntegration,
 } from '@/lib/api';
@@ -65,6 +69,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [cleanup, setCleanup] = useState<CleanupCounts | null>(null);
+  const [config, setConfig] = useState<SentryConfig | null>(null);
+  const [recentScans, setRecentScans] = useState<ScanRunItem[]>([]);
   const [integrations, setIntegrations] = useState<RequiredIntegration[]>([]);
   const [appId, setAppId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -100,6 +106,14 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
+    // Where alerts go — used to nudge setup when no channel is configured yet.
+    getConfig()
+      .then(setConfig)
+      .catch(() => undefined);
+    // Recent scan runs — so the actual cadence (platform-owned) is visible.
+    getRecentScans()
+      .then((r) => setRecentScans(r.runs || []))
+      .catch(() => undefined);
   }, [show]);
 
   useEffect(() => {
@@ -153,6 +167,16 @@ export default function Dashboard() {
   const attention = urgent + needsReply;
   const calm = attention === 0;
   const notConnected = integrations.filter((i) => !i.connected);
+  // No alert destination set on ANY channel → the app can flag mail but can't
+  // reach the user. Surface a one-tap prompt to the Slack/notification setup.
+  const hasAlertChannel = !!(
+    config &&
+    (config.slack_channel ||
+      config.telegram_chat_id ||
+      config.discord_channel_id ||
+      config.whatsapp_to)
+  );
+  const showAlertSetup = config !== null && !hasAlertChannel;
 
   return (
     <>
@@ -181,6 +205,11 @@ export default function Dashboard() {
             <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <LiveDot /> Watching
             </div>
+            {cleanup?.last_scan_error === 'gmail_not_connected' && (
+              <div className="mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+                Last scan couldn’t run — Gmail isn’t connected. Reconnect it on the Integrations tab to resume scanning.
+              </div>
+            )}
             {calm ? (
               <div className="flex items-center gap-3">
                 <ShieldCheck className="h-8 w-8 text-accent" />
@@ -212,6 +241,31 @@ export default function Dashboard() {
             )}
           </div>
         </ListGroup>
+
+        {/* Get alerts — shown until a notification destination is set, so the
+            user can find Slack/notification setup without hunting the Rules tab. */}
+        {showAlertSetup && (
+          <ListSection>
+            <ListGroup variant="plain-mobile">
+              <button
+                type="button"
+                onClick={() => navigate('/rules?setup=alerts')}
+                className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-muted/50"
+              >
+                <span className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                  <Bell className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-semibold text-foreground">Get alerts in Slack</span>
+                  <span className="block text-[13px] text-muted-foreground">
+                    Pick where urgent mail pings you — Slack, Telegram, Discord or WhatsApp.
+                  </span>
+                </span>
+                <ChevronRight className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
+              </button>
+            </ListGroup>
+          </ListSection>
+        )}
 
         {/* Connect */}
         {notConnected.length > 0 && (
@@ -325,6 +379,29 @@ export default function Dashboard() {
             </ListGroup>
           )}
         </ListSection>
+
+        {/* Recent scans — the interval is owned by the platform; showing the real
+            run times makes the actual cadence (and any gaps) visible. */}
+        {recentScans.length > 0 && (
+          <ListSection title="Recent scans" footer="Scans run on the schedule you set — the cadence is managed by the platform.">
+            <ListGroup variant="plain-mobile">
+              {recentScans.slice(0, 6).map((r, i) => (
+                <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-[13px] text-muted-foreground">{r.ago}</span>
+                  {r.error ? (
+                    <span className="text-[12px] font-medium text-destructive">
+                      {r.error === 'gmail_not_connected' ? 'Gmail disconnected' : 'failed'}
+                    </span>
+                  ) : (
+                    <span className="text-[12px] text-muted-foreground">
+                      {r.scanned} scanned · {r.flagged} flagged · {r.notified} pinged
+                    </span>
+                  )}
+                </div>
+              ))}
+            </ListGroup>
+          </ListSection>
+        )}
       </Screen>
 
       <AnimatePresence>

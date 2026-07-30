@@ -4,7 +4,7 @@
  */
 export const appName = 'Gmail Sentry';
 export const appDescription =
-  'Your inbox watchdog: it triages incoming Gmail against rules you define, pings you on Slack with a deep link when something needs attention, and clears Promotions, Social, and Spam in one tap.';
+  'Your inbox watchdog: tell the team in plain language what matters, and it learns how you actually communicate. It triages incoming Gmail, pings you on Slack, WhatsApp, or Telegram — with a ready-to-send reply in your voice you can approve in one tap — sends a daily report, and clears Promotions, Social, and Spam in one tap.';
 
 // The marketplace widget host labels the widget from document.title, so set it
 // from the app's OWN name (this is what makes the widget announce itself

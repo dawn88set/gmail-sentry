@@ -221,7 +221,10 @@
       "inbox",
       "triage",
       "slack",
+      "whatsapp",
+      "telegram",
       "notifications",
+      "auto-reply",
       "productivity"
     ],
     "pricing_model": "free",
@@ -232,9 +235,12 @@
       "support_email": ""
     },
     "features": [
+      "Teach it in plain language what to watch for — it turns your words into triage rules, grounded in your real inbox",
+      "Learns how you actually communicate: VIPs you correspond with + your writing voice",
       "AI triage of incoming Gmail into urgent / needs-reply / FYI",
-      "Custom urgency rules: natural-language, VIP senders, keywords, deadline detection",
-      "Slack pings with a deep link straight to the email",
+      "Notify via Slack, WhatsApp, Telegram, or Discord — with a ready-to-send reply in your voice",
+      "Approve & send a reply in one tap, from the app or straight from the notification",
+      "Daily inbox report of what needs attention + the replies waiting",
       "Auto-file mail by sender/subject with label rules",
       "One-tap bulk clear of Promotions, Social, and Spam",
       "Runs on a schedule (every 5 minutes by default)"
@@ -265,9 +271,13 @@
       "gmail",
       "slack"
     ],
-    "optional_integrations": [],
+    "optional_integrations": [
+      "telegram",
+      "discord",
+      "twilio"
+    ],
     "core_action": {
-      "definition_of_done": "A new urgent email arrives, and within a scan the user gets a Slack message with a working Gmail deep link, sees the email flagged as urgent in the dashboard and widget, has matching mail auto-filed by label rules, and can one-tap clear Promotions/Social/Spam \u2014 or sees a clear connect-Gmail/Slack prompt when an integration is not connected.",
+      "definition_of_done": "A new email that needs a reply arrives; within a scan the user gets a notification on their channel (Slack/WhatsApp/Telegram/Discord) carrying a reply drafted in their own voice and a one-tap approve link. Tapping it (or opening the app) lands on the email with Approve & Send, which really sends the reply through Gmail (in-thread) and marks it done \u2014 or shows a clear connect-Gmail/reconnect-channel prompt when an integration is not connected (never a faked success). Urgent mail is flagged in the dashboard and widget, matching mail is auto-filed by label rules, a daily digest reports what's waiting, and Promotions/Social/Spam clear in one tap.",
       "external_systems": [
         "gmail",
         "slack"

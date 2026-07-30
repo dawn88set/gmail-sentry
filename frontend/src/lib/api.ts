@@ -98,6 +98,9 @@ export interface Alert {
   deep_link?: string | null;
   slack_sent: boolean;
   status: 'new' | 'seen' | 'dismissed';
+  reply_draft?: string | null;
+  reply_status?: 'none' | 'drafted' | 'sent' | 'failed';
+  reply_sent_at?: string | null;
   created_at?: string | null;
 }
 
@@ -122,13 +125,18 @@ export interface LabelRule {
   created_at?: string | null;
 }
 
+export type NotifyChannel = 'slack' | 'telegram' | 'discord' | 'whatsapp';
+
 export interface SentryConfig {
   slack_channel: string;
   notify_tier: 'urgent' | 'needs_reply';
+  // Per-channel urgency override; a channel absent here follows notify_tier.
+  channel_tiers: Partial<Record<NotifyChannel, 'urgent' | 'needs_reply'>>;
   telegram_chat_id: string;
   discord_channel_id: string;
   teams_chat_id: string;
   whatsapp_to: string;
+  auto_draft: boolean;
 }
 
 export interface CleanupCounts {
@@ -136,7 +144,21 @@ export interface CleanupCounts {
   social: number;
   spam: number;
   last_scan: string;
+  last_scan_error?: string | null; // set when the last scan couldn't run (e.g. Gmail disconnected)
 }
+
+export interface ScanRunItem {
+  at: string | null;
+  ago: string;
+  scanned: number;
+  flagged: number;
+  notified: number;
+  error?: string | null;
+}
+/** Recent scan runs (newest first) — lets the user SEE the actual cadence, since
+ *  the interval is owned by the platform. */
+export const getRecentScans = async (): Promise<{ runs: ScanRunItem[] }> =>
+  (await api.get('/api/scans/recent')).data;
 
 export interface ScanSummary {
   scanned: number;
@@ -157,6 +179,7 @@ export interface WidgetAlert {
   tier: Tier;
   reason: string;
   deep_link: string;
+  reply_ready?: boolean;
 }
 
 export interface WidgetData {
@@ -215,10 +238,22 @@ export const snoozeAlert = async (id: string, hours: number): Promise<void> => {
 export const muteAlert = async (id: string): Promise<{ muted: string }> =>
   (await api.post(`/api/alerts/${id}/mute`)).data;
 
+// Draft a reply. Pass `intent` — a rough, scrappy note of what you want to say —
+// and it's expanded into a polished email in your voice. Omit for an auto-draft.
 export const draftReplyAlert = async (
   id: string,
+  intent?: string,
 ): Promise<{ draft: string; compose_url: string; voice_matched: boolean }> =>
-  (await api.post(`/api/alerts/${id}/draft-reply`)).data;
+  (await api.post(`/api/alerts/${id}/draft-reply`, intent ? { intent } : {})).data;
+
+// Approve & SEND the drafted reply through Gmail (threaded). 409 → connect Gmail;
+// 5xx → real send failure (the alert keeps its draft for retry). Only a real
+// message id flips it to sent.
+export const sendReply = async (
+  id: string,
+  body?: string,
+): Promise<{ success: boolean; reply_status: 'sent'; message_id: string }> =>
+  (await api.post(`/api/alerts/${id}/reply/send`, { body })).data;
 
 export const createRuleFromAlert = async (id: string, tier: Tier = 'urgent'): Promise<TriageRule> =>
   (await api.post(`/api/alerts/${id}/create-rule`, { tier })).data;
@@ -300,6 +335,7 @@ export interface SlackChannel {
  *  typing a name (free-text names cause `channel_not_found`). */
 export const getSlackChannels = async (): Promise<{
   connected: boolean;
+  workspace?: string; // the connected Slack workspace/team name (to spot a mismatch)
   channels: SlackChannel[];
   error?: string;
 }> => (await api.get('/api/integrations/slack/channels')).data;
@@ -413,5 +449,27 @@ export const applyOnboarding = async (body: {
   role?: string;
 }): Promise<{ created_rules: number; created_label_rules: number; onboarded: boolean }> =>
   (await api.post('/api/onboarding/apply', body)).data;
+
+// ── Communication-pattern profile ("what I've learned about you") ────────────
+export interface CommVip {
+  email: string;
+  name?: string;
+  count?: number;
+}
+export interface CommProfile {
+  vip_senders: CommVip[];
+  response_habits: { frequent_contacts?: string[] } & Record<string, unknown>;
+  tone: string;
+  style_exemplars: string[];
+  signature: string;
+  refreshed_at: string | null;
+}
+
+export const getProfile = async (): Promise<CommProfile> =>
+  (await api.get('/api/profile')).data;
+
+// Re-learn the user's communication patterns from their real sent + inbox mail.
+export const learnProfile = async (): Promise<CommProfile> =>
+  (await api.post('/api/profile/learn')).data;
 
 export default api;

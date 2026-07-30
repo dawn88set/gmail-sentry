@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Sparkles, Slack, Mail, Check, Send, MessageSquare, Phone, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Sparkles, Slack, Mail, Check, Send, MessageSquare, Phone, Loader2, MessageSquareText } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { SmartOnboarding } from '@/components/SmartOnboarding';
 import { ConnectButton } from '@/components/ConnectButtons';
@@ -29,6 +30,7 @@ import {
   getRequiredIntegrations,
   toApiError,
   type SentryConfig,
+  type NotifyChannel,
   type TriageRule,
   type LabelRule,
   type RuleKind,
@@ -67,7 +69,7 @@ const DEST_FIELD: Record<
     field: 'slack_channel',
     label: 'Send alerts to',
     placeholder: 'U0123… (your member ID, for a DM)  ·  or C0123… (channel ID)',
-    hint: 'Use an ID, not a name (a name fails with channel_not_found). Easiest: your member ID for a DM — in Slack click your avatar → Profile → ⋮ → “Copy member ID” (U0…). For a channel: /invite @Gmail Sentry in it, then open the channel → its name → scroll to “Channel ID” (C0…).',
+    hint: 'Use an ID, not a name (a name fails with channel_not_found). Easiest: your member ID for a DM — in Slack click your avatar → Profile → ⋮ → “Copy member ID” (U0…). For a channel: /invite @Claritty in it, then open the channel → its name → scroll to “Channel ID” (C0…).',
   },
   telegram: {
     field: 'telegram_chat_id',
@@ -114,6 +116,22 @@ const MATCH_LABEL: Record<LabelMatchType, string> = {
 const inputCls =
   'w-full rounded-lg bg-muted/60 px-3 py-2 text-[15px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-2 focus:ring-accent/40';
 
+/**
+ * Slack destinations must be an ID, never a name. Channel/DM/user ids are
+ * uppercase and start with C/D/G/U/W (e.g. C0BGKR50VFS, U08UC99NS8P). A value
+ * like `#gmail-sentry` or `@someone` fails with `channel_not_found` — catch it
+ * before it's saved so alerts don't silently never send.
+ */
+const SLACK_ID_RE = /^[CDGUW][A-Z0-9]{6,}$/;
+function slackDestError(value: string): string | null {
+  const v = (value || '').trim();
+  if (!v) return null;
+  if (v.startsWith('#')) return 'Use the channel ID (starts with C), not the name #' + v.replace(/^#/, '') + '.';
+  if (v.startsWith('@')) return 'Use the member ID (starts with U), not an @name.';
+  if (!SLACK_ID_RE.test(v)) return 'That’s not a Slack ID. Use a channel ID (C…) or member ID (U…) — open the channel → About → Channel ID.';
+  return null;
+}
+
 function FieldCell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="px-4 py-2.5">
@@ -137,13 +155,16 @@ function DeleteButton({ label, onClick }: { label: string; onClick: () => void }
 
 export default function Rules() {
   const { show } = useToast();
+  const navigate = useNavigate();
   const [config, setConfig] = useState<SentryConfig>({
     slack_channel: '',
     notify_tier: 'urgent',
+    channel_tiers: {},
     telegram_chat_id: '',
     discord_channel_id: '',
     teams_chat_id: '',
     whatsapp_to: '',
+    auto_draft: true,
   });
   const [testResults, setTestResults] = useState<NotifyResult[] | null>(null);
   const [testing, setTesting] = useState(false);
@@ -189,11 +210,17 @@ export default function Rules() {
   const [integrations, setIntegrations] = useState<RequiredIntegration[]>(DEFAULT_INTEGRATIONS);
   const [integrationsLoaded, setIntegrationsLoaded] = useState(false);
   const firstIntegrationsLoad = useRef(true);
+  // When the Dashboard "Get alerts" prompt deep-links here (?setup=alerts),
+  // scroll the Integrations section into view so Slack setup is front-and-center.
+  const integrationsRef = useRef<HTMLDivElement>(null);
   const [appId, setAppId] = useState<string | null>(null);
   // Slack channel picker: real channels the bot can see, so the user can't
   // mistype and hit `channel_not_found`.
   const [slackChannels, setSlackChannels] = useState<SlackChannel[]>([]);
   const [slackChannelsError, setSlackChannelsError] = useState<string | null>(null);
+  // The connected Slack workspace/team name — shown so the user can confirm a
+  // channel id belongs to the SAME workspace (a mismatch → channel_not_found).
+  const [slackWorkspace, setSlackWorkspace] = useState<string>('');
   // Transient "Saved ✓" acknowledgement so the user knows a blur/select persisted.
   const [savedField, setSavedField] = useState<string | null>(null);
   const savedTimer = useRef<number | null>(null);
@@ -253,6 +280,19 @@ export default function Rules() {
     void refreshIntegrations();
   }, [load, refreshIntegrations]);
 
+  // Deep-linked from the Dashboard "Get alerts" card → bring Integrations into
+  // view once the rows have rendered.
+  useEffect(() => {
+    if (!integrationsLoaded) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('setup') !== 'alerts') return;
+    const t = window.setTimeout(
+      () => integrationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      100,
+    );
+    return () => window.clearTimeout(t);
+  }, [integrationsLoaded]);
+
   // The platform acks connect/disconnect back into the iframe — refresh status
   // immediately so the row flips without waiting for the next poll tick.
   useEffect(() => {
@@ -288,21 +328,22 @@ export default function Rules() {
     };
   }, [integrations, refreshIntegrations]);
 
-  // Load the Slack channel list once Slack is connected → the destination becomes
-  // a pick-list, so a mistyped name can't cause `channel_not_found`.
+  // Load the Slack channel list + connected workspace so the destination becomes a
+  // pick-list (no mistyped name → no `channel_not_found`) and the user can confirm
+  // the workspace. Loaded INDEPENDENT of the connected badge (which is fail-open and
+  // can false-negative): the endpoint itself reports the real connection state, so
+  // gating on the badge would hide the picker when the badge is wrong. Re-runs when
+  // the badge flips (after a connect) so it refreshes post-OAuth.
   const slackConnected = integrations.find((i) => i.id === 'slack')?.connected ?? false;
   useEffect(() => {
-    if (!slackConnected) {
-      setSlackChannels([]);
-      setSlackChannelsError(null);
-      return;
-    }
+    if (!integrationsLoaded) return;
     let cancelled = false;
     getSlackChannels()
       .then((res) => {
         if (cancelled) return;
         setSlackChannels(res.channels ?? []);
         setSlackChannelsError(res.error ?? null);
+        setSlackWorkspace(res.workspace ?? '');
       })
       .catch((err) => {
         if (!cancelled) setSlackChannelsError(toApiError(err).message);
@@ -310,7 +351,7 @@ export default function Rules() {
     return () => {
       cancelled = true;
     };
-  }, [slackConnected]);
+  }, [integrationsLoaded, slackConnected]);
 
   const saveConfig = async (patch: Partial<SentryConfig>) => {
     setConfig((c) => ({ ...c, ...patch }));
@@ -439,9 +480,21 @@ export default function Rules() {
             subtitle="Let AI configure your rules from your inbox"
             chevron
           />
+          <ListRow
+            onClick={() => navigate('/teach')}
+            leading={
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <MessageSquareText className="h-[18px] w-[18px]" />
+              </span>
+            }
+            title="Teach Sentry"
+            subtitle="Describe what matters in plain language — Sentry turns it into rules"
+            chevron
+          />
         </ListGroup>
 
         {/* Integrations */}
+        <div ref={integrationsRef} className="scroll-mt-4">
         <ListSection
           title="Integrations"
           footer="Connecting is handled by Claritty — your credentials stay on the platform."
@@ -518,6 +571,15 @@ export default function Rules() {
                         )}
                       </div>
 
+                      {/* Which workspace the token is on — so the user can confirm a
+                          channel id belongs to it (a mismatch → channel_not_found). */}
+                      {it.id === 'slack' && slackWorkspace && (
+                        <p className="mb-2 text-[12px] text-muted-foreground">
+                          Connected workspace: <span className="font-medium text-foreground">{slackWorkspace}</span>
+                          {' '}— the channel must be in this workspace.
+                        </p>
+                      )}
+
                       {/* Slack: pick a real channel the bot can see → no mistyped
                           name, no `channel_not_found`. */}
                       {it.id === 'slack' && slackChannels.length > 0 && (
@@ -535,13 +597,55 @@ export default function Rules() {
                         </select>
                       )}
 
-                      <input
-                        className={inputCls}
-                        value={(config[dest.field] as string) ?? ''}
-                        placeholder={dest.placeholder}
-                        onChange={(e) => setConfig({ ...config, [dest.field]: e.target.value })}
-                        onBlur={() => saveConfig({ [dest.field]: config[dest.field] })}
-                      />
+                      {(() => {
+                        const val = (config[dest.field] as string) ?? '';
+                        const slackErr = it.id === 'slack' ? slackDestError(val) : null;
+                        return (
+                          <>
+                            <input
+                              className={cn(inputCls, slackErr && 'ring-2 ring-destructive/50')}
+                              value={val}
+                              placeholder={dest.placeholder}
+                              onChange={(e) => setConfig({ ...config, [dest.field]: e.target.value })}
+                              onBlur={() => {
+                                // Never persist a Slack name — it would fail on every
+                                // alert. Warn instead of saving garbage.
+                                if (slackErr) {
+                                  show({ tone: 'error', text: slackErr });
+                                  return;
+                                }
+                                saveConfig({ [dest.field]: config[dest.field] });
+                              }}
+                            />
+                            {slackErr && <p className="mt-1 text-[12px] text-destructive">{slackErr}</p>}
+                          </>
+                        );
+                      })()}
+
+                      {/* Per-channel urgency routing — e.g. urgent → WhatsApp,
+                          replies → Slack. Defaults to the global tier below. */}
+                      {(config[dest.field] as string)?.trim() && (
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="text-[13px] text-muted-foreground">Notify this channel for</span>
+                          <select
+                            className="rounded-lg bg-muted/60 px-2 py-1 text-[13px] text-foreground outline-none focus:ring-2 focus:ring-accent/40"
+                            value={config.channel_tiers?.[NOTIFY_CHANNEL[it.id] as NotifyChannel] ?? ''}
+                            onChange={(e) => {
+                              const label = NOTIFY_CHANNEL[it.id] as NotifyChannel;
+                              const next = { ...(config.channel_tiers ?? {}) };
+                              if (e.target.value === '') delete next[label];
+                              else next[label] = e.target.value as 'urgent' | 'needs_reply';
+                              void saveConfig({ channel_tiers: next });
+                            }}
+                          >
+                            <option value="">
+                              Default ({config.notify_tier === 'urgent' ? 'urgent only' : 'urgent + replies'})
+                            </option>
+                            <option value="urgent">Urgent only</option>
+                            <option value="needs_reply">Urgent + replies</option>
+                          </select>
+                        </div>
+                      )}
 
                       {/* Step-by-step guide: Slack needs an ID (member or
                           channel) — never a name. Shown whether or not the
@@ -566,7 +670,7 @@ export default function Rules() {
                           <p className="mb-1 font-medium text-foreground">Option 2 · Post to a channel</p>
                           <ol className="ml-4 list-decimal space-y-0.5">
                             <li>
-                              In that channel, send <span className="font-mono">/invite @Gmail&nbsp;Sentry</span>{' '}
+                              In that channel, send <span className="font-mono">/invite @Claritty</span>{' '}
                               (the bot must be a member to post).
                             </li>
                             <li>
@@ -580,9 +684,16 @@ export default function Rules() {
                             Then tap <span className="font-medium text-foreground">Send test message</span> below to confirm.
                           </p>
                           {slackChannelsError ? (
-                            <span className="mt-1.5 block text-[11px] opacity-70">
-                              Channel list unavailable ({slackChannelsError})
-                            </span>
+                            /succeeded|permission|scope/i.test(slackChannelsError) ? (
+                              <span className="mt-1.5 block text-[12px] text-destructive">
+                                Slack is missing a permission to list channels — disconnect &amp; reconnect
+                                Slack above to re-grant it, then this picker will fill in.
+                              </span>
+                            ) : (
+                              <span className="mt-1.5 block text-[11px] opacity-70">
+                                Channel list unavailable ({slackChannelsError})
+                              </span>
+                            )
                           ) : null}
                         </div>
                       ) : dest.hint ? (
@@ -592,7 +703,7 @@ export default function Rules() {
                         <p className="mt-1 text-[12px] text-destructive">
                           Set a destination or {it.name} alerts won’t be sent.
                         </p>
-                      ) : (
+                      ) : it.id === 'slack' && slackDestError(config[dest.field] as string) ? null : (
                         <button
                           type="button"
                           disabled={testingChannel === it.id}
@@ -614,6 +725,7 @@ export default function Rules() {
             })}
           </ListGroup>
         </ListSection>
+        </div>
 
         {/* Notifications */}
         <ListSection
@@ -632,6 +744,17 @@ export default function Rules() {
                   <option value="urgent">Urgent only</option>
                   <option value="needs_reply">Urgent + replies</option>
                 </select>
+              }
+            />
+            <ListRow
+              title="Draft replies automatically"
+              subtitle="Prepares a reply in your voice for “needs reply” mail — the ping carries it so you can approve in one tap. Never sends without your OK."
+              trailing={
+                <Toggle
+                  checked={config.auto_draft}
+                  onChange={(v) => void saveConfig({ auto_draft: v })}
+                  aria-label="Draft replies automatically"
+                />
               }
             />
           </ListGroup>
@@ -661,7 +784,7 @@ export default function Rules() {
             <p className="mb-1 font-medium text-foreground">Option 2 · Post to a channel</p>
             <ol className="ml-4 list-decimal space-y-0.5">
               <li>
-                In that channel, send <span className="font-mono">/invite @Gmail&nbsp;Sentry</span>{' '}
+                In that channel, send <span className="font-mono">/invite @Claritty</span>{' '}
                 (the bot must be a member).
               </li>
               <li>

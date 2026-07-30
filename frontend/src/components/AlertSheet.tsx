@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   X,
@@ -10,6 +10,8 @@ import {
   Plus,
   Loader2,
   Copy,
+  Send,
+  Wand2,
 } from 'lucide-react';
 import { Avatar, parseSender } from '@/components/Avatar';
 import { useToast } from '@/components/Toast';
@@ -19,6 +21,7 @@ import {
   muteAlert,
   dismissAlert,
   draftReplyAlert,
+  sendReply,
   createRuleFromAlert,
   toApiError,
   type Alert,
@@ -42,16 +45,21 @@ export function AlertSheet({
   alert,
   onClose,
   onChanged,
+  autoReply = false,
 }: {
   alert: Alert;
   onClose: () => void;
   onChanged: () => void;
+  /** Open straight into the reply (used by the notification approve deep link). */
+  autoReply?: boolean;
 }) {
   const { show } = useToast();
   const who = parseSender(alert.sender || '');
   const [busy, setBusy] = useState<string | null>(null);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
-  const [draft, setDraft] = useState<{ text: string; url: string; voice: boolean } | null>(null);
+  const [draft, setDraft] = useState<{ url: string; voice: boolean } | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [intent, setIntent] = useState('');
 
   const run = async (key: string, fn: () => Promise<unknown>, close = true) => {
     setBusy(key);
@@ -69,17 +77,63 @@ export function AlertSheet({
     }
   };
 
-  const genReply = async () => {
+  const composeUrl = () => {
+    const to = who.email || '';
+    const su = (alert.subject || '').toLowerCase().startsWith('re:')
+      ? alert.subject || ''
+      : `Re: ${alert.subject || ''}`.trim();
+    return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(
+      su,
+    )}&body=${encodeURIComponent(replyText)}`;
+  };
+
+  const genReply = async (note?: string) => {
     setBusy('reply');
     try {
-      const res = await draftReplyAlert(alert.id);
-      setDraft({ text: res.draft, url: res.compose_url, voice: res.voice_matched });
+      const res = await draftReplyAlert(alert.id, note?.trim() || undefined);
+      setReplyText(res.draft);
+      setDraft({ url: res.compose_url, voice: res.voice_matched });
     } catch (err) {
       show({ tone: 'error', text: `Couldn’t draft a reply: ${toApiError(err).message}` });
     } finally {
       setBusy(null);
     }
   };
+
+  const approveSend = async () => {
+    if (!replyText.trim()) return;
+    setBusy('send');
+    try {
+      await sendReply(alert.id, replyText);
+      show({ tone: 'success', text: 'Reply sent ✓' });
+      onChanged();
+      onClose();
+    } catch (err) {
+      const e = toApiError(err);
+      show({
+        tone: 'error',
+        text:
+          e.status === 409
+            ? 'Connect Gmail, then try again.'
+            : `Couldn’t send the reply: ${e.message}`,
+      });
+      setBusy(null);
+    }
+  };
+
+  // Preload a persisted draft (or auto-open the reply when arriving via the
+  // notification approve deep link).
+  useEffect(() => {
+    if (alert.reply_draft) {
+      setReplyText(alert.reply_draft);
+      setDraft({ url: '', voice: false });
+    } else if (autoReply) {
+      void genReply();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const alreadySent = alert.reply_status === 'sent';
 
   return (
     <motion.div
@@ -129,31 +183,79 @@ export function AlertSheet({
           <p className="mt-3 line-clamp-4 text-[14px] leading-relaxed text-muted-foreground">{alert.snippet}</p>
         )}
 
-        {/* AI draft */}
-        {draft && (
-          <div className="mt-4 rounded-2xl border border-border bg-background p-3">
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Suggested reply{draft.voice ? ' · in your voice' : ''}
-            </div>
-            <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-foreground">{draft.text}</p>
-            <div className="mt-3 flex gap-2">
-              <button
-                onClick={() => window.open(draft.url, '_blank', 'noopener')}
-                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground"
-              >
-                <ExternalLink className="h-4 w-4" /> Open in Gmail
-              </button>
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText(draft.text);
-                  show({ tone: 'success', text: 'Reply copied.' });
-                }}
-                className="inline-flex items-center justify-center rounded-xl border border-border px-3 py-2.5 text-sm font-medium text-foreground hover:bg-muted"
-              >
-                <Copy className="h-4 w-4" />
-              </button>
-            </div>
+        {/* AI draft — editable, approve & send in-app */}
+        {alreadySent ? (
+          <div className="mt-4 flex items-center gap-2 rounded-2xl border border-border bg-background px-3 py-2.5 text-[13px] font-medium text-muted-foreground">
+            <Check className="h-4 w-4 text-success" /> Reply sent
           </div>
+        ) : (
+          draft && (
+            <div className="mt-4 rounded-2xl border border-border bg-background p-3">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Suggested reply{draft.voice ? ' · in your voice' : ''}
+              </div>
+
+              {/* Scrappy note → polished email in your voice */}
+              <div className="mb-2 flex gap-2">
+                <input
+                  value={intent}
+                  onChange={(e) => setIntent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void genReply(intent);
+                    }
+                  }}
+                  placeholder="Tell me what to say — e.g. “Tuesday works, ask for the deck”"
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:ring-2 focus:ring-accent/40"
+                />
+                <button
+                  onClick={() => void genReply(intent)}
+                  disabled={busy === 'reply'}
+                  title="Write it in your voice"
+                  className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                >
+                  {busy === 'reply' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                  Write it
+                </button>
+              </div>
+
+              <textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                rows={5}
+                className="w-full resize-y rounded-xl border border-border bg-card px-3 py-2 text-[14px] leading-relaxed text-foreground outline-none focus:ring-2 focus:ring-accent/40"
+                placeholder="Write your reply…"
+              />
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => void approveSend()}
+                  disabled={busy === 'send' || !replyText.trim()}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground disabled:opacity-50"
+                >
+                  {busy === 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Approve &amp; Send
+                </button>
+                <button
+                  onClick={() => window.open(composeUrl(), '_blank', 'noopener')}
+                  title="Open in Gmail instead"
+                  className="inline-flex items-center justify-center rounded-xl border border-border px-3 py-2.5 text-sm font-medium text-foreground hover:bg-muted"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(replyText);
+                    show({ tone: 'success', text: 'Reply copied.' });
+                  }}
+                  title="Copy"
+                  className="inline-flex items-center justify-center rounded-xl border border-border px-3 py-2.5 text-sm font-medium text-foreground hover:bg-muted"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )
         )}
 
         {/* Snooze options */}

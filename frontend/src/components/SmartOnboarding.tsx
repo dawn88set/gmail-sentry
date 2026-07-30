@@ -445,7 +445,10 @@ export function SmartOnboarding({
         {/* Footer actions */}
         <div className="flex items-center justify-between gap-3 border-t border-border/70 px-7 py-4">
           {step === 'context' || step === 'analyzing' ? (
-            <button onClick={() => void skip()} className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+            <button
+              onClick={() => void skip()}
+              className="-ml-3 inline-flex min-h-[44px] items-center rounded-lg px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
               Skip
             </button>
           ) : (

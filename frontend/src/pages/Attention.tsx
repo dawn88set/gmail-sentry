@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { ShieldCheck } from 'lucide-react';
 import { useToast } from '@/components/Toast';
@@ -36,10 +37,13 @@ function relTime(iso?: string | null): string {
 
 export default function Attention() {
   const { show } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState('all');
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Alert | null>(null);
+  // The alert id whose reply should auto-open (arrived via a notification link).
+  const [autoReplyId, setAutoReplyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const f = FILTERS.find((x) => x.key === filter);
@@ -56,13 +60,34 @@ export default function Attention() {
     void load();
   }, [load]);
 
+  // Deep link from a notification: ?focus=<alertId> → open that alert's reply.
+  const focusId = searchParams.get('focus');
+  useEffect(() => {
+    if (!focusId || loading) return;
+    const match = alerts.find((a) => a.id === focusId);
+    if (match) {
+      setSelected(match);
+      setAutoReplyId(focusId);
+    } else {
+      show({ tone: 'error', text: 'That item is no longer waiting for a reply.' });
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('focus');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, loading, alerts]);
+
   return (
     <>
       <AnimatePresence>
         {selected && (
           <AlertSheet
             alert={selected}
-            onClose={() => setSelected(null)}
+            autoReply={selected.id === autoReplyId}
+            onClose={() => {
+              setSelected(null);
+              setAutoReplyId(null);
+            }}
             onChanged={() => void load()}
           />
         )}

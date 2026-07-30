@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { MotionConfig } from 'framer-motion';
 import Dashboard from './pages/Dashboard';
 import Rules from './pages/Rules';
+import Teach from './pages/Teach';
 import Attention from './pages/Attention';
 import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
@@ -27,6 +28,7 @@ function App() {
 
           {/* App routes — with the navigation layout. */}
           <Route path="/" element={<Layout><Dashboard /></Layout>} />
+          <Route path="/teach" element={<Layout><Teach /></Layout>} />
           <Route path="/attention" element={<Layout><Attention /></Layout>} />
           <Route path="/cleanup/:category" element={<Layout><CategoryList /></Layout>} />
           <Route path="/rules" element={<Layout><Rules /></Layout>} />

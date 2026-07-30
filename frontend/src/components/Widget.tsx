@@ -83,6 +83,9 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
   };
 
   const openApp = () => triggerDeepLink({ path: '/' });
+  // A ready-to-approve reply deep-links straight to its Approve & Send screen.
+  const openAlert = (a: WidgetAlert) =>
+    triggerDeepLink({ path: a.reply_ready ? `/attention?focus=${a.id}` : '/' });
 
   const clearJunk = async (category: 'promotions' | 'social' | 'spam') => {
     try {
@@ -176,7 +179,7 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
             <div className="mt-1 text-xs font-medium text-white/80">need attention</div>
             <div className="mt-0.5 text-[11px] text-white/60">scanned {data.last_scan}</div>
           </div>
-          <button onClick={openApp} className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left" aria-label="Open Gmail Sentry">
+          <button onClick={() => (top ? openAlert(top) : openApp())} className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left" aria-label="Open Gmail Sentry">
             {top ? (
               <AlertPeek alert={top} />
             ) : (
@@ -209,7 +212,7 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
 
         <div className="flex flex-1 flex-col gap-2 overflow-hidden">
           {shown.length > 0 ? (
-            shown.map((a) => <AlertRow key={a.id} alert={a} />)
+            shown.map((a) => <AlertRow key={a.id} alert={a} onClick={() => openAlert(a)} />)
           ) : (
             <div className="flex flex-1 items-center justify-center gap-1.5 text-sm font-semibold text-white">
               <ShieldCheck className="h-4 w-4" /> Inbox is calm
@@ -237,8 +240,15 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
 function AlertPeek({ alert }: { alert: WidgetAlert }) {
   return (
     <>
-      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
-        {TIER_LABEL[alert.tier] ?? 'FYI'}
+      <span className="inline-flex w-fit items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
+          {TIER_LABEL[alert.tier] ?? 'FYI'}
+        </span>
+        {alert.reply_ready && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">
+            Reply ready
+          </span>
+        )}
       </span>
       <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
       <span className="block truncate text-xs text-white/70">{alert.sender}</span>
@@ -246,9 +256,12 @@ function AlertPeek({ alert }: { alert: WidgetAlert }) {
   );
 }
 
-function AlertRow({ alert }: { alert: WidgetAlert }) {
+function AlertRow({ alert, onClick }: { alert: WidgetAlert; onClick: () => void }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl bg-white/10 px-2.5 py-2 backdrop-blur">
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2 rounded-xl bg-white/10 px-2.5 py-2 text-left backdrop-blur transition-transform active:scale-[0.98]"
+    >
       <span className="flex-shrink-0 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-semibold text-white">
         {TIER_LABEL[alert.tier] ?? 'FYI'}
       </span>
@@ -256,7 +269,12 @@ function AlertRow({ alert }: { alert: WidgetAlert }) {
         <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
         <span className="block truncate text-xs text-white/70">{alert.sender}</span>
       </div>
-    </div>
+      {alert.reply_ready && (
+        <span className="flex-shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-accent">
+          Reply ready
+        </span>
+      )}
+    </button>
   );
 }
 
