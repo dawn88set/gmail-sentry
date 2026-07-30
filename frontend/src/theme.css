@@ -35,9 +35,12 @@
 .dark {
   /* Bright enough to clear AA as text on the charcoal page (links / active nav),
      with a DARK foreground so filled accent buttons pass AA too — a single white
-     foreground can't satisfy both on this bg. */
-  --brand-accent: 214 84% 58%;
-  --brand-accent-600: 214 82% 52%;
+     foreground can't satisfy both on this bg.
+     58% cleared AA against --background but not against the lighter --card
+     (4.44:1 on the page title); 62% clears both with margin, and raising it also
+     improves the dark-on-accent button case. */
+  --brand-accent: 214 84% 62%;
+  --brand-accent-600: 214 82% 55%;
   --brand-accent-foreground: 220 8% 11%;
   --brand-primary: 214 13% 92%;
 
@@ -53,5 +56,5 @@
   --secondary-foreground: 214 14% 92%;
   --border: 220 6% 25%;        /* #3a3d42 subtle hairline */
   --input: 220 6% 28%;
-  --ring: 214 84% 56%;
+  --ring: 214 84% 60%;
 }
