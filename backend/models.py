@@ -13,7 +13,7 @@ Kept from the seed (used by the SDK runtime + integrations layer):
 - UserIntegration, WorkflowExecution
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, Text
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, Text, UniqueConstraint
 from datetime import datetime
 import uuid
 from backend.database import Base
@@ -90,6 +90,11 @@ class LabelRule(Base):
 class Alert(Base):
     """A flagged email the Sentry wants the user to see."""
     __tablename__ = "alerts"
+    # One alert per message per user — the DB rejects duplicate inserts from
+    # overlapping scan runs (see migration 0006 + run_scan's IntegrityError catch).
+    __table_args__ = (
+        UniqueConstraint("user_id", "gmail_message_id", name="uq_alerts_user_msg"),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     user_id = Column(String, nullable=False, index=True)
@@ -110,6 +115,15 @@ class Alert(Base):
     status = Column(String, nullable=False, default="new", index=True)  # new | seen | snoozed | done | dismissed
     snoozed_until = Column(DateTime)  # when a snoozed alert should resurface
 
+    # Reply lifecycle. The app drafts a reply (in the user's voice), the user
+    # approves, and the app SENDS it through the broker. reply_status only reaches
+    # "sent" on a real returned Gmail message id — never faked.
+    reply_draft = Column(Text)          # the current drafted reply body
+    reply_status = Column(String, nullable=False, default="none")  # none | drafted | sent | failed
+    reply_sent_at = Column(DateTime)    # when the reply was actually sent
+    reply_external_id = Column(String)  # Gmail message id of the sent reply
+    reply_error = Column(Text)          # last send failure (row survives for retry)
+
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     def to_dict(self):
@@ -126,6 +140,9 @@ class Alert(Base):
             "slack_sent": self.slack_sent,
             "status": self.status,
             "snoozed_until": self.snoozed_until.isoformat() if self.snoozed_until else None,
+            "reply_draft": self.reply_draft or "",
+            "reply_status": self.reply_status or "none",
+            "reply_sent_at": self.reply_sent_at.isoformat() if self.reply_sent_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -177,8 +194,14 @@ class SentryConfig(Base):
     # member id (e.g. "U0123") to DM yourself. Empty → no pings (UI prompts to set it).
     slack_channel = Column(String, default="")
     # Lowest tier that triggers a ping: "urgent" pings only urgent,
-    # "needs_reply" pings urgent + needs_reply.
+    # "needs_reply" pings urgent + needs_reply. Acts as the DEFAULT floor for any
+    # channel without its own override in `channel_tiers`.
     notify_tier = Column(String, default="urgent")
+
+    # Per-channel urgency routing (overrides notify_tier per channel), e.g.
+    # {"whatsapp": "urgent", "slack": "needs_reply"}. A channel absent here falls
+    # back to notify_tier. Lets urgent go to one channel and replies to another.
+    channel_tiers = Column(JSON, default=dict)
 
     # Extra notification channels. Each holds the NON-SECRET destination for that
     # channel (the credential lives in the platform broker). A channel is active
@@ -188,6 +211,11 @@ class SentryConfig(Base):
     discord_channel_id = Column(String, default="")  # Discord channel id
     teams_chat_id = Column(String, default="")       # MS Teams chat/thread id
     whatsapp_to = Column(String, default="")         # WhatsApp recipient (+E.164)
+
+    # When true, the scan pre-drafts a reply (in the user's voice) for each
+    # needs_reply alert so the notification can carry it and the user can approve
+    # in one tap. The app never auto-SENDS — approval is always explicit.
+    auto_draft = Column(Boolean, nullable=False, default=True)
 
     # Smart-onboarding state. `onboarded` gates the setup wizard; `intent`/`role`
     # remember what the user asked the assistant to do so it can be refined later.
@@ -205,14 +233,52 @@ class SentryConfig(Base):
         return {
             "slack_channel": self.slack_channel or "",
             "notify_tier": self.notify_tier or "urgent",
+            "channel_tiers": dict(self.channel_tiers or {}),
             "telegram_chat_id": self.telegram_chat_id or "",
             "discord_channel_id": self.discord_channel_id or "",
             "teams_chat_id": self.teams_chat_id or "",
             "whatsapp_to": self.whatsapp_to or "",
+            "auto_draft": bool(self.auto_draft),
             "onboarded": bool(self.onboarded),
             "intent": self.intent or "",
             "role": self.role or "",
             "muted_senders": list(self.muted_senders or []),
+        }
+
+
+class CommProfile(Base):
+    """What Gmail Sentry has learned about how the user actually communicates.
+    One row per user, refreshed periodically from real sent + inbox signals. Used
+    to (a) boost triage for the people they actually correspond with and (b) draft
+    replies in their real voice (tone + a few of their own sent-mail exemplars)."""
+    __tablename__ = "comm_profiles"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, unique=True, index=True)
+
+    # People the user actually corresponds with — behavioral VIPs. [{email,name,count}]
+    vip_senders = Column(JSON, default=list)
+    # Lightweight, honestly-derivable habits (e.g. {"frequent_contacts": [...]}).
+    response_habits = Column(JSON, default=dict)
+    # A short natural-language descriptor of their writing voice, e.g.
+    # "warm, concise, first-name greeting, signs off 'Best'".
+    tone = Column(String, default="")
+    # A few excerpts of the user's own sent mail, to mirror their style in drafts.
+    style_exemplars = Column(JSON, default=list)
+    signature = Column(String, default="")
+
+    refreshed_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "vip_senders": list(self.vip_senders or []),
+            "response_habits": dict(self.response_habits or {}),
+            "tone": self.tone or "",
+            "style_exemplars": list(self.style_exemplars or []),
+            "signature": self.signature or "",
+            "refreshed_at": self.refreshed_at.isoformat() if self.refreshed_at else None,
         }
 
 
