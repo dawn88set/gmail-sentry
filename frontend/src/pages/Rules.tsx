@@ -5,6 +5,7 @@ import { Plus, Trash2, Sparkles, Slack, Mail, Check, Send, MessageSquare, Phone,
 import { Button } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { SmartOnboarding } from '@/components/SmartOnboarding';
+import { FoldersSection } from '@/components/FoldersSection';
 import { ConnectButton } from '@/components/ConnectButtons';
 import { requestConnectIntegration, requestDisconnectIntegration } from '@/lib/integrations';
 import { Screen } from '@/components/ios/Screen';
@@ -894,6 +895,11 @@ export default function Rules() {
             Add rule
           </IosButton>
         </ListSection>
+
+        {/* Smart filing — automatic, approval-gated, thread-level. Sits ABOVE the
+            hand-written rules because it's what most people will actually use;
+            the rules below stay for anyone who wants exact control. */}
+        <FoldersSection />
 
         {/* Filing rules */}
         <ListSection title="Filing rules" footer="Auto-apply a Gmail label to matching mail — and optionally archive it.">

@@ -225,6 +225,12 @@ class SentryConfig(Base):
     # in one tap. The app never auto-SENDS — approval is always explicit.
     auto_draft = Column(Boolean, nullable=False, default=True)
 
+    # Smart thread filing. OFF by default and forward-only from the moment it's
+    # switched on: `filing_started_at` marks that point, so turning it on can
+    # never relabel the whole backfilled history in one sweep.
+    filing_enabled = Column(Boolean, nullable=False, default=False)
+    filing_started_at = Column(DateTime)
+
     # Smart-onboarding state. `onboarded` gates the setup wizard; `intent`/`role`
     # remember what the user asked the assistant to do so it can be refined later.
     onboarded = Column(Boolean, nullable=False, default=False)
@@ -247,6 +253,7 @@ class SentryConfig(Base):
             "teams_chat_id": self.teams_chat_id or "",
             "whatsapp_to": self.whatsapp_to or "",
             "auto_draft": bool(self.auto_draft),
+            "filing_enabled": bool(self.filing_enabled),
             "onboarded": bool(self.onboarded),
             "intent": self.intent or "",
             "role": self.role or "",
@@ -665,6 +672,101 @@ class Nudge(Base):
 
     def __repr__(self):
         return f"<Nudge {self.status} attempt={self.attempt_no} followup={self.followup_id}>"
+
+
+class MailFolder(Base):
+    """A Gmail label this app files into — and whether the user has approved it.
+
+    `LabelRule` files individual inbound messages by hand-written rules. This is
+    the automatic layer: threads get filed by *who they're with*, derived from
+    the counterparty (`Clients/Northwind`, `Vendors/Meridian Supply`), so both
+    halves of a conversation live in one place instead of the user's own replies
+    being orphaned in Sent.
+
+    **Nothing is created without approval.** A folder is born `proposed`; only
+    an explicit yes makes it `active` and lets anything be labelled with it.
+    That gate exists because the alternative is label sprawl in somebody's real
+    mailbox, which is both hard to undo and exactly the kind of surprise that
+    makes people uninstall.
+    """
+    __tablename__ = "mail_folders"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_folder_user_name"),)
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+
+    #: The full Gmail label path, e.g. "Clients/Northwind".
+    name = Column(String, nullable=False, index=True)
+    kind = Column(String, default="counterparty")  # counterparty | topical
+    source = Column(String, default="derived")     # derived | ai_proposed | user
+    #: proposed → active (approved) | rejected (never offer this one again)
+    status = Column(String, nullable=False, default="proposed", index=True)
+
+    counterparty_email = Column(String, index=True)
+    thread_count = Column(Integer, default=0)
+
+    approved_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "kind": self.kind or "counterparty",
+            "source": self.source or "derived",
+            "status": self.status,
+            "counterparty_email": self.counterparty_email or "",
+            "thread_count": int(self.thread_count or 0),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<MailFolder {self.name} {self.status}>"
+
+
+class ThreadFolder(Base):
+    """Which folder a thread belongs in — decided once, then reused.
+
+    Filing is a *thread* property, not a message one. Once a thread is filed,
+    every later message in it (including replies the user sends from their
+    phone) gets the same label with no reasoning and no model call. That's what
+    keeps continuous filing free.
+    """
+    __tablename__ = "thread_folders"
+    __table_args__ = (UniqueConstraint("user_id", "thread_id", name="uq_tfolder_user_thread"),)
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    thread_id = Column(String, nullable=False, index=True)
+
+    folder_name = Column(String, nullable=False)
+    #: pending (folder awaiting approval) | filed | failed
+    status = Column(String, nullable=False, default="pending", index=True)
+    confidence = Column(Integer, default=0)
+    decided_by = Column(String, default="auto")  # auto | user
+    #: How many messages in this thread we've labelled so far, so a later
+    #: message can be filed without re-labelling the whole conversation.
+    filed_count = Column(Integer, default=0)
+    filed_at = Column(DateTime)
+    error = Column(Text, default="")
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "thread_id": self.thread_id,
+            "folder_name": self.folder_name,
+            "status": self.status,
+            "confidence": int(self.confidence or 0),
+            "decided_by": self.decided_by or "auto",
+            "filed_count": int(self.filed_count or 0),
+            "filed_at": self.filed_at.isoformat() if self.filed_at else None,
+        }
+
+    def __repr__(self):
+        return f"<ThreadFolder {self.thread_id} → {self.folder_name} ({self.status})>"
 
 
 class UserIntegration(Base):

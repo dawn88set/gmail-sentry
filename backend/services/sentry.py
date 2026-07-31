@@ -39,6 +39,7 @@ from backend.services.learn import get_profile
 from backend.services import ledger
 from backend.services import counterparty
 from backend.services import followups
+from backend.services import filing
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
@@ -380,11 +381,33 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
     except Exception as e:  # noqa: BLE001 — follow-ups must never fail a scan
         logger.info(f"follow-up sync skipped: {type(e).__name__}: {e}")
 
+    # 3.7) File whole conversations into folders — both directions, so the
+    #      user's own replies land beside the mail they answered instead of
+    #      being orphaned in Sent. Approval-gated and forward-only; see filing.py.
+    filing_result: Dict[str, Any] = {}
+    try:
+        filing_result = filing.run_filing(db, user_id, cfg)
+        labeled += int(filing_result.get("filed") or 0)
+    except IntegrationNotConnected:
+        raise
+    except Exception as e:  # noqa: BLE001 — organising mail must not fail a scan
+        logger.info(f"filing skipped: {type(e).__name__}: {e}")
+
     # 4) Cleanup counts + finalize the run.
     try:
         _refresh_cleanup_counts(db, user_id, run)
     except Exception as e:  # noqa: BLE001 — a counts hiccup shouldn't fail the whole scan
         logger.info(f"cleanup counts refresh failed: {type(e).__name__}: {e}")
+    # One batched filing line rather than a ping per message — filing runs every
+    # five minutes, so per-message notifications would be unusable. Quiet enough
+    # to ignore, specific enough to catch a wrong folder early.
+    summary = filing.filing_summary_line(filing_result) if filing_result else ""
+    if summary:
+        try:
+            notify.notify_all(db, user_id, cfg, summary, tier="fyi")
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"filing summary notify skipped: {type(e).__name__}: {e}")
+
     run.scanned = scanned
     run.flagged = flagged
     run.labeled = labeled

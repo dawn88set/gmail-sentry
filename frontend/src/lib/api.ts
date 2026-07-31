@@ -547,3 +547,39 @@ export const ignoreFollowUp = async (id: string) =>
 
 export const syncFollowUps = async (): Promise<{ counts: FollowUpCounts }> =>
   (await api.post('/api/followups/sync')).data;
+
+// ── Smart filing: folders ───────────────────────────────────────────────────
+// Threads are filed by who they're with, both directions, so a conversation
+// lives in one place instead of the user's replies being orphaned in Sent.
+// Nothing is labelled with a folder in `proposed` — approval is the gate that
+// keeps this from sprawling through a real mailbox.
+export interface MailFolder {
+  id: string;
+  name: string;
+  kind: 'counterparty' | 'topical';
+  source: 'derived' | 'ai_proposed' | 'user';
+  status: 'proposed' | 'active' | 'rejected';
+  counterparty_email: string;
+  thread_count: number;
+  created_at?: string | null;
+}
+
+export const getFolders = async (): Promise<{
+  folders: MailFolder[];
+  filing_enabled: boolean;
+  pending: number;
+}> => (await api.get('/api/folders')).data;
+
+export const approveFolder = async (id: string, name?: string) =>
+  (await api.post(`/api/folders/${id}/approve`, name ? { name } : {})).data;
+
+export const rejectFolder = async (id: string) =>
+  (await api.post(`/api/folders/${id}/reject`)).data;
+
+export const setFilingEnabled = async (enabled: boolean): Promise<{ filing_enabled: boolean }> =>
+  (await api.put('/api/folders/settings', { enabled })).data;
+
+export const getBacklogPreview = async (
+  days = 30,
+): Promise<{ preview: { folder: string; threads: number; exists: boolean }[] }> =>
+  (await api.get('/api/folders/backlog-preview', { params: { days } })).data;

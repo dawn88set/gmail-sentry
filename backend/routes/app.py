@@ -14,7 +14,7 @@ HTTP 409 (the UI turns it into a connect prompt). We never fake success.
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from typing import Optional, List
 from datetime import datetime, timedelta
 from urllib.parse import quote
@@ -30,6 +30,7 @@ from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.services import ledger
 from backend.services import followups
+from backend.services import filing
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
 
@@ -1106,3 +1107,130 @@ async def update_counterparty(
         row.notes = payload.notes[:2000]
     db.commit()
     return {"success": True, "counterparty": row.to_dict()}
+
+
+# ---------------------------------------------------------------------------
+# Folders — smart filing, approval-gated
+# ---------------------------------------------------------------------------
+
+
+def _get_folder(db, folder_id, user_id) -> models.MailFolder:
+    row = (
+        db.query(models.MailFolder)
+        .filter(models.MailFolder.id == folder_id, models.MailFolder.user_id == user_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    return row
+
+
+@router.get("/api/folders")
+async def list_folders(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Folders this app files into, plus the ones waiting on a decision.
+
+    Nothing is ever labelled with a folder in `proposed` — that's the gate that
+    keeps automatic filing from sprawling through someone's real mailbox.
+    """
+    rows = (
+        db.query(models.MailFolder)
+        .filter(models.MailFolder.user_id == user_id)
+        .order_by(models.MailFolder.status.asc(), models.MailFolder.name.asc())
+        .limit(200)
+        .all()
+    )
+    filed_counts = dict(
+        db.query(models.ThreadFolder.folder_name, func.count(models.ThreadFolder.id))
+        .filter(
+            models.ThreadFolder.user_id == user_id,
+            models.ThreadFolder.status == "filed",
+        )
+        .group_by(models.ThreadFolder.folder_name)
+        .all()
+    )
+    cfg = get_config(db, user_id)
+    out = []
+    for f in rows:
+        d = f.to_dict()
+        d["thread_count"] = int(filed_counts.get(f.name, 0))
+        out.append(d)
+    return {
+        "folders": out,
+        "filing_enabled": bool(cfg.filing_enabled),
+        "pending": sum(1 for f in rows if f.status == "proposed"),
+    }
+
+
+class FolderBody(BaseModel):
+    name: Optional[str] = None
+
+
+@router.post("/api/folders/{folder_id}/approve")
+async def approve_folder_route(
+    folder_id: str,
+    payload: FolderBody = FolderBody(),
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Approve a proposed folder, optionally renaming it first — the user's
+    wording should win over ours."""
+    folder = _get_folder(db, folder_id, user_id)
+    if payload.name and payload.name.strip() != folder.name:
+        try:
+            filing.rename_folder(db, folder, payload.name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    filing.approve_folder(db, folder)
+    return {"success": True, "folder": folder.to_dict()}
+
+
+@router.post("/api/folders/{folder_id}/reject")
+async def reject_folder_route(
+    folder_id: str,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Decline a folder. It won't be proposed again, and any threads queued
+    against it are dropped."""
+    folder = _get_folder(db, folder_id, user_id)
+    filing.reject_folder(db, folder)
+    return {"success": True, "folder": folder.to_dict()}
+
+
+class FilingToggleBody(BaseModel):
+    enabled: bool
+
+
+@router.put("/api/folders/settings")
+async def set_filing(
+    payload: FilingToggleBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Turn smart filing on or off.
+
+    Switching it on stamps `filing_started_at`, which is what makes filing
+    forward-only: the ledger holds weeks of backfilled history, and relabelling
+    all of it the moment someone flips a switch would be an unpleasant surprise
+    in a real mailbox. The backlog is a separate, previewable action.
+    """
+    cfg = get_config(db, user_id)
+    was = bool(cfg.filing_enabled)
+    cfg.filing_enabled = bool(payload.enabled)
+    if cfg.filing_enabled and not was:
+        cfg.filing_started_at = datetime.utcnow()
+    db.commit()
+    return {"success": True, "filing_enabled": cfg.filing_enabled}
+
+
+@router.get("/api/folders/backlog-preview")
+async def backlog_preview(
+    days: int = 30,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """What organising the recent backlog WOULD do. Writes nothing."""
+    return {"preview": filing.preview_backlog(db, user_id, days=max(1, min(days, 90)))}
