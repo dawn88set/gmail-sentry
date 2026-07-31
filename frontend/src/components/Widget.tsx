@@ -130,8 +130,30 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
     );
   }
 
-  const attention = (data.urgent_count ?? 0) + (data.needs_reply_count ?? 0);
+  // The glance is "open loops", not "unread-ish mail". Mail arriving isn't news
+  // — a loop nobody has closed is. This is the SAME number the app's Today
+  // screen shows, taken from the same backend field, because a widget that
+  // disagrees with the app destroys trust in both.
+  const alerts = (data.urgent_count ?? 0) + (data.needs_reply_count ?? 0);
+  const loops = data.open_loops ?? 0;
+  const attention = alerts + loops;
   const allClear = data.all_clear ?? attention === 0;
+  const cold = data.cold_count ?? 0;
+  const owed = data.owed_count ?? 0;
+  const waiting = data.waiting_count ?? 0;
+
+  // One qualifier line, showing the worst state present — at 170px there's room
+  // for exactly one thing, so it should be the thing that costs most to miss.
+  const qualifier =
+    cold > 0
+      ? `${cold} going cold`
+      : alerts > 0
+        ? `${alerts} to answer`
+        : owed > 0
+          ? `${owed} you owe`
+          : waiting > 0
+            ? `${waiting} awaiting reply`
+            : '';
 
   // ---- Small ---------------------------------------------------------------
   if (size === 'small') {
@@ -145,12 +167,17 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
           <div>
             <div className="text-6xl font-bold leading-none tracking-tighter">{attention}</div>
             <div className="mt-1 text-xs font-medium text-white/80">
-              need{attention === 1 ? 's' : ''} attention
+              open loop{attention === 1 ? '' : 's'}
             </div>
+            {qualifier && (
+              <div className={cn('mt-0.5 text-[11px] font-medium', cold > 0 ? 'text-white' : 'text-white/70')}>
+                {qualifier}
+              </div>
+            )}
           </div>
           {allClear ? (
             <span className="flex items-center gap-1 text-sm font-semibold text-white">
-              <ShieldCheck className="h-4 w-4" /> All clear
+              <ShieldCheck className="h-4 w-4" /> No open loops
             </span>
           ) : (
             <button
@@ -177,7 +204,10 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
               <LiveDot /> Live
             </div>
             <div className="text-5xl font-bold leading-none tracking-tighter">{attention}</div>
-            <div className="mt-1 text-xs font-medium text-white/80">need attention</div>
+            <div className="mt-1 text-xs font-medium text-white/80">
+              open loop{attention === 1 ? '' : 's'}
+            </div>
+            {qualifier && <div className="mt-0.5 text-[11px] text-white/70">{qualifier}</div>}
             <div className="mt-0.5 text-[11px] text-white/60">scanned {data.last_scan}</div>
           </div>
           <button onClick={() => (top ? openAlert(top) : openApp())} className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left" aria-label="Open Gmail Sentry">
@@ -185,7 +215,7 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
               <AlertPeek alert={top} />
             ) : (
               <span className="flex items-center gap-1.5 text-sm font-semibold text-white">
-                <ShieldCheck className="h-4 w-4" /> Inbox is calm
+                <ShieldCheck className="h-4 w-4" /> Nothing open
               </span>
             )}
           </button>
@@ -207,7 +237,9 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-baseline gap-2">
             <span className="text-4xl font-bold leading-none tracking-tighter">{attention}</span>
-            <span className="text-sm text-white/80">need attention</span>
+            <span className="text-sm text-white/80">
+              open loop{attention === 1 ? '' : 's'}
+            </span>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
             <LiveDot /> Watching

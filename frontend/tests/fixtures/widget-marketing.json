@@ -1,5 +1,5 @@
 {
-  "_comment": "Marketing fixture for screenshots.spec.ts. Deliberately realistic: plausible people, companies and asks, a mix of ages, exactly one reply-ready draft. Never 'test'/'foo'/'example.com'/'John Doe' — the marketplace guidance explicitly rejects obvious placeholder data. last_scan is a pre-rendered relative string, not a timestamp, so screenshots are byte-stable across runs.",
+  "_comment": "Marketing fixture for screenshots.spec.ts. Deliberately realistic: plausible people, companies and asks, a mix of ages, exactly one reply-ready draft, and one thread gone cold \u2014 the state only this app surfaces. Never 'test'/'foo'/'example.com'/'John Doe'. last_scan is a pre-rendered relative string, not a timestamp, so screenshots are byte-stable across runs.",
   "urgent_count": 2,
   "needs_reply_count": 3,
   "all_clear": false,
@@ -8,7 +8,7 @@
   "top_alerts": [
     {
       "id": "a1f4c2",
-      "subject": "Re: Q3 quote — need the revised numbers",
+      "subject": "Re: Q3 quote \u2014 need the revised numbers",
       "sender": "Dana Levi <dana@northwind.co>",
       "tier": "urgent",
       "reason": "Asks for the revised quote before Friday",
@@ -26,7 +26,7 @@
     },
     {
       "id": "c3a8f5",
-      "subject": "Invoice #4821 — due in 2 days",
+      "subject": "Invoice #4821 \u2014 due in 2 days",
       "sender": "Meridian Supply <accounts@meridiansupply.com>",
       "tier": "needs_reply",
       "reason": "Payment due date approaching",
@@ -38,5 +38,9 @@
     "promo": 142,
     "social": 68,
     "spam": 23
-  }
+  },
+  "open_loops": 4,
+  "owed_count": 2,
+  "waiting_count": 1,
+  "cold_count": 1
 }

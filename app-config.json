@@ -1,8 +1,8 @@
 {
   "$schema": "https://clarity.ai/schemas/app-config-v1.json",
   "appName": "Gmail Sentry",
-  "appVersion": "1.0.0",
-  "description": "Inbox watchdog: triage incoming Gmail against your rules, Slack-ping you with a deep link on what needs attention, and clear Promotions/Social/Spam in one tap.",
+  "appVersion": "1.1.0",
+  "description": "Know what your inbox needs from you. Gmail Sentry triages new mail against rules you write in plain language, tracks the threads you owe people and the ones that have gone quiet, files whole conversations into folders you approve, and drafts replies in your own voice \u2014 you approve, it sends.",
   "configSchema": {
     "version": "1.0",
     "sections": [
@@ -48,6 +48,23 @@
             "default": true
           }
         ]
+      },
+      {
+        "id": "organizing",
+        "label": "Organizing",
+        "description": "Filing settings. Folders are always proposed for your approval first \u2014 nothing is created in your mailbox without a yes.",
+        "icon": "folder",
+        "order": 2,
+        "fields": [
+          {
+            "key": "SENTRY_FILING_ENABLED",
+            "label": "File conversations into folders",
+            "description": "Suggest a folder for each new conversation, based on who it's with. Nothing is filed until you approve the folder, and filing never removes mail from your inbox.",
+            "type": "boolean",
+            "required": false,
+            "default": false
+          }
+        ]
       }
     ]
   },
@@ -58,19 +75,20 @@
     "support": "https://github.com/dawn88set/gmail-sentry/issues"
   },
   "clarity_marketplace": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "category": "productivity",
     "tags": [
       "gmail",
       "email",
       "inbox",
       "triage",
+      "follow-ups",
+      "reminders",
       "slack",
-      "whatsapp",
       "telegram",
-      "notifications",
-      "reply-drafting",
-      "productivity"
+      "whatsapp",
+      "productivity",
+      "sales"
     ],
     "pricing_model": "free",
     "developer": {
@@ -80,15 +98,17 @@
       "support_email": ""
     },
     "features": [
-      "Teach it in plain language what to watch for \u2014 it turns your words into triage rules, grounded in your real inbox",
-      "Learns how you actually communicate: VIPs you correspond with + your writing voice",
-      "AI triage of incoming Gmail into urgent / needs-reply / FYI",
-      "Notify via Slack, WhatsApp, Telegram, or Discord \u2014 with a ready-to-send reply in your voice",
-      "Approve & send a reply in one tap, from the app or straight from the notification",
-      "Daily inbox report of what needs attention + the replies waiting",
-      "Auto-file mail by sender/subject with label rules",
-      "One-tap bulk clear of Promotions, Social, and Spam",
-      "Runs on a schedule (every 5 minutes by default)"
+      "Tells you what you owe people and who has gone quiet \u2014 the silences that cost you customers",
+      "Teach it in plain language what matters; it turns your words into rules, grounded in your real inbox",
+      "AI triage of incoming Gmail into urgent / needs-reply / FYI, with the actual ask pulled out in one line",
+      "Learns who matters from how you really behave \u2014 who you answer, how fast \u2014 not from who emails most",
+      "Files whole conversations into folders you approve, your replies included, so a thread lives in one place",
+      "One-tap replies written in your own voice, learned from your real sent mail",
+      "Nothing ever sends without you \u2014 every reply shows the recipient before it goes",
+      "Notice replies you sent from your phone, so the app never nags about mail you already handled",
+      "A daily report of what needs answering, what's going quiet, and what got filed",
+      "Alerts on Slack, WhatsApp, Telegram or Discord \u2014 with a ready-to-send reply attached",
+      "One-tap bulk clear of Promotions, Social and Spam"
     ],
     "screenshot_instructions": {
       "required_files": [
@@ -117,7 +137,7 @@
       "twilio"
     ],
     "core_action": {
-      "definition_of_done": "A new email that needs a reply arrives; within a scan the user gets a notification on their channel (Slack/WhatsApp/Telegram/Discord) carrying a reply drafted in their own voice and a one-tap approve link. Tapping it (or opening the app) lands on the email with Approve & Send, which really sends the reply through Gmail (in-thread) and marks it done \u2014 or shows a clear connect-Gmail/reconnect-channel prompt when an integration is not connected (never a faked success). Urgent mail is flagged in the dashboard and widget, matching mail is auto-filed by label rules, a daily digest reports what's waiting, and Promotions/Social/Spam clear in one tap.",
+      "definition_of_done": "A new email that needs a reply arrives; within a scan the user gets a notification on their channel carrying a reply drafted in their own voice and a one-tap approve link. Tapping it lands on the email with Approve & Send, which really sends through Gmail in-thread \u2014 or shows a clear connect-Gmail prompt when an integration isn't connected, never a faked success. The thread then stays visible as an open loop waiting on them rather than disappearing, and surfaces as going cold if they never answer. A reply the user sends from their phone closes the alert on its own. Conversations are filed into folders the user approved \u2014 their own replies included \u2014 and nothing is ever labelled with a folder they haven't approved. A daily report says what needs answering, who has gone quiet, and what was filed.",
       "external_systems": [
         "gmail",
         "slack"

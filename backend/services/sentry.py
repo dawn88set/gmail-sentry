@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -93,6 +94,17 @@ def _default_notify_tier() -> str:
     return tier if tier in _VALID_TIERS else "urgent"
 
 
+def _default_filing_enabled() -> bool:
+    """Install-time default for smart filing (app-config.json#configSchema).
+
+    Defaults OFF: filing writes labels into a real mailbox, so it should be a
+    deliberate yes rather than something that happens to a user who installed
+    the app for triage.
+    """
+    raw = (os.getenv("SENTRY_FILING_ENABLED") or "").strip().lower()
+    return raw in ("1", "true", "yes")
+
+
 def _default_auto_draft() -> bool:
     raw = (os.getenv("SENTRY_AUTO_DRAFT") or "").strip().lower()
     if raw in ("0", "false", "no"):
@@ -109,11 +121,17 @@ def get_config(db: Session, user_id: str) -> models.SentryConfig:
         .first()
     )
     if cfg is None:
+        filing_on = _default_filing_enabled()
         cfg = models.SentryConfig(
             user_id=user_id,
             slack_channel="",
             notify_tier=_default_notify_tier(),
             auto_draft=_default_auto_draft(),
+            filing_enabled=filing_on,
+            # Stamped up front so filing is forward-only even when it's on from
+            # the very first scan — otherwise the ledger's backfilled history
+            # would all be fair game on day one.
+            filing_started_at=datetime.utcnow() if filing_on else None,
         )
         db.add(cfg)
         db.commit()

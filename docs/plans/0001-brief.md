@@ -1,59 +1,91 @@
 # Gmail Sentry — Brief
 
 ## Problem & users
-Busy Gmail users drown in a noisy inbox. The few emails that actually need attention
-(from a boss, a deadline, an explicit ask) get buried under Promotions, Social, and Spam.
-**Gmail Sentry** watches incoming mail, pings the user on Slack only when something matters
-(with a deep link straight to the email), and makes clearing the junk a one-tap action.
+A business owner's inbox holds their obligations, and none of them are labelled.
+The urgent mail is buried under Promotions; the quote a client is waiting on looks
+identical to a newsletter; and the prospect who stopped replying twelve days ago
+generates no notification at all — because **silence sends no email**. That last
+one is where deals die, and no inbox surfaces it.
 
-Target user: anyone who lives in Gmail + Slack and wants to stop checking their inbox
-reflexively but never miss the important stuff.
+**Gmail Sentry** watches the mailbox and answers four questions:
 
-## What it does (the value path)
-1. **Triage** — every 5 minutes, scan new inbox mail and classify each message into
-   `urgent` / `needs_reply` / `fyi`, fusing four signals the user controls:
-   - natural-language rules ("anything from my manager", "invoices due this week"),
-   - VIP senders (addresses/domains),
-   - keywords,
-   - deadline/action detection (an explicit ask, a due date, a meeting/payment request).
-2. **Notify** — for each new urgent/needs-reply email, send a **Slack message** to the
-   user's configured channel with sender, subject, the one-line reason, and a **deep link**
-   to the email in Gmail.
-3. **File** — apply user-defined **label rules** ("from sender X → label Y, optionally archive").
-4. **Clean** — surface Promotions / Social / Spam counts; the user clears each category in
-   bulk with one tap (archive or trash). Never auto-deletes.
+| | |
+|---|---|
+| What needs me now? | AI triage against rules the user writes in plain language |
+| What do I owe people? | Threads where the ball is in their court |
+| What's going quiet? | People who haven't answered — where customers get lost |
+| Where does this go? | Conversations filed into folders the user approved |
 
-## Backend
-- **Agent** `triage-agent` — classifies one email against the user's rules (LLM via the
-  Claritty proxy, with a deterministic heuristic fallback so it works offline).
-- **Tool** `app.run_inbox_scan` — runs the full scan engine for the caller.
-- **Workflow** `scan-inbox` — single step that invokes the agent/tool to do a full scan.
-- **Trigger** `sentry-scan` — SCHEDULE (interval), default every 5 minutes.
+Target user: anyone whose business runs through their inbox — founders, sales,
+account managers, consultants — who can't afford to lose a thread.
+
+## What it does
+
+1. **Triage** — every 5 minutes, judge new mail as `urgent` / `needs_reply` /
+   `fyi`, fusing natural-language rules, VIP senders, keywords and deadline
+   detection. The *ask* is pulled out in one line at the same time, so a row says
+   "needs the revised quote before Friday" rather than "Re: Q3".
+2. **Notify** — Slack / WhatsApp / Telegram / Discord, per-channel urgency, with
+   a drafted reply and a one-tap approve link.
+3. **Reply in their voice** — drafted from the user's real sent mail. Nothing is
+   ever sent without an explicit approval that names the recipient.
+4. **Track open loops** — a reply doesn't end a thread, it flips it to "waiting on
+   them". Aging is per-relationship: a lawyer who answers in three days isn't
+   chased after one; a customer who normally answers in two hours is cold at two
+   days. A reply sent from the user's phone closes the alert on its own.
+5. **File conversations** — by who they're with (`Clients/Northwind`), applied to
+   every message in the thread including the user's own replies. Folders are
+   proposed and never created without approval; filing never removes mail from
+   the inbox.
+6. **Report daily** — what needs answering, who has gone quiet, what got filed.
+7. **Clean** — one-tap bulk clear of Promotions / Social / Spam.
+
+## Architecture
+
+The load-bearing piece is the **thread ledger** (`backend/services/ledger.py`):
+an incrementally-synced index of every observed message, in and out, keyed by
+thread. The broker exposes no `get_thread` verb and `get_message` returns no
+date, so time is recovered from the *query window* (`after:`/`before:` epoch) and
+thread topology comes free on the search stub. Two searches per sweep —
+`in:inbox` and `in:sent` — give ball position, aging, phone-reply detection and
+incremental sync for **zero LLM calls**.
+
+It also fixed the app's worst cost bug: a message judged `fyi` used to leave no
+trace, so every 5-minute scan re-classified it for two days (~5,760 model calls a
+day on a quiet inbox). Every judged message now records a verdict and is judged
+exactly once, ever.
+
 - **Models** (all `user_id`-scoped): `TriageRule`, `LabelRule`, `Alert`, `ScanRun`,
-  `SentryConfig`.
+  `SentryConfig`, `CommProfile`, `ThreadMessage`, `ThreadSyncState`,
+  `Counterparty`, `FollowUp`, `Nudge`, `MailFolder`, `ThreadFolder`.
+- **Services**: `ledger`, `counterparty` (who matters, from revealed preference —
+  who you answer and how fast, not who emails most), `followups`, `filing`,
+  `triage`, `reply`, `learn`, `digest`.
+- **Agents**: `triage-agent`, `digest-agent` — thin manifest-bound wrappers with
+  offline fallbacks. All intelligence lives in the services.
+- **Triggers**: `sentry-scan` (INTERVAL, 5 min), `sentry-digest` (DAILY).
 
-## Integrations (catalog-first; platform OAuth, no keys, no mocks)
-- **gmail** — `list_messages` / `search` / `get_message` / labels / trash (via the bundled
-  Gmail client adapter).
-- **slack** — `post_message` to the user's configured channel.
-- Not connected → honest **409 / connect prompt**, never a faked success.
+## Integrations
+Catalog-first, platform OAuth, no keys, no mocks. **gmail** (required) and
+**slack** (required), plus telegram / discord / twilio. Not connected → an honest
+409 connect prompt, never a faked success.
 
-## Widget (the glance)
-Data: `{ urgentCount, lastScanAt, allClear, topAlert{subject,sender,deepLink}, cleanup{promo,social,spam} }`.
-- **small (170×170):** urgent count + all-clear state → deep link into app.
-- **medium (360×170):** urgent count + last scan + top urgent subject/sender → deep link.
-- **large (360×360):** top urgent alerts + cleanup counts with one-tap **Clear** buttons
-  (`runQuickAction`) + deep link.
-
-## Design identity (Google theme)
-- Accent Google blue `#4285F4` (HSL `217 89% 61%`), hover `#1A73E8` (`214 82% 51%`),
-  primary `#1967D2` (`213 74% 46%`). Semantic: red `#EA4335` (spam/urgent), yellow
-  `#FBBC04` (promotions), green `#34A853` (all-clear/social).
-- Font **Roboto** (Google Fonts). Clean white Material surfaces, Google grey-900 text.
-- Mark: a shield + envelope glyph in Google colors. App name **Gmail Sentry**.
+## Design identity
+Google blue accent on cool-charcoal surfaces, Roboto, shield+envelope mark.
 
 ## Definition of done
-A new urgent email arrives → within a scan the user gets a Slack message with a working
-Gmail deep link, the email shows in the dashboard + widget as urgent, label rules file
-matching mail, and the user can one-tap clear Promotions/Social/Spam — or sees a clear
-"connect Gmail/Slack" prompt when an integration isn't connected.
+A new email needing a reply arrives → the user is notified on their channel with
+a draft in their own voice and a one-tap approve link → approving really sends it
+in-thread through Gmail → the thread stays visible as an open loop waiting on
+them, and surfaces as going cold if they never answer → a reply sent from the
+phone closes the alert on its own → the conversation is filed into a folder the
+user approved, their own replies included → a daily report says what needs
+answering, who has gone quiet, and what was filed. Any missing integration shows
+a clear connect prompt, never a faked success.
+
+## Deliberately not built
+**Nudge sending.** The `Nudge` model and lifecycle exist, but nothing generates or
+sends one. It's the only irreversible surface in the design, and it needs its
+guards landed with it — especially the backfill guard, without which the first
+successful history sync would propose nudges to everyone the user deliberately
+stopped replying to.

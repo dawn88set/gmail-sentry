@@ -1,11 +1,24 @@
 """
-The Gmail Sentry digest — a scheduled "report" of what's waiting.
+The Gmail Sentry daily report — the one moment of clarity that arrives without
+the user opening anything.
 
-`run_digest` gathers the user's still-open alerts, groups them into urgent /
-to-reply, and fans a single plain-text report out to every configured channel
-(Slack, Telegram, Discord, WhatsApp). To-reply items link straight to the in-app
-Approve & Send screen (via notify.app_focus_link). When the inbox is calm it
-sends nothing — a report of "0 urgent · 0 to reply" is just noise.
+It answers four questions, in the order a business owner actually cares about:
+
+    what needs me now      urgent mail
+    what do I owe people   threads where the ball is in their court
+    what is going quiet    people who haven't answered — where deals die
+    what got handled       mail filed away without being asked
+
+The third one is the reason this exists. Unanswered mail announces itself;
+silence doesn't. A prospect who stopped replying twelve days ago generates no
+notification, appears in no inbox, and is invisible until the quarter closes
+badly. This is where that becomes visible.
+
+Fans a single plain-text report out to every configured channel (Slack,
+Telegram, Discord, WhatsApp). To-reply items link straight to the in-app
+Approve & Send screen (via notify.app_focus_link). When there's genuinely
+nothing it sends nothing — a report of "0 urgent · 0 to reply" is just noise,
+and a daily message that's usually empty gets muted.
 
 Called by the `app.send_digest` tool + the `send-digest` workflow (fired by the
 DAILY `sentry-digest` trigger on-platform). Locally, exercise it with
@@ -14,14 +27,15 @@ POST /api/workflows/send-digest/execute.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from backend import models
 from backend.services.sentry import get_config
+from backend.services import followups
 from backend.integrations import notify
 
 logger = logging.getLogger(__name__)
@@ -50,18 +64,53 @@ def _open_alerts(db: Session, user_id: str, limit: int = 50) -> List[models.Aler
     )
 
 
+def _relative_age(when: Optional[datetime]) -> str:
+    """"3d" / "20h" — compact enough to sit inside a bullet."""
+    if not when:
+        return ""
+    hours = max(0, int((datetime.utcnow() - when).total_seconds() // 3600))
+    if hours < 24:
+        return f"{hours}h"
+    days = hours // 24
+    return f"{days}d" if days < 14 else f"{days // 7}w"
+
+
 def build_digest_text(db: Session, user_id: str) -> str:
     """The report body, or "" when nothing needs attention (→ skip sending)."""
     alerts = _open_alerts(db, user_id)
     urgent = [a for a in alerts if a.tier == "urgent"]
     to_reply = [a for a in alerts if a.tier == "needs_reply"]
-    if not urgent and not to_reply:
+
+    owed = followups.list_followups(db, user_id, state="owed", limit=5)
+    cold = followups.list_followups(db, user_id, state="cold", limit=5)
+    counts = followups.counts(db, user_id)
+
+    filed_today = (
+        db.query(models.ThreadFolder)
+        .filter(
+            models.ThreadFolder.user_id == user_id,
+            models.ThreadFolder.status == "filed",
+            models.ThreadFolder.filed_at >= datetime.utcnow() - timedelta(hours=24),
+        )
+        .count()
+    )
+    pending_folders = (
+        db.query(models.MailFolder)
+        .filter(
+            models.MailFolder.user_id == user_id,
+            models.MailFolder.status == "proposed",
+        )
+        .count()
+    )
+
+    if not (urgent or to_reply or owed or cold):
         return ""
 
-    lines: List[str] = [
-        "🗞 Your inbox report",
-        f"{len(urgent)} urgent · {len(to_reply)} to reply",
-    ]
+    headline = f"{len(urgent)} urgent · {len(to_reply)} to reply"
+    if counts["owed"] or counts["cold"]:
+        headline += f" · {counts['owed']} you owe · {counts['cold']} going cold"
+
+    lines: List[str] = ["🗞 Your inbox report", headline]
 
     if urgent:
         lines.append("")
@@ -84,6 +133,41 @@ def build_digest_text(db: Session, user_id: str) -> str:
                 lines.append(f"   👉 Approve & send: {link}")
         if len(to_reply) > 5:
             lines.append(f"  …and {len(to_reply) - 5} more")
+
+    if owed:
+        lines.append("")
+        lines.append("↩️ You owe a reply")
+        for f in owed:
+            who = f.counterparty_name or f.counterparty_email or "someone"
+            age = _relative_age(f.last_inbound_at)
+            # Lead with the ask, not the subject — the point of a report is to
+            # be actionable without opening anything.
+            what = f.ask_summary or f.subject or "(no subject)"
+            lines.append(f"• {who} — {what}" + (f" ({age})" if age else ""))
+        if counts["owed"] > len(owed):
+            lines.append(f"  …and {counts['owed'] - len(owed)} more")
+
+    if cold:
+        lines.append("")
+        lines.append("🧊 Going quiet — no answer from them")
+        for f in cold:
+            who = f.counterparty_name or f.counterparty_email or "someone"
+            age = _relative_age(f.last_outbound_at or f.last_activity_at)
+            subject = f.subject or "(no subject)"
+            lines.append(f"• {who} — {subject}" + (f" · silent {age}" if age else ""))
+        if counts["cold"] > len(cold):
+            lines.append(f"  …and {counts['cold'] - len(cold)} more")
+
+    if filed_today or pending_folders:
+        lines.append("")
+        bits = []
+        if filed_today:
+            bits.append(f"filed {filed_today} conversation{'s' if filed_today != 1 else ''}")
+        if pending_folders:
+            bits.append(
+                f"{pending_folders} folder{'s' if pending_folders != 1 else ''} waiting for your OK"
+            )
+        lines.append("📁 " + " · ".join(bits))
 
     return "\n".join(lines).strip()
 

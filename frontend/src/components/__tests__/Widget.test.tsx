@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import Widget from '../Widget';
@@ -24,6 +26,11 @@ const SIZES = ['small', 'medium', 'large'] as const;
 const mockData = {
   urgent_count: 2,
   needs_reply_count: 1,
+  // Thread-level open loops — the glance is loop closure, not mail arrival.
+  open_loops: 3,
+  owed_count: 1,
+  waiting_count: 1,
+  cold_count: 1,
   all_clear: false,
   last_scan: 'just now',
   top_alerts: [
@@ -83,13 +90,30 @@ describe('Widget', () => {
   });
 
   describe('content', () => {
-    it('small shows the attention count', async () => {
+    it('small shows open loops, not just mail that arrived', async () => {
       vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
       render(<Widget size="small" />);
       await waitFor(() => {
-        expect(screen.getByText('3')).toBeInTheDocument();
-        expect(screen.getByText(/attention/)).toBeInTheDocument();
+        // 2 urgent + 1 needs-reply + 3 open loops
+        expect(screen.getByText('6')).toBeInTheDocument();
+        expect(screen.getByText(/open loops/)).toBeInTheDocument();
       });
+    });
+
+    it('small surfaces the worst state present, not the most common', async () => {
+      // At 170px there's room for one qualifier, so it must be the thing that
+      // costs most to miss — a customer going quiet beats unread mail.
+      vi.mocked(api.getWidgetData).mockResolvedValue(mockData as any);
+      render(<Widget size="small" />);
+      await waitFor(() => expect(screen.getByText('1 going cold')).toBeInTheDocument());
+    });
+
+    it('falls back gracefully when the backend sends no loop fields', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { open_loops, owed_count, waiting_count, cold_count, ...legacy } = mockData as any;
+      vi.mocked(api.getWidgetData).mockResolvedValue(legacy);
+      render(<Widget size="small" />);
+      await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
     });
 
     it('large lists flagged emails + junk counts', async () => {
@@ -126,5 +150,17 @@ describe('Widget', () => {
       await vi.waitFor(() => expect(api.getWidgetData).toHaveBeenCalledTimes(2));
       vi.useRealTimers();
     });
+  });
+});
+
+describe('safety', () => {
+  it('never sends email from the glance surface', () => {
+    // The widget has no undo and a small tap target. Anything that mails a
+    // third party must go through a sheet where the recipient is visible.
+    // Static tripwire so a future "quick approve" can't land here quietly.
+    // vitest runs from frontend/, and import.meta.url under jsdom doesn't
+    // resolve to a usable filesystem path.
+    const src = readFileSync(resolve(process.cwd(), 'src/components/Widget.tsx'), 'utf8');
+    expect(src).not.toMatch(/sendReply|sendNudge|approveAndSend|\bsendFollowUp\b/);
   });
 });
