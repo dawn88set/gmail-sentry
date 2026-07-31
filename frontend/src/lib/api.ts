@@ -161,7 +161,11 @@ export const getRecentScans = async (): Promise<{ runs: ScanRunItem[] }> =>
   (await api.get('/api/scans/recent')).data;
 
 export interface ScanSummary {
+  /** Mail newly JUDGED this run. Settled mail is never re-examined, so 0 is the
+   *  normal steady state and means "up to date" — not "nothing happened". */
   scanned: number;
+  /** Messages newly added to the thread ledger this run (inbound + outbound). */
+  indexed?: number;
   flagged: number;
   labeled: number;
   notified: number;

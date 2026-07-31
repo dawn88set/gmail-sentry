@@ -2,13 +2,21 @@
 The Gmail Sentry scan engine.
 
 `run_scan` is the heart of the app — one pass over recent inbox mail:
-  1. fetch recent inbox messages,
+  1. sync the thread ledger and take the messages it has never judged,
   2. apply the user's filing (label) rules,
   3. triage each with services.triage.classify_email,
   4. persist an Alert for each urgent / needs_reply email,
   5. Slack-ping the user (configured channel) for new alerts at/above notify tier,
   6. refresh the cleanup category counts (Promotions / Social / Spam),
   7. record a ScanRun.
+
+Step 1 is why the scan is cheap. It used to re-query `in:inbox newer_than:2d`
+every run and re-classify everything it found, because a message judged `fyi`
+left no trace — so a quiet inbox burned an LLM call per message every five
+minutes, for two days per message. The ledger records a verdict for EVERY
+message it judges, `fyi` included, so each one is judged exactly once and a
+quiet inbox costs nothing. Every `continue` in the loop below must therefore
+record a verdict first; see backend/services/ledger.py.
 
 It's called from POST /api/scan/run (route), the app.run_inbox_scan tool, and the
 scheduled workflow — the same engine on every path. It uses the bundled Gmail/Slack
@@ -28,6 +36,7 @@ from backend import models
 from backend.services.triage import classify_email, TIER_RANK
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile
+from backend.services import ledger
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
@@ -178,10 +187,19 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
 
     run = models.ScanRun(user_id=user_id)
 
+    # Bring the thread ledger up to date, then take work FROM it rather than
+    # re-querying Gmail. Two consequences worth stating plainly:
+    #
+    #   * Cost. Candidates are messages with no verdict yet. A message that was
+    #     judged `fyi` keeps that verdict forever, so it is never sent to the
+    #     model again. Previously `fyi` wrote no row at all, so every scan
+    #     re-fetched and re-classified the same quiet inbox for two days.
+    #   * Reach. The sweep also indexes `in:sent`, which is how a reply the user
+    #     sent from their phone becomes visible to the app.
+    sync_stats: Dict[str, int] = {}
     try:
-        stubs = gmail_adapter.search(
-            db, user_id, "in:inbox newer_than:2d", max_results=max_messages
-        )
+        sync_stats = ledger.sync_ledger(db, user_id)
+        candidates = ledger.untriaged_inbound(db, user_id, limit=max_messages)
     except IntegrationNotConnected:
         # Record the attempt (with an error) so the widget's "last scan" reflects
         # that scans ARE firing — otherwise a run that fires while Gmail is
@@ -201,36 +219,30 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
     scanned = flagged = labeled = notified = 0
     new_alerts: List[models.Alert] = []
 
-    for stub in stubs:
-        msg_id = stub.get("id")
-        if not msg_id:
-            continue
+    for msg in candidates:
+        msg_id = msg.gmail_message_id
         scanned += 1
 
-        # Dedupe: skip messages we've already turned into an alert.
-        existing = (
-            db.query(models.Alert)
-            .filter(
-                models.Alert.user_id == user_id,
-                models.Alert.gmail_message_id == msg_id,
-            )
-            .first()
-        )
-        if existing:
-            continue
-
+        # Every path below MUST record a verdict on the ledger row before it
+        # moves on — including the ones that produce no alert. A candidate left
+        # unjudged comes back on the next scan, which is exactly the loop this
+        # rewrite exists to close.
         try:
-            meta = gmail_adapter.get_meta(db, user_id, msg_id)
-        except Exception as e:  # noqa: BLE001 — a single unreadable message is skippable
+            ledger.ensure_hydrated(db, user_id, msg)
+        except IntegrationNotConnected:
+            raise
+        except Exception as e:  # noqa: BLE001 — one unreadable message is skippable
             logger.info(f"get_meta failed for {msg_id}: {type(e).__name__}: {e}")
             continue
 
-        sender = meta.get("sender", "")
-        subject = meta.get("subject", "")
-        snippet = meta.get("snippet", "")
+        sender = msg.sender or ""
+        subject = msg.subject or ""
+        snippet = msg.snippet or ""
 
-        # Muted senders never become attention alerts.
+        # Muted senders never become attention alerts — and are cheap to settle,
+        # so record the verdict without spending an LLM call on them.
         if muted and any(m in sender.lower() for m in muted):
+            ledger.mark_triaged(msg, "fyi", "skipped")
             continue
 
         # 1) Filing rules (deterministic).
@@ -248,20 +260,22 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
 
         # An archived email left the inbox — don't also raise an attention alert.
         if archived:
+            ledger.mark_triaged(msg, "fyi", "skipped")
             continue
 
-        # 2) Triage.
+        # 2) Triage — the one metered judgement, made exactly once per message.
         verdict = classify_email(rules, sender, subject, snippet)
         tier = verdict["tier"]
+        ledger.mark_triaged(msg, tier, verdict.get("source") or "ai")
         if TIER_RANK.get(tier, 0) <= TIER_RANK["fyi"]:
             continue  # only urgent / needs_reply become alerts
 
-        deep = _deep_link(meta.get("rfc822_msgid"), msg_id)
+        deep = _deep_link(msg.rfc822_msgid, msg_id)
         alert = models.Alert(
             user_id=user_id,
             gmail_message_id=msg_id,
-            thread_id=meta.get("thread_id"),
-            rfc822_msgid=meta.get("rfc822_msgid"),
+            thread_id=msg.thread_id,
+            rfc822_msgid=msg.rfc822_msgid,
             sender=sender,
             subject=subject,
             snippet=snippet,
@@ -338,7 +352,12 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
     db.refresh(run)
 
     return {
+        # `scanned` now means "messages newly judged this run", not "messages
+        # looked at" — the ledger means we don't re-look at settled mail. On an
+        # unchanged inbox this is legitimately 0, so `indexed` is reported
+        # alongside it and the UI says "up to date" rather than "scanned 0".
         "scanned": scanned,
+        "indexed": int(sync_stats.get("in_new", 0) + sync_stats.get("out_new", 0)),
         "flagged": flagged,
         "labeled": labeled,
         "notified": notified,

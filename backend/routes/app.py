@@ -28,6 +28,7 @@ from backend.services.sentry import run_scan, get_config
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
+from backend.services import ledger
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
 
@@ -304,6 +305,21 @@ async def send_reply_alert(
     alert.reply_error = None
     alert.status = "done"
     db.commit()
+
+    # Tell the ledger straight away rather than waiting for the next `in:sent`
+    # sweep to notice: the thread flips to "waiting on them" immediately, and the
+    # sweep's later pass over the same message becomes a no-op against the unique
+    # index. Best-effort — the mail is already sent, so a bookkeeping failure here
+    # must not turn a successful send into an error.
+    ledger.record_sent_message(
+        db,
+        user_id,
+        gmail_message_id=message_id,
+        thread_id=alert.thread_id or "",
+        to_email=alert.sender or "",
+        subject=alert.subject or "",
+        sent_at=alert.reply_sent_at,
+    )
     return {"success": True, "reply_status": "sent", "message_id": message_id}
 
 

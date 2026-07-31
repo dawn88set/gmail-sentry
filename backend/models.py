@@ -8,6 +8,9 @@ filters by it):
 - Alert         — one flagged email surfaced to the user (+ Slack send state)
 - ScanRun       — one inbox scan: counts + a snapshot of cleanup category sizes
 - SentryConfig  — per-user settings (Slack channel, notify tier)
+- CommProfile   — the learned voice + the people the user actually replies to
+- ThreadMessage — the thread ledger: every observed message, in and out
+- ThreadSyncState — the ledger's per-user sweep cursor
 
 Kept from the seed (used by the SDK runtime + integrations layer):
 - UserIntegration, WorkflowExecution
@@ -280,6 +283,129 @@ class CommProfile(Base):
             "signature": self.signature or "",
             "refreshed_at": self.refreshed_at.isoformat() if self.refreshed_at else None,
         }
+
+
+class ThreadMessage(Base):
+    """One observed Gmail message — the local reconstruction of the mailbox.
+
+    Why this exists: the app used to have memory of *alerts* but not of *mail*,
+    which cost it three things at once.
+
+    1. **Cost.** A message classified `fyi` produced no row, so every 5-minute
+       scan re-fetched and re-classified it for two days. `triage_tier` here is
+       the permanent receipt: a message is judged by the LLM exactly once, ever.
+    2. **Incremental sync.** The scan re-queried a fixed `newer_than:2d` window
+       every time. The sweep now advances a watermark.
+    3. **Thread state.** Grouping these rows by `thread_id` says who owes whom a
+       reply — including replies the user sent from their phone, which the app
+       could not previously see at all.
+
+    **Time.** The broker's `gmail.get_message` returns no date, so we recover it
+    from the *query window* instead of the message: each row records the
+    `after:`/`before:` bounds it was found in. The working clock is `ts_hi` (the
+    latest the message could be), which is deliberately conservative — an aging
+    clock built on it under-ages, so we never chase someone too early.
+
+    Rows are append-only; identity fields fill in later (see `hydrated`) because
+    `gmail.search` hands us `{id, threadId}` for free while sender/subject cost a
+    metered `get_message` call each.
+    """
+    __tablename__ = "thread_messages"
+    __table_args__ = (
+        UniqueConstraint("user_id", "gmail_message_id", name="uq_tmsg_user_msg"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+
+    gmail_message_id = Column(String, nullable=False, index=True)
+    thread_id = Column(String, nullable=False, index=True)
+    # "in" = the user received it; "out" = the user sent it (from anywhere —
+    # this app, Gmail on the web, or their phone).
+    direction = Column(String, nullable=False)
+
+    # The query window this message was found in — NOT the message's own date.
+    ts_lo = Column(DateTime, nullable=False)
+    ts_hi = Column(DateTime, nullable=False, index=True)
+    # True only for sends this app performed itself, where we know the instant.
+    ts_exact = Column(Boolean, nullable=False, default=False)
+
+    # Identity — NULL until hydrated. The state machine never needs it.
+    hydrated = Column(Boolean, nullable=False, default=False, index=True)
+    sender = Column(String)
+    counterparty_email = Column(String, index=True)
+    subject = Column(String)
+    snippet = Column(Text)
+    rfc822_msgid = Column(String)
+    label_ids = Column(JSON, default=list)
+
+    # Triage memoization. Set for EVERY judged message, including `fyi` and
+    # muted senders — a missing verdict is what caused the re-classification bug.
+    triage_tier = Column(String, index=True)
+    triage_source = Column(String)  # ai | heuristic | skipped
+    triaged_at = Column(DateTime, index=True)
+
+    first_seen_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self):
+        return (
+            f"<ThreadMessage {self.direction} thread={self.thread_id} "
+            f"tier={self.triage_tier}>"
+        )
+
+
+class ThreadSyncState(Base):
+    """Per-user cursor for the ledger sweep. One row per user.
+
+    Watermarks advance only after a window completes successfully — a
+    mid-pagination failure must not leave a permanent hole in the ledger.
+    """
+    __tablename__ = "thread_sync_state"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, unique=True, index=True)
+
+    # Forward sweep: how far we've indexed each mailbox.
+    inbox_watermark = Column(DateTime)
+    sent_watermark = Column(DateTime)
+
+    # Backward sweep: walks back to `horizon_days`, a bounded number of buckets
+    # per run so the first sync can't stall a scan. NULL once complete.
+    backfill_cursor = Column(DateTime)
+    backfill_done = Column(Boolean, nullable=False, default=False)
+    backfill_done_at = Column(DateTime)
+    horizon_days = Column(Integer, nullable=False, default=45)
+
+    # Learned once, from any sent message: who "the user" is, so an outbound
+    # message can be told from an inbound one and internal from external.
+    self_address = Column(String, default="")
+    self_domain = Column(String, default="")
+    alias_addresses = Column(JSON, default=list)
+
+    # get_message calls allowed per sweep (identity is the metered part).
+    hydration_budget = Column(Integer, nullable=False, default=25)
+
+    messages_indexed = Column(Integer, default=0)
+    last_sweep_at = Column(DateTime)
+    last_error = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "inbox_watermark": self.inbox_watermark.isoformat() if self.inbox_watermark else None,
+            "sent_watermark": self.sent_watermark.isoformat() if self.sent_watermark else None,
+            "backfill_done": bool(self.backfill_done),
+            "horizon_days": int(self.horizon_days or 45),
+            "self_address": self.self_address or "",
+            "messages_indexed": int(self.messages_indexed or 0),
+            "last_sweep_at": self.last_sweep_at.isoformat() if self.last_sweep_at else None,
+            "last_error": self.last_error or "",
+        }
+
+    def __repr__(self):
+        return f"<ThreadSyncState user={self.user_id} indexed={self.messages_indexed}>"
 
 
 class UserIntegration(Base):

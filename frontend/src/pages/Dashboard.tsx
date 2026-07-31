@@ -152,9 +152,15 @@ export default function Dashboard() {
     setScanning(true);
     try {
       const s = await runScan();
+      // `scanned` counts mail newly judged this run — settled mail is never
+      // re-examined — so 0 means "up to date", not "the scan did nothing".
+      // Reporting "Scanned 0 emails — flagged 0" would read as a failure.
       show({
         tone: 'success',
-        text: `Scanned ${s.scanned} email${s.scanned === 1 ? '' : 's'} — flagged ${s.flagged}, filed ${s.labeled}, notified ${s.notified}.`,
+        text:
+          s.scanned === 0
+            ? 'Up to date — no new mail to review.'
+            : `Reviewed ${s.scanned} new email${s.scanned === 1 ? '' : 's'} — flagged ${s.flagged}, filed ${s.labeled}, notified ${s.notified}.`,
       });
       await refresh();
     } catch (err) {
