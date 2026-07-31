@@ -31,6 +31,8 @@ from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.services import ledger
 from backend.services import followups
 from backend.services import filing
+from backend.services import nudges
+from backend.services.reply import split_fallback as nudges_split
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
 
@@ -1234,3 +1236,160 @@ async def backlog_preview(
 ):
     """What organising the recent backlog WOULD do. Writes nothing."""
     return {"preview": filing.preview_backlog(db, user_id, days=max(1, min(days, 90)))}
+
+
+# ---------------------------------------------------------------------------
+# Nudges — chasing a thread that's gone quiet. Draft-only until approved.
+# ---------------------------------------------------------------------------
+
+
+class NudgeDraftBody(BaseModel):
+    # gentle | direct | closing. Omit to let the attempt number choose.
+    tone: Optional[str] = None
+
+
+@router.post("/api/followups/{followup_id}/nudge")
+async def draft_nudge(
+    followup_id: str,
+    payload: NudgeDraftBody = NudgeDraftBody(),
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Draft a nudge for this loop. Never sends.
+
+    A refusal comes back as 409 with the reason in prose, because every guard
+    here has to be explained: silently disabling the button teaches people the
+    app is broken, while "you nudged them 2 days ago, give it 2 more" teaches
+    them it's careful.
+    """
+    fu = _get_followup(db, followup_id, user_id)
+    nudge, refusal = nudges.generate_nudge(db, user_id, fu, tone=(payload.tone or ""))
+    if nudge is None:
+        raise HTTPException(status_code=409, detail=refusal)
+    return {"success": True, "nudge": nudges.nudge_payload(nudge)}
+
+
+@router.get("/api/followups/{followup_id}/nudge")
+async def get_nudge(
+    followup_id: str,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The live proposal for this loop, if any, plus whether a new one is allowed
+    (and why not, when it isn't)."""
+    fu = _get_followup(db, followup_id, user_id)
+    existing = nudges.open_proposal(db, user_id, fu.id)
+    return {
+        "nudge": nudges.nudge_payload(existing) if existing else None,
+        "blocked_reason": nudges.why_not_eligible(db, user_id, fu),
+        "nudge_count": int(fu.nudge_count or 0),
+    }
+
+
+class NudgeSendBody(BaseModel):
+    # The edited body, when the user changed it before approving.
+    body: Optional[str] = None
+
+
+@router.post("/api/nudges/{nudge_id}/send")
+async def send_nudge(
+    nudge_id: str,
+    payload: NudgeSendBody = NudgeSendBody(),
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Send an approved nudge, in-thread.
+
+    Same honest-failure contract as replying: not connected leaves the row
+    untouched and returns 409, a real failure returns 502 with the error
+    recorded so it survives for retry, and only a genuine Gmail message id
+    marks it sent.
+    """
+    nudge = (
+        db.query(models.Nudge)
+        .filter(models.Nudge.id == nudge_id, models.Nudge.user_id == user_id)
+        .first()
+    )
+    if not nudge:
+        raise HTTPException(status_code=404, detail="Nudge not found")
+    if nudge.status == "sent":
+        raise HTTPException(status_code=409, detail="That nudge has already been sent.")
+
+    fu = _get_followup(db, nudge.followup_id, user_id)
+
+    # Re-check the guards at send time, not just at draft time — a draft can sit
+    # on screen while another thread's nudge goes out to the same person.
+    refusal = nudges.why_not_eligible(db, user_id, fu)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+
+    body = (payload.body or "").strip()
+    if not body:
+        body, _is_fallback = nudges_split(nudge.draft or "")
+    if not body:
+        raise HTTPException(status_code=400, detail="Nothing to send.")
+    nudge.draft = body
+    db.commit()
+
+    to = nudge.to_email or _sender_email(fu.counterparty_email or "")
+    if not to:
+        raise HTTPException(status_code=400, detail="No recipient address for this thread.")
+
+    try:
+        result = gmail_adapter.send(
+            db, user_id,
+            to=to,
+            subject=nudge.subject or _reply_subject(fu.subject or ""),
+            body=body,
+            thread_id=fu.thread_id or "",
+            in_reply_to=nudge.in_reply_to or "",
+        )
+    except IntegrationNotConnected:
+        db.commit()  # keep the edited draft; don't mark sent or failed
+        _not_connected("gmail")
+    except IntegrationError as e:
+        nudge.status = "failed"
+        nudge.error = str(e)[:500]
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Couldn’t send the nudge: {e}")
+
+    message_id = (result or {}).get("message_id") or ""
+    if not message_id:
+        nudge.status = "failed"
+        nudge.error = "Gmail returned no message id."
+        db.commit()
+        raise HTTPException(status_code=502, detail="Gmail didn’t confirm the send. Try again.")
+
+    nudges.mark_sent(db, user_id, nudge, fu, message_id)
+    followups.record_outbound(
+        db, user_id,
+        thread_id=fu.thread_id or "",
+        message_id=message_id,
+        to_email=to,
+        subject=nudge.subject or "",
+    )
+    db.refresh(fu)
+    return {
+        "success": True,
+        "message_id": message_id,
+        "nudge": nudges.nudge_payload(nudge),
+        "followup": fu.to_dict(),
+    }
+
+
+@router.post("/api/nudges/{nudge_id}/skip")
+async def skip_nudge(
+    nudge_id: str,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    nudge = (
+        db.query(models.Nudge)
+        .filter(models.Nudge.id == nudge_id, models.Nudge.user_id == user_id)
+        .first()
+    )
+    if not nudge:
+        raise HTTPException(status_code=404, detail="Nudge not found")
+    nudge.status = "skipped"
+    db.commit()
+    return {"success": True}

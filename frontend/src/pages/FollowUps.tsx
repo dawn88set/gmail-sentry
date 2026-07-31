@@ -4,6 +4,7 @@ import { Repeat2, ExternalLink, Clock, Check, X } from 'lucide-react';
 import { Button, EmptyState, ErrorState, Tabs } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { FollowUpRow } from '@/components/FollowUpRow';
+import { NudgeComposer } from '@/components/NudgeComposer';
 import { Screen } from '@/components/ios/Screen';
 import { ListGroup } from '@/components/ios/List';
 import { ActionTile } from '@/components/ios/ActionTile';
@@ -134,6 +135,10 @@ export default function FollowUps() {
           followUp={selected}
           busy={busy === selected.id}
           onClose={() => setSelected(null)}
+          onSent={() => {
+            setSelected(null);
+            void load();
+          }}
           onSnooze={(h) => act('Snoozed.', selected.id, () => snoozeFollowUp(selected.id, h))}
           onDone={() => act('Loop closed.', selected.id, () => doneFollowUp(selected.id))}
           onIgnore={() => act('Won’t track this thread.', selected.id, () => ignoreFollowUp(selected.id))}
@@ -196,9 +201,11 @@ export default function FollowUps() {
 /**
  * Actions for one loop.
  *
- * Deliberately contains nothing that sends email. Drafting a nudge isn't wired
- * yet, and until its rate limits and backfill guard ship, offering a send here
- * would be the one irreversible action in the app with no guard behind it.
+ * The nudge composer appears only where the ball is genuinely theirs — on a
+ * thread the user owes, chasing them for your own silence would be absurd. It's
+ * the one irreversible action in the app, so it lives behind its own guards
+ * (see NudgeComposer and backend/services/nudges.py) rather than sitting in
+ * this action grid where a mis-tap could reach it.
  */
 function FollowUpActions({
   followUp,
@@ -207,6 +214,7 @@ function FollowUpActions({
   onSnooze,
   onDone,
   onIgnore,
+  onSent,
 }: {
   followUp: FollowUp;
   busy: boolean;
@@ -214,6 +222,7 @@ function FollowUpActions({
   onSnooze: (hours: number) => void;
   onDone: () => void;
   onIgnore: () => void;
+  onSent: () => void;
 }) {
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const gmail = `https://mail.google.com/mail/u/0/#all/${followUp.thread_id}`;
@@ -239,6 +248,15 @@ function FollowUpActions({
         {followUp.ask_summary && (
           <div className="mb-4 rounded-2xl bg-muted/60 p-3 text-[14px] leading-relaxed text-foreground">
             {followUp.ask_summary}
+          </div>
+        )}
+
+        {/* Only where the ball is genuinely theirs. On a thread the user owes,
+            chasing them for your own silence would be absurd — so the composer
+            simply isn't offered. */}
+        {(followUp.state === 'going_cold' || followUp.state === 'awaiting_them') && (
+          <div className="mb-4">
+            <NudgeComposer followUp={followUp} onSent={onSent} />
           </div>
         )}
 

@@ -83,9 +83,22 @@ user approved, their own replies included → a daily report says what needs
 answering, who has gone quiet, and what was filed. Any missing integration shows
 a clear connect prompt, never a faked success.
 
-## Deliberately not built
-**Nudge sending.** The `Nudge` model and lifecycle exist, but nothing generates or
-sends one. It's the only irreversible surface in the design, and it needs its
-guards landed with it — especially the backfill guard, without which the first
-successful history sync would propose nudges to everyone the user deliberately
-stopped replying to.
+## Following up on silence
+A thread that's gone quiet can be chased with a short follow-up in the user's
+voice, escalating gentle → direct → close-it-out. It is the only message the app
+puts in front of someone the user didn't just hear from, so it's mostly guards:
+
+- **never pre-generated** — drafting happens only when asked, because a
+  ready-to-send nudge nobody requested is one mis-tap from an unwanted email;
+- **backfill guard** — threads from the initial history import are never
+  eligible, or the first sync would offer to chase everyone the user
+  deliberately stopped replying to;
+- **three per thread, ever** — a fourth is harassment sent in the user's name;
+- **48h between nudges to one person**, across all their threads;
+- **the button names the recipient** and arms before sending;
+- every refusal is prose the UI shows verbatim — a silently disabled control
+  reads as broken, an explained one reads as careful.
+
+Same honest-failure contract as replies: not connected → 409 with the draft
+preserved, a real failure → 502 recorded for retry, and only a genuine Gmail
+message id marks it sent.

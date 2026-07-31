@@ -583,3 +583,43 @@ export const getBacklogPreview = async (
   days = 30,
 ): Promise<{ preview: { folder: string; threads: number; exists: boolean }[] }> =>
   (await api.get('/api/folders/backlog-preview', { params: { days } })).data;
+
+// ── Nudges: chasing a thread that's gone quiet ──────────────────────────────
+// The only message this app puts in front of someone the user didn't just hear
+// from. Draft-only until explicitly approved, never pre-generated, and every
+// refusal comes back as prose the UI shows verbatim — a silently disabled
+// button reads as broken, an explained one reads as careful.
+export interface Nudge {
+  id: string;
+  followup_id: string;
+  attempt_no: number;
+  tone: 'gentle' | 'direct' | 'closing';
+  draft: string;
+  subject: string;
+  to_email: string;
+  status: 'proposed' | 'sent' | 'skipped' | 'failed';
+  sent_at: string | null;
+  error: string;
+  /** False when the draft is a template rather than the user's learned voice. */
+  voice_matched?: boolean;
+}
+
+export const getNudge = async (
+  followUpId: string,
+): Promise<{ nudge: Nudge | null; blocked_reason: string; nudge_count: number }> =>
+  (await api.get(`/api/followups/${followUpId}/nudge`)).data;
+
+export const draftNudge = async (
+  followUpId: string,
+  tone?: 'gentle' | 'direct' | 'closing',
+): Promise<{ nudge: Nudge }> =>
+  (await api.post(`/api/followups/${followUpId}/nudge`, tone ? { tone } : {})).data;
+
+export const sendNudge = async (
+  nudgeId: string,
+  body?: string,
+): Promise<{ message_id: string; followup: FollowUp }> =>
+  (await api.post(`/api/nudges/${nudgeId}/send`, body ? { body } : {})).data;
+
+export const skipNudge = async (nudgeId: string) =>
+  (await api.post(`/api/nudges/${nudgeId}/skip`)).data;
