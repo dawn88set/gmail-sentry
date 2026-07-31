@@ -127,6 +127,10 @@ class Alert(Base):
     reply_external_id = Column(String)  # Gmail message id of the sent reply
     reply_error = Column(Text)          # last send failure (row survives for retry)
 
+    #: The thread-level open loop this message belongs to, if any. An alert is
+    #: a notification event; the follow-up is the state that outlives it.
+    followup_id = Column(String, index=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     def to_dict(self):
@@ -146,6 +150,7 @@ class Alert(Base):
             "reply_draft": self.reply_draft or "",
             "reply_status": self.reply_status or "none",
             "reply_sent_at": self.reply_sent_at.isoformat() if self.reply_sent_at else None,
+            "followup_id": self.followup_id or None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -512,6 +517,154 @@ class Counterparty(Base):
 
     def __repr__(self):
         return f"<Counterparty {self.email} importance={self.importance} rel={self.relationship}>"
+
+
+class FollowUp(Base):
+    """An open loop on one thread — the thing the user actually wants to see.
+
+    `Alert` and `FollowUp` answer different questions and neither replaces the
+    other:
+
+      Alert     one MESSAGE   "does this need your eyes right now?"
+      FollowUp  one THREAD    "is there an unresolved loop here?"
+
+    An alert dies when the user handles the message. A follow-up lives until the
+    loop actually closes — which is why sending a reply *advances* it to
+    `awaiting_them` rather than ending it. Before this existed, the moment a
+    reply was sent the thread vanished from the app entirely, so "I sent them a
+    quote and never heard back" was invisible.
+
+    **The boundary that stops double-counting.** A newly-arrived message that
+    needs a reply is an Alert for its first `owed_after_hours`; after that the
+    alert has served its purpose and the THREAD becomes an owed follow-up. Lists
+    exclude threads whose latest inbound still has a live alert, so
+    `active alerts + owed + overdue-waiting` is a partition and the headline
+    number can be trusted.
+    """
+    __tablename__ = "followups"
+    __table_args__ = (UniqueConstraint("user_id", "thread_id", name="uq_followups_user_thread"),)
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    thread_id = Column(String, nullable=False, index=True)
+
+    counterparty_email = Column(String, index=True)
+    counterparty_name = Column(String, default="")
+    subject = Column(String, default="")
+
+    #: awaiting_you | awaiting_them | going_cold | snoozed | done | ignored
+    state = Column(String, nullable=False, default="awaiting_you", index=True)
+    #: The raw ledger fact the state is derived from: "you" | "them".
+    ball = Column(String, nullable=False, default="you")
+    #: When the ball last changed hands — the clock everything ages against.
+    state_changed_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    #: One line saying what is actually being asked, extracted during triage at
+    #: no extra model cost. This is the payload of a follow-up row: "Re: Q3"
+    #: tells you nothing, "needs the budget approved before Friday" tells you
+    #: everything.
+    ask_summary = Column(String(280), default="")
+    ask_confidence = Column(Integer, default=0)
+    due_at = Column(DateTime, index=True)
+    due_source = Column(String, default="")  # explicit | inferred
+
+    last_inbound_at = Column(DateTime, index=True)
+    last_outbound_at = Column(DateTime, index=True)
+    last_activity_at = Column(DateTime, index=True)
+
+    #: How long silence is normal FOR THIS PERSON, from their median reply time.
+    #: A lawyer who answers in three days shouldn't be chased after one; a
+    #: customer who normally answers in two hours is already cold at two days.
+    stale_after_hours = Column(Integer, default=72)
+    importance = Column(Integer, default=0, index=True)
+    risk = Column(Integer, default=0, index=True)
+
+    nudge_count = Column(Integer, nullable=False, default=0)
+    last_nudge_at = Column(DateTime)
+    snoozed_until = Column(DateTime)
+
+    closed_reason = Column(String, default="")
+    # they_replied | you_closed | archived | muted | expired | replied_externally
+    closed_at = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "thread_id": self.thread_id,
+            "counterparty_email": self.counterparty_email or "",
+            "counterparty_name": self.counterparty_name or "",
+            "subject": self.subject or "",
+            "state": self.state,
+            "ball": self.ball,
+            "ask_summary": self.ask_summary or "",
+            "due_at": self.due_at.isoformat() if self.due_at else None,
+            "due_source": self.due_source or "",
+            "last_inbound_at": self.last_inbound_at.isoformat() if self.last_inbound_at else None,
+            "last_outbound_at": self.last_outbound_at.isoformat() if self.last_outbound_at else None,
+            "last_activity_at": self.last_activity_at.isoformat() if self.last_activity_at else None,
+            "stale_after_hours": int(self.stale_after_hours or 72),
+            "importance": int(self.importance or 0),
+            "risk": int(self.risk or 0),
+            "nudge_count": int(self.nudge_count or 0),
+            "snoozed_until": self.snoozed_until.isoformat() if self.snoozed_until else None,
+            "closed_reason": self.closed_reason or "",
+        }
+
+    def __repr__(self):
+        return f"<FollowUp {self.state} thread={self.thread_id} risk={self.risk}>"
+
+
+class Nudge(Base):
+    """A proposed follow-up message on a thread that has gone quiet.
+
+    Draft-only by construction. There is no code path that sends one without an
+    explicit request from the user, and none is ever pre-generated — unlike a
+    reply, a nudge answers no incoming message, so a pre-drafted one sitting in
+    a list is a single mis-tap away from an unrequested email to a client.
+    """
+    __tablename__ = "nudges"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    followup_id = Column(String, nullable=False, index=True)
+    thread_id = Column(String, index=True)
+
+    attempt_no = Column(Integer, nullable=False, default=1)
+    tone = Column(String, default="gentle")  # gentle | direct | closing
+
+    draft = Column(Text, default="")
+    subject = Column(String, default="")
+    to_email = Column(String, default="")
+    in_reply_to = Column(String, default="")
+
+    #: proposed | sent | skipped | failed. Never "approved-and-queued" — there
+    #: is deliberately no state in which a nudge is waiting to send itself.
+    status = Column(String, nullable=False, default="proposed", index=True)
+    sent_at = Column(DateTime)
+    external_id = Column(String, default="")
+    error = Column(Text, default="")
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "followup_id": self.followup_id,
+            "attempt_no": int(self.attempt_no or 1),
+            "tone": self.tone or "gentle",
+            "draft": self.draft or "",
+            "subject": self.subject or "",
+            "to_email": self.to_email or "",
+            "status": self.status,
+            "sent_at": self.sent_at.isoformat() if self.sent_at else None,
+            "error": self.error or "",
+        }
+
+    def __repr__(self):
+        return f"<Nudge {self.status} attempt={self.attempt_no} followup={self.followup_id}>"
 
 
 class UserIntegration(Base):

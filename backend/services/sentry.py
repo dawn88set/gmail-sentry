@@ -38,6 +38,7 @@ from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile
 from backend.services import ledger
 from backend.services import counterparty
+from backend.services import followups
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
@@ -353,6 +354,16 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
         counterparty.recompute(db, user_id)
     except Exception as e:  # noqa: BLE001 — ranking is an optimisation, not the job
         logger.info(f"counterparty recompute skipped: {type(e).__name__}: {e}")
+
+    # 3.6) Re-derive open loops, and retire alerts for threads the user has
+    #      already answered somewhere else. That second part is what stops the
+    #      app nagging about mail the user replied to from their phone — the
+    #      single fastest way to teach someone to ignore it.
+    try:
+        followups.close_alerts_replied_elsewhere(db, user_id)
+        followups.sync_followups(db, user_id)
+    except Exception as e:  # noqa: BLE001 — follow-ups must never fail a scan
+        logger.info(f"follow-up sync skipped: {type(e).__name__}: {e}")
 
     # 4) Cleanup counts + finalize the run.
     try:

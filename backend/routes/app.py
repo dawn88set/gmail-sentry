@@ -29,6 +29,7 @@ from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.services import ledger
+from backend.services import followups
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
 
@@ -311,16 +312,26 @@ async def send_reply_alert(
     # sweep's later pass over the same message becomes a no-op against the unique
     # index. Best-effort — the mail is already sent, so a bookkeeping failure here
     # must not turn a successful send into an error.
-    ledger.record_sent_message(
+    fu = followups.record_outbound(
         db,
         user_id,
-        gmail_message_id=message_id,
         thread_id=alert.thread_id or "",
-        to_email=alert.sender or "",
+        message_id=message_id,
+        to_email=_sender_email(alert.sender or ""),
         subject=alert.subject or "",
         sent_at=alert.reply_sent_at,
+        alert_id=alert.id,
     )
-    return {"success": True, "reply_status": "sent", "message_id": message_id}
+    return {
+        "success": True,
+        "reply_status": "sent",
+        "message_id": message_id,
+        # The message-level alert is done, but the LOOP is now on them. Returning
+        # it lets the UI say "Sent — I'll watch for their reply" instead of the
+        # thread just vanishing, which is how an unanswered quote used to go
+        # unnoticed for weeks.
+        "followup": fu.to_dict() if fu else None,
+    }
 
 
 class AlertRuleBody(BaseModel):
@@ -919,12 +930,23 @@ async def get_widget_data(
             for a in ranked[:3]
         ]
 
+        # Open loops come from one shared helper so the widget and the app can
+        # never disagree about the headline number — a drift between the two
+        # destroys trust in both.
+        loops = followups.counts(db, user_id)
+
         return {
             "urgent_count": len(urgent),
             "needs_reply_count": len(needs_reply),
-            "all_clear": len(urgent) == 0 and len(needs_reply) == 0,
+            # all_clear now requires the loops to be closed too: "nothing needs
+            # you" while a customer has been waiting nine days would be a lie.
+            "all_clear": len(urgent) == 0 and len(needs_reply) == 0 and loops["open_loops"] == 0,
             "last_scan": _relative_time(run.started_at if run else None),
             "top_alerts": top_alerts,
+            "open_loops": loops["open_loops"],
+            "owed_count": loops["owed"],
+            "waiting_count": loops["waiting"],
+            "cold_count": loops["cold"],
             "cleanup": {
                 "promo": (run.promo_count if run else 0) or 0,
                 "social": (run.social_count if run else 0) or 0,
@@ -940,6 +962,147 @@ async def get_widget_data(
             "all_clear": True,
             "last_scan": "never",
             "top_alerts": [],
+            "open_loops": 0,
+            "owed_count": 0,
+            "waiting_count": 0,
+            "cold_count": 0,
             "cleanup": {"promo": 0, "social": 0, "spam": 0},
             "slack_configured": False,
         }
+
+
+# ---------------------------------------------------------------------------
+# Follow-ups — thread-level open loops
+# ---------------------------------------------------------------------------
+
+
+def _get_followup(db, followup_id, user_id) -> models.FollowUp:
+    fu = (
+        db.query(models.FollowUp)
+        .filter(models.FollowUp.id == followup_id, models.FollowUp.user_id == user_id)
+        .first()
+    )
+    if not fu:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    return fu
+
+
+@router.get("/api/followups")
+async def list_followups_route(
+    state: str = "open",
+    limit: int = 100,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Open loops, worst first.
+
+    state: open | owed | waiting | cold | snoozed | done | all. Owed views
+    exclude threads still being handled as a fresh alert, so this list and the
+    alert list partition rather than double-count.
+    """
+    rows = followups.list_followups(db, user_id, state=state, limit=max(1, min(limit, 200)))
+    return {
+        "followups": [f.to_dict() for f in rows],
+        "counts": followups.counts(db, user_id),
+    }
+
+
+@router.post("/api/followups/{followup_id}/snooze")
+async def snooze_followup(
+    followup_id: str,
+    body: SnoozeBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    fu = followups.snooze(db, _get_followup(db, followup_id, user_id), body.hours)
+    return {"success": True, "followup": fu.to_dict()}
+
+
+@router.post("/api/followups/{followup_id}/done")
+async def done_followup(
+    followup_id: str,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Close the loop without sending anything — often the right answer for a
+    thread that's simply over."""
+    fu = followups.mark_done(db, _get_followup(db, followup_id, user_id))
+    return {"success": True, "followup": fu.to_dict()}
+
+
+@router.post("/api/followups/{followup_id}/ignore")
+async def ignore_followup(
+    followup_id: str,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """"This isn't a follow-up." Sticky — the sweep won't resurrect it."""
+    fu = followups.mark_ignored(db, _get_followup(db, followup_id, user_id))
+    return {"success": True, "followup": fu.to_dict()}
+
+
+@router.post("/api/followups/sync")
+async def sync_followups_route(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Re-derive loops from the ledger on demand. Pure SQL — no Gmail calls."""
+    closed = followups.close_alerts_replied_elsewhere(db, user_id)
+    stats = followups.sync_followups(db, user_id)
+    return {"success": True, "alerts_closed": closed, **stats, "counts": followups.counts(db, user_id)}
+
+
+@router.get("/api/counterparties")
+async def list_counterparties(
+    limit: int = 50,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Who matters, ranked — derived from the ledger, not from message volume."""
+    rows = (
+        db.query(models.Counterparty)
+        .filter(models.Counterparty.user_id == user_id)
+        .order_by(models.Counterparty.importance.desc())
+        .limit(max(1, min(limit, 200)))
+        .all()
+    )
+    return {"counterparties": [c.to_dict() for c in rows]}
+
+
+class CounterpartyBody(BaseModel):
+    relationship: Optional[str] = None
+    pinned: Optional[bool] = None
+    muted: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@router.put("/api/counterparties/{cp_id}")
+async def update_counterparty(
+    cp_id: str,
+    payload: CounterpartyBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """User corrections. A stated relationship is marked as such so inference
+    never overwrites it later."""
+    row = (
+        db.query(models.Counterparty)
+        .filter(models.Counterparty.id == cp_id, models.Counterparty.user_id == user_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Counterparty not found")
+    if payload.relationship is not None:
+        valid = ("customer", "prospect", "internal", "vendor", "bulk", "unknown")
+        if payload.relationship not in valid:
+            raise HTTPException(status_code=400, detail=f"relationship must be one of {valid}")
+        row.relationship = payload.relationship
+        row.relationship_source = "user"
+    if payload.pinned is not None:
+        row.pinned = bool(payload.pinned)
+    if payload.muted is not None:
+        row.muted = bool(payload.muted)
+    if payload.notes is not None:
+        row.notes = payload.notes[:2000]
+    db.commit()
+    return {"success": True, "counterparty": row.to_dict()}
