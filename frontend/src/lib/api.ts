@@ -623,3 +623,45 @@ export const sendNudge = async (
 
 export const skipNudge = async (nudgeId: string) =>
   (await api.post(`/api/nudges/${nudgeId}/skip`)).data;
+
+// ── People: who it would cost you to ignore ─────────────────────────────────
+// Ranked from revealed preference — whether you reply, how fast, over how many
+// threads — not from who emails most. `relationship` isn't cosmetic: it decides
+// the filing folder (Clients/… vs Vendors/…) and how long silence is normal
+// before a thread is treated as cold, so correcting it changes real behaviour.
+export type Relationship = 'customer' | 'prospect' | 'internal' | 'vendor' | 'bulk' | 'unknown';
+
+export interface Counterparty {
+  id: string;
+  email: string;
+  domain: string;
+  display_name: string;
+  is_internal: boolean;
+  thread_count: number;
+  msg_in_count: number;
+  msg_out_count: number;
+  /** Of their threads, how many you answered — the strongest signal you care. */
+  your_reply_rate: number;
+  /** Of the threads you started, how many they answered. */
+  their_reply_rate: number;
+  your_median_reply_h: number | null;
+  their_median_reply_h: number | null;
+  relationship: Relationship;
+  relationship_source: 'inferred' | 'crm' | 'user';
+  importance: number;
+  pinned: boolean;
+  muted: boolean;
+  crm: { source: string; company: string; stage: string; status: string };
+  last_seen_at: string | null;
+}
+
+export const getCounterparties = async (
+  limit = 50,
+): Promise<{ counterparties: Counterparty[] }> =>
+  (await api.get('/api/counterparties', { params: { limit } })).data;
+
+export const updateCounterparty = async (
+  id: string,
+  patch: { relationship?: Relationship; pinned?: boolean; muted?: boolean; notes?: string },
+): Promise<{ counterparty: Counterparty }> =>
+  (await api.put(`/api/counterparties/${id}`, patch)).data;

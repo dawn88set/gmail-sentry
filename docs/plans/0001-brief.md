@@ -38,7 +38,13 @@ account managers, consultants — who can't afford to lose a thread.
    proposed and never created without approval; filing never removes mail from
    the inbox.
 6. **Report daily** — what needs answering, who has gone quiet, what got filed.
-7. **Clean** — one-tap bulk clear of Promotions / Social / Spam.
+7. **Show who matters** — a People screen ranking real relationships from
+   revealed preference, with the evidence behind each ranking. Correcting
+   someone isn't cosmetic: `relationship` decides the filing folder
+   (`Clients/…` vs `Suppliers/…`) and how long silence is normal before a thread
+   counts as cold, so a correction changes real behaviour and is never
+   overwritten by inference afterwards.
+8. **Clean** — one-tap bulk clear of Promotions / Social / Spam.
 
 ## Architecture
 

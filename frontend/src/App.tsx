@@ -5,6 +5,7 @@ import Rules from './pages/Rules';
 import Teach from './pages/Teach';
 import Attention from './pages/Attention';
 import FollowUps from './pages/FollowUps';
+import People from './pages/People';
 import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
 import Layout from './components/Layout';
@@ -31,6 +32,7 @@ function App() {
           <Route path="/" element={<Layout><Dashboard /></Layout>} />
           <Route path="/teach" element={<Layout><Teach /></Layout>} />
           <Route path="/followups" element={<Layout><FollowUps /></Layout>} />
+          <Route path="/people" element={<Layout><People /></Layout>} />
           <Route path="/attention" element={<Layout><Attention /></Layout>} />
           <Route path="/cleanup/:category" element={<Layout><CategoryList /></Layout>} />
           <Route path="/rules" element={<Layout><Rules /></Layout>} />

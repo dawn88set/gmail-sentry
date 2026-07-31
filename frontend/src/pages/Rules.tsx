@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Sparkles, Slack, Mail, Check, Send, MessageSquare, Phone, Loader2, MessageSquareText } from 'lucide-react';
+import { Plus, Trash2, Sparkles, Slack, Mail, Check, Send, MessageSquare, Phone, Loader2, MessageSquareText, Users } from 'lucide-react';
 import { Button } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { SmartOnboarding } from '@/components/SmartOnboarding';
@@ -894,6 +894,30 @@ export default function Rules() {
           <IosButton variant="filled" full className="mt-3" icon={<Plus className="h-4 w-4" />} onClick={addRule}>
             Add rule
           </IosButton>
+        </ListSection>
+
+        {/* Who matters. Not a tab — five is cramped at 390px and this is a
+            place you visit occasionally, not one you live in. It's here because
+            correcting a relationship changes filing and chase timing, which are
+            both configured on this screen. */}
+        <ListSection
+          title="Who matters"
+          footer="Ranked by whether you actually reply, not by who emails most. Correcting someone changes where their mail is filed and how long silence is normal."
+        >
+          <ListGroup variant="plain-mobile">
+            <ListRow
+              onClick={() => navigate('/people')}
+              className="py-4"
+              leading={
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                  <Users className="h-5 w-5" />
+                </span>
+              }
+              title={<span className="block text-[15px] font-semibold text-foreground">People</span>}
+              subtitle="See and correct who Sentry thinks your clients and suppliers are"
+              chevron
+            />
+          </ListGroup>
         </ListSection>
 
         {/* Smart filing — automatic, approval-gated, thread-level. Sits ABOVE the
