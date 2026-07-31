@@ -408,6 +408,112 @@ class ThreadSyncState(Base):
         return f"<ThreadSyncState user={self.user_id} indexed={self.messages_indexed}>"
 
 
+class Counterparty(Base):
+    """A person the user corresponds with, and what their behaviour says.
+
+    This replaces the top-5 `vip_senders` list the scan used to inject as
+    synthetic rules. That list answered "who does this user email a lot?"; this
+    answers the question that actually matters — **who would it cost them to
+    ignore?** — and it does so from revealed preference rather than volume:
+    someone the user always replies to, quickly, over many threads, matters.
+    A newsletter that sends daily does not.
+
+    Everything here is derived from the thread ledger by plain SQL. No Gmail
+    calls, no LLM calls. The CRM columns are the one exception and are strictly
+    optional enrichment — every one of them is nullable and the app is complete
+    without them.
+
+    Two honest caveats:
+      * Latency figures inherit the ledger's window resolution, so treat them as
+        "about this many hours", not a stopwatch.
+      * Outbound messages carry no recipient unless this app sent them, so a
+        reply is attributed to the counterparty of its THREAD. That is right for
+        ordinary correspondence and approximate on large group threads.
+    """
+    __tablename__ = "counterparties"
+    __table_args__ = (UniqueConstraint("user_id", "email", name="uq_cp_user_email"),)
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+
+    email = Column(String, nullable=False, index=True)
+    domain = Column(String, index=True)
+    display_name = Column(String, default="")
+    # Same domain as the user — colleagues, not customers.
+    is_internal = Column(Boolean, nullable=False, default=False)
+
+    # ── behavioural facts, recomputed from the ledger ──────────────────────
+    msg_in_count = Column(Integer, default=0)
+    msg_out_count = Column(Integer, default=0)
+    thread_count = Column(Integer, default=0)
+    threads_you_replied = Column(Integer, default=0)
+    #: Of their threads, how many you answered. The strongest single signal of
+    #: whether this person matters to the user — it's a choice they already made.
+    your_reply_rate = Column(Integer, default=0)   # 0-100
+    #: Of the threads you started, how many they answered. Whether YOU matter to
+    #: THEM — which is what makes a silence meaningful rather than routine.
+    their_reply_rate = Column(Integer, default=0)  # 0-100
+    your_median_reply_h = Column(Integer)
+    their_median_reply_h = Column(Integer)
+
+    first_seen_at = Column(DateTime)
+    last_seen_at = Column(DateTime, index=True)
+
+    # ── derived judgement ──────────────────────────────────────────────────
+    relationship = Column(String, default="unknown")
+    # customer | prospect | internal | vendor | personal | bulk | unknown
+    relationship_source = Column(String, default="inferred")  # inferred | crm | user
+    importance = Column(Integer, default=0, index=True)  # 0-100
+
+    # ── optional CRM enrichment (fail-soft; never a dependency) ────────────
+    crm_source = Column(String, default="")
+    crm_id = Column(String, default="")
+    crm_company = Column(String, default="")
+    crm_stage = Column(String, default="")
+    crm_owner = Column(String, default="")
+    crm_checked_at = Column(DateTime)
+    crm_status = Column(String, default="")  # ok | not_connected | not_found | error | unsupported
+
+    # ── user overrides — always win over inference ─────────────────────────
+    pinned = Column(Boolean, nullable=False, default=False)
+    muted = Column(Boolean, nullable=False, default=False)
+    notes = Column(Text, default="")
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "domain": self.domain or "",
+            "display_name": self.display_name or "",
+            "is_internal": bool(self.is_internal),
+            "thread_count": int(self.thread_count or 0),
+            "msg_in_count": int(self.msg_in_count or 0),
+            "msg_out_count": int(self.msg_out_count or 0),
+            "your_reply_rate": int(self.your_reply_rate or 0),
+            "their_reply_rate": int(self.their_reply_rate or 0),
+            "your_median_reply_h": self.your_median_reply_h,
+            "their_median_reply_h": self.their_median_reply_h,
+            "relationship": self.relationship or "unknown",
+            "relationship_source": self.relationship_source or "inferred",
+            "importance": int(self.importance or 0),
+            "pinned": bool(self.pinned),
+            "muted": bool(self.muted),
+            "crm": {
+                "source": self.crm_source or "",
+                "company": self.crm_company or "",
+                "stage": self.crm_stage or "",
+                "status": self.crm_status or "",
+            },
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+        }
+
+    def __repr__(self):
+        return f"<Counterparty {self.email} importance={self.importance} rel={self.relationship}>"
+
+
 class UserIntegration(Base):
     """User-connected integrations (OAuth, API keys). Kept — the integrations
     layer + workflow runtime use it."""

@@ -37,6 +37,7 @@ from backend.services.triage import classify_email, TIER_RANK
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile
 from backend.services import ledger
+from backend.services import counterparty
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
 from backend.integrations import notify
@@ -171,19 +172,26 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
         .all()
     )
 
-    # Behavioral VIPs from the learned communication profile: surface mail from the
-    # people the user actually corresponds with, even without an explicit rule.
-    prof = get_profile(db, user_id)
-    if prof:
-        for v in (prof.vip_senders or [])[:5]:
-            email = (v.get("email") or "").strip()
-            if email:
-                rules.append({
-                    "name": f"Frequent contact {email}",
-                    "kind": "vip_sender",
-                    "value": email,
-                    "tier": "needs_reply",
-                })
+    # Surface mail from the people it would cost the user to ignore, even with no
+    # explicit rule. This used to be the top five `vip_senders` — a frequency
+    # list, which ranks a daily newsletter above a client who writes monthly.
+    # Counterparties rank by revealed preference instead (do you reply, how fast,
+    # over how many threads), derived from the ledger with no extra API calls.
+    rules.extend(counterparty.triage_rules_for(db, user_id))
+    if not rules:
+        # Nothing learned yet — fall back to the profile's VIP list so a brand-new
+        # install still surfaces the obvious people on its very first scans.
+        prof = get_profile(db, user_id)
+        if prof:
+            for v in (prof.vip_senders or [])[:5]:
+                email = (v.get("email") or "").strip()
+                if email:
+                    rules.append({
+                        "name": f"Frequent contact {email}",
+                        "kind": "vip_sender",
+                        "value": email,
+                        "tier": "needs_reply",
+                    })
 
     run = models.ScanRun(user_id=user_id)
 
@@ -337,6 +345,14 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
             alert.slack_sent = True  # reused as the "notified" flag
             notified += 1
     db.commit()
+
+    # 3.5) Refresh who matters from the ledger we just extended. Pure SQL — no
+    #      Gmail calls, no LLM calls — so it can ride along with every scan and
+    #      the ranking is never stale by more than one interval.
+    try:
+        counterparty.recompute(db, user_id)
+    except Exception as e:  # noqa: BLE001 — ranking is an optimisation, not the job
+        logger.info(f"counterparty recompute skipped: {type(e).__name__}: {e}")
 
     # 4) Cleanup counts + finalize the run.
     try:
