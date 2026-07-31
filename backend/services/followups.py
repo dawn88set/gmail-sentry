@@ -493,3 +493,48 @@ def mark_ignored(db: Session, fu: models.FollowUp) -> models.FollowUp:
     fu.closed_at = ledger.utcnow()
     db.commit()
     return fu
+
+
+def apply_asks(db: Session, user_id: str, asks: Dict[str, Dict[str, Any]]) -> int:
+    """Attach the asks extracted during triage to their threads' loops.
+
+    Called after `sync_followups` so the rows exist. An ask only ever moves
+    forward — a newer message's ask replaces an older one, but a thread that
+    already has an ask isn't blanked by a later message that asks nothing.
+    """
+    from backend.services.triage import resolve_due
+
+    if not asks:
+        return 0
+    rows = (
+        db.query(models.FollowUp)
+        .filter(
+            models.FollowUp.user_id == user_id,
+            models.FollowUp.thread_id.in_(list(asks.keys())),
+        )
+        .all()
+    )
+    now = ledger.utcnow()
+    updated = 0
+    for fu in rows:
+        payload = asks.get(fu.thread_id) or {}
+        ask = (payload.get("ask") or "").strip()
+        if not ask:
+            continue
+        fu.ask_summary = ask[:280]
+        fu.ask_confidence = int(payload.get("confidence") or 0)
+
+        due = resolve_due(payload.get("due") or "", now=now)
+        if due is not None:
+            fu.due_at = due
+            fu.due_source = "explicit"
+            # An explicit deadline tightens the clock — see stale_after_hours_for.
+            fu.stale_after_hours = min(
+                int(fu.stale_after_hours or DEFAULT_STALE_HOURS),
+                max(1, int((due - now).total_seconds() // 3600)) if due > now else 1,
+            )
+        fu.risk = risk_score(fu, now=now)
+        updated += 1
+    if updated:
+        db.commit()
+    return updated

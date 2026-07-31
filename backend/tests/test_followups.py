@@ -445,3 +445,49 @@ def test_a_known_important_person_still_outranks_an_unranked_one():
     vip = db.query(models.FollowUp).filter_by(thread_id="t-vip").one()
     unknown = db.query(models.FollowUp).filter_by(thread_id="t-unknown").one()
     assert vip.risk > unknown.risk
+
+
+# ── the ask ─────────────────────────────────────────────────────────────────
+
+def test_the_ask_is_what_a_row_actually_says():
+    """A follow-up row's payload. "Re: Q3" tells you nothing; the ask tells you
+    what to do without opening the email."""
+    db = _session()
+    msg(db, "u1", "t1", "in", ago_h=3, sender="Dana <dana@northwind.co>", subject="Re: Q3")
+    fu_service.sync_followups(db, "u1")
+
+    fu_service.apply_asks(db, "u1", {
+        "t1": {"ask": "Needs the revised quote before Friday", "confidence": 80, "due": ""},
+    })
+
+    fu = db.query(models.FollowUp).one()
+    assert fu.ask_summary == "Needs the revised quote before Friday"
+    assert fu.ask_confidence == 80
+
+
+def test_an_explicit_deadline_tightens_the_loops_clock():
+    db = _session()
+    a_counterparty(db, "u1", "dana@northwind.co", median_reply_h=100)
+    msg(db, "u1", "t1", "in", ago_h=1, sender="Dana <dana@northwind.co>")
+    fu_service.sync_followups(db, "u1")
+    loose = db.query(models.FollowUp).one().stale_after_hours
+
+    fu_service.apply_asks(db, "u1", {
+        "t1": {"ask": "Sign the contract", "confidence": 90, "due": "tomorrow"},
+    })
+
+    fu = db.query(models.FollowUp).one()
+    assert fu.due_at is not None and fu.due_source == "explicit"
+    assert fu.stale_after_hours < loose
+
+
+def test_an_empty_ask_never_blanks_an_existing_one():
+    """A later message that asks nothing shouldn't erase what we knew."""
+    db = _session()
+    msg(db, "u1", "t1", "in", ago_h=3, sender="Dana <dana@northwind.co>")
+    fu_service.sync_followups(db, "u1")
+    fu_service.apply_asks(db, "u1", {"t1": {"ask": "Send the deck", "confidence": 70, "due": ""}})
+
+    fu_service.apply_asks(db, "u1", {"t1": {"ask": "", "confidence": 0, "due": ""}})
+
+    assert db.query(models.FollowUp).one().ask_summary == "Send the deck"

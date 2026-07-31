@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { ShieldCheck, RefreshCw, Megaphone, Users, Ban, Bell } from 'lucide-react';
+import { ShieldCheck, RefreshCw, Megaphone, Users, Ban, Bell, Repeat2 } from 'lucide-react';
 import { EmptyState } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { AnimatedNumber } from '@/components/AnimatedNumber';
@@ -21,9 +21,11 @@ import {
   getRecentScans,
   getRequiredIntegrations,
   getOnboardingStatus,
+  getFollowUps,
   runScan,
   toApiError,
   type Alert,
+  type FollowUpCounts,
   type CleanupCounts,
   type SentryConfig,
   type ScanRunItem,
@@ -72,6 +74,7 @@ export default function Dashboard() {
   const [cleanup, setCleanup] = useState<CleanupCounts | null>(null);
   const [config, setConfig] = useState<SentryConfig | null>(null);
   const [recentScans, setRecentScans] = useState<ScanRunItem[]>([]);
+  const [loops, setLoops] = useState<FollowUpCounts | null>(null);
   const [integrations, setIntegrations] = useState<RequiredIntegration[]>([]);
   const [appId, setAppId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,6 +115,11 @@ export default function Dashboard() {
     // Recent scan runs — so the actual cadence (platform-owned) is visible.
     getRecentScans()
       .then((r) => setRecentScans(r.runs || []))
+      .catch(() => undefined);
+    // Thread-level open loops — the other half of "what needs you". Soft-fails:
+    // a missing loop count shouldn't blank the whole dashboard.
+    getFollowUps('open')
+      .then((d) => setLoops(d.counts))
       .catch(() => undefined);
   }, [show]);
 
@@ -199,7 +207,7 @@ export default function Dashboard() {
       </AnimatePresence>
 
       <Screen
-        title="Inbox"
+        title="Today"
         action={
           <IosButton
             variant="tinted"
@@ -308,6 +316,33 @@ export default function Dashboard() {
         )}
 
         {/* Cleanup — tap a category to see exactly what's there before clearing */}
+        {/* Open loops — the thread-level half of "what needs you". Kept as its
+            own section next to the alerts rather than merged into one feed: the
+            two have different primary verbs (answer a message vs chase a
+            silence), so a merged list makes the next tap unpredictable. */}
+        {loops && loops.open_loops > 0 && (
+          <ListSection title="Open loops">
+            <ListGroup variant="plain-mobile">
+              <ListRow
+                onClick={() => navigate('/followups')}
+                className="py-4"
+                leading={
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                    <Repeat2 className="h-5 w-5" />
+                  </span>
+                }
+                title={
+                  <span className="block text-[15px] font-semibold text-foreground">
+                    {loops.open_loops} open loop{loops.open_loops === 1 ? '' : 's'}
+                  </span>
+                }
+                subtitle={`${loops.owed} to answer · ${loops.waiting} awaiting reply · ${loops.cold} going cold`}
+                chevron
+              />
+            </ListGroup>
+          </ListSection>
+        )}
+
         <ListSection title="Clear the noise" footer="Tap a category to review what will be cleared. Clear all moves the whole category to Trash (recoverable 30 days), in batches.">
           <ListGroup variant="plain-mobile">
             {CATEGORIES.map(({ key, label, field, Icon }) => {

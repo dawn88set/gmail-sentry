@@ -8,13 +8,21 @@ deterministic heuristic when the proxy isn't configured (local dev / CI) or the
 call fails — so the Sentry always produces a result, never a hard error.
 
 Tiers: "urgent" > "needs_reply" > "fyi".
+
+It also extracts the ASK — one line saying what the sender actually wants —
+and any explicit deadline. Those ride along in the same model call that was
+already being made, so they cost ~60% more output tokens on a call we make
+~97% less often since the ledger landed. The ask is what makes a follow-up
+row worth reading: "Re: Q3" tells you nothing, "needs the revised quote by
+Friday" tells you everything.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +67,75 @@ def _matches_rule(kind: str, value: str, sender: str, subject: str, snippet: str
     return False
 
 
+#: Explicit deadline phrasings we can resolve without a model.
+_DUE_CUES = re.compile(
+    r"\b(?:by|before|due(?:\s+(?:on|by))?)\s+"
+    r"(today|tomorrow|eod|end of day|monday|tuesday|wednesday|thursday|friday|"
+    r"saturday|sunday|next week|\d{1,2}/\d{1,2}(?:/\d{2,4})?|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2})\b",
+    re.IGNORECASE,
+)
+
+_DAY_OFFSETS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+
+def _sentences(text: str) -> List[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
+
+
+def extract_ask(subject: str, snippet: str) -> str:
+    """The first sentence that actually asks for something, trimmed to one line.
+
+    Deterministic counterpart to the model's `ask`. Deliberately conservative:
+    returns "" rather than guessing, because a wrong one-line summary on a
+    follow-up row is worse than none — the user acts on it.
+    """
+    for sentence in _sentences(snippet) + _sentences(subject):
+        if _ACTION_CUES.search(sentence) or _URGENT_CUES.search(sentence):
+            one_line = " ".join(sentence.split())
+            return one_line[:117] + "…" if len(one_line) > 118 else one_line
+    return ""
+
+
+def resolve_due(raw: str, *, now: Optional[datetime] = None) -> Optional[datetime]:
+    """Turn an extracted deadline into a datetime. None when we can't be sure.
+
+    Anything ambiguous returns None on purpose: a fabricated deadline would make
+    the app chase people early, which is the failure mode users don't forgive.
+    """
+    raw = (raw or "").strip().lower()
+    if not raw:
+        return None
+    ref = now or datetime.utcnow()
+    end_of = ref.replace(hour=17, minute=0, second=0, microsecond=0)
+
+    if raw in ("today", "eod", "end of day"):
+        return end_of
+    if raw == "tomorrow":
+        return end_of + timedelta(days=1)
+    if raw == "next week":
+        return end_of + timedelta(days=7)
+    if raw in _DAY_OFFSETS:
+        delta = (_DAY_OFFSETS[raw] - ref.weekday()) % 7
+        return end_of + timedelta(days=delta or 7)
+
+    # ISO-ish, from the model path.
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dt%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw[:19], fmt)
+        except ValueError:
+            pass
+    # d/m or m/d — genuinely ambiguous across locales, so we decline to guess.
+    return None
+
+
 def heuristic_classify(
     rules: List[Dict[str, Any]], sender: str, subject: str, snippet: str
 ) -> Dict[str, Any]:
-    """Deterministic, no-LLM triage. Returns {tier, reason, matched_rules}."""
+    """Deterministic, no-LLM triage. Returns {tier, reason, matched_rules, ask, due}."""
     matched: List[str] = []
     best_tier = "fyi"
 
@@ -89,7 +162,20 @@ def heuristic_classify(
         reason = "Matched: " + ", ".join(dict.fromkeys(matched))
     else:
         reason = "No urgency signals matched"
-    return {"tier": best_tier, "reason": reason, "matched_rules": list(dict.fromkeys(matched))}
+
+    ask = extract_ask(subject, snippet)
+    due_match = _DUE_CUES.search(text)
+    return {
+        "tier": best_tier,
+        "reason": reason,
+        "matched_rules": list(dict.fromkeys(matched)),
+        "ask": ask,
+        # Low by construction — a regex found a phrase, it didn't understand the
+        # email. The UI can show the ask while letting the user correct it.
+        "ask_confidence": 45 if ask else 0,
+        "due": due_match.group(1) if due_match else "",
+        "expects_reply": bool(ask) or TIER_RANK[best_tier] > TIER_RANK["fyi"],
+    }
 
 
 def _build_prompt(rules: List[Dict[str, Any]], sender: str, subject: str, snippet: str) -> str:
@@ -113,9 +199,17 @@ def _build_prompt(rules: List[Dict[str, Any]], sender: str, subject: str, snippe
         f"From: {sender}\n"
         f"Subject: {subject}\n"
         f"Body preview: {snippet}\n\n"
+        "Also extract what the sender is ASKING the user to do, as one short "
+        "line the user could act on without opening the email — 'needs the "
+        "revised quote by Friday', not 'Re: Q3'. If nothing is being asked, "
+        'return an empty string rather than inventing one.\n\n'
         'Respond with ONLY a JSON object: '
         '{"tier": "urgent|needs_reply|fyi", "reason": "<one short sentence>", '
-        '"matched_rules": ["<rule names that applied>"]}'
+        '"matched_rules": ["<rule names that applied>"], '
+        '"ask": "<one line, max 100 chars, or empty>", '
+        '"ask_confidence": <0-100>, '
+        '"due": "<YYYY-MM-DD if an explicit deadline is stated, else empty>", '
+        '"expects_reply": true|false}'
     )
 
 
@@ -140,7 +234,7 @@ def classify_email(
         result = client.chat(
             [{"role": "user", "content": _build_prompt(rules, sender, subject, snippet)}],
             temperature=0.0,
-            max_tokens=200,
+            max_tokens=320,  # the ask + due fields grew the contract
             system=(
                 "You are an inbox triage assistant. You are precise and conservative: "
                 "only mark something urgent when it truly needs attention now."
@@ -152,7 +246,21 @@ def classify_email(
         matched = parsed.get("matched_rules") or []
         if not isinstance(matched, list):
             matched = [str(matched)]
-        return {"tier": tier, "reason": reason, "matched_rules": matched, "source": "ai"}
+        ask = " ".join(str(parsed.get("ask") or "").split())[:180]
+        try:
+            confidence = max(0, min(100, int(parsed.get("ask_confidence") or 0)))
+        except (TypeError, ValueError):
+            confidence = 0
+        return {
+            "tier": tier,
+            "reason": reason,
+            "matched_rules": matched,
+            "ask": ask,
+            "ask_confidence": confidence if ask else 0,
+            "due": str(parsed.get("due") or "").strip(),
+            "expects_reply": bool(parsed.get("expects_reply", TIER_RANK[tier] > 0)),
+            "source": "ai",
+        }
     except Exception as e:  # unconfigured proxy, 402 budget, parse error, etc.
         logger.info(f"triage: falling back to heuristic ({e})")
         out = heuristic_classify(rules, sender, subject, snippet)

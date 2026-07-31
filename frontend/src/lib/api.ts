@@ -189,7 +189,15 @@ export interface WidgetAlert {
 export interface WidgetData {
   urgent_count: number;
   needs_reply_count: number;
+  /** Now also requires the open loops to be closed — "nothing needs you" while
+   *  a customer has waited nine days would be a lie. */
   all_clear: boolean;
+  /** Thread-level open loops. Same field the app's hero number uses, so the
+   *  widget and the app can never disagree. */
+  open_loops?: number;
+  owed_count?: number;
+  waiting_count?: number;
+  cold_count?: number;
   last_scan: string;
   top_alerts: WidgetAlert[];
   cleanup: { promo: number; social: number; spam: number };
@@ -477,3 +485,65 @@ export const learnProfile = async (): Promise<CommProfile> =>
   (await api.post('/api/profile/learn')).data;
 
 export default api;
+
+// ── Follow-ups: thread-level open loops ─────────────────────────────────────
+// An Alert is one MESSAGE that needs your eyes now. A FollowUp is one THREAD
+// with an unresolved loop — it outlives the alert, which is why sending a reply
+// moves it to `awaiting_them` rather than ending it.
+export type FollowUpState =
+  | 'awaiting_you'
+  | 'awaiting_them'
+  | 'going_cold'
+  | 'snoozed'
+  | 'done'
+  | 'ignored';
+
+export interface FollowUp {
+  id: string;
+  thread_id: string;
+  counterparty_email: string;
+  counterparty_name: string;
+  subject: string;
+  state: FollowUpState;
+  ball: 'you' | 'them';
+  /** One line saying what's actually being asked — the payload of a row. */
+  ask_summary: string;
+  due_at: string | null;
+  due_source: string;
+  last_inbound_at: string | null;
+  last_outbound_at: string | null;
+  last_activity_at: string | null;
+  /** How long silence is normal for THIS person, from their own reply habits. */
+  stale_after_hours: number;
+  importance: number;
+  risk: number;
+  nudge_count: number;
+  snoozed_until: string | null;
+  closed_reason: string;
+}
+
+export interface FollowUpCounts {
+  owed: number;
+  waiting: number;
+  cold: number;
+  open_loops: number;
+}
+
+export type FollowUpFilter = 'open' | 'owed' | 'waiting' | 'cold' | 'snoozed' | 'done' | 'all';
+
+export const getFollowUps = async (
+  state: FollowUpFilter = 'open',
+): Promise<{ followups: FollowUp[]; counts: FollowUpCounts }> =>
+  (await api.get('/api/followups', { params: { state } })).data;
+
+export const snoozeFollowUp = async (id: string, hours: number) =>
+  (await api.post(`/api/followups/${id}/snooze`, { hours })).data;
+
+export const doneFollowUp = async (id: string) =>
+  (await api.post(`/api/followups/${id}/done`)).data;
+
+export const ignoreFollowUp = async (id: string) =>
+  (await api.post(`/api/followups/${id}/ignore`)).data;
+
+export const syncFollowUps = async (): Promise<{ counts: FollowUpCounts }> =>
+  (await api.post('/api/followups/sync')).data;

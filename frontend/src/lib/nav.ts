@@ -1,4 +1,4 @@
-import { Inbox, SlidersHorizontal } from 'lucide-react';
+import { Home, Repeat2, Bell, SlidersHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -14,6 +14,11 @@ export interface NavItem {
  * destination in one place silently left the others behind.
  */
 export const NAV_ITEMS: NavItem[] = [
-  { name: 'Inbox', href: '/', icon: Inbox },
+  // "Today", not "Inbox": next to Follow-ups, "Inbox" reads as a competing list
+  // when it's actually the composed view of everything that needs the user.
+  { name: 'Today', href: '/', icon: Home },
+  { name: 'Follow-ups', href: '/followups', icon: Repeat2 },
+  // Finally reachable — /attention was an orphan route with no way in.
+  { name: 'Attention', href: '/attention', icon: Bell },
   { name: 'Rules', href: '/rules', icon: SlidersHorizontal },
 ];

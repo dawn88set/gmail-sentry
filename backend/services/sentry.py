@@ -226,6 +226,8 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
 
     muted = [m.lower() for m in (cfg.muted_senders or []) if m]
     scanned = flagged = labeled = notified = 0
+    #: thread_id → the ask extracted for it this run, applied after the loops sync.
+    _asks: Dict[str, Dict[str, Any]] = {}
     new_alerts: List[models.Alert] = []
 
     for msg in candidates:
@@ -308,6 +310,17 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
         flagged += 1
         new_alerts.append(alert)
 
+        # Carry the extracted ask onto the thread's open loop, so a follow-up row
+        # reads "needs the revised quote by Friday" rather than "Re: Q3". Cost
+        # nothing extra — it rode along in the triage call we already made.
+        ask = (verdict.get("ask") or "").strip()
+        if ask and msg.thread_id:
+            _asks[msg.thread_id] = {
+                "ask": ask[:280],
+                "confidence": int(verdict.get("ask_confidence") or 0),
+                "due": (verdict.get("due") or "").strip(),
+            }
+
     # Persist alerts before notifying so they have ids.
     db.commit()
 
@@ -362,6 +375,8 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
     try:
         followups.close_alerts_replied_elsewhere(db, user_id)
         followups.sync_followups(db, user_id)
+        if _asks:
+            followups.apply_asks(db, user_id, _asks)
     except Exception as e:  # noqa: BLE001 — follow-ups must never fail a scan
         logger.info(f"follow-up sync skipped: {type(e).__name__}: {e}")
 

@@ -24,7 +24,9 @@ import {
 const BASE = process.env.AUDIT_BASE_URL || 'http://localhost:3200';
 
 // Full-app routes to audit. Extend as the app grows (e.g. '/settings').
-const PAGES = ['/'];
+// Scored with NO backend, so each of these is graded on its empty/error
+// rendering — which is exactly the state a new user sees first.
+const PAGES = ['/', '/followups', '/attention'];
 const THEMES = ['light', 'dark'] as const;
 const VIEWPORTS = [
   { name: 'desktop', w: 1280, h: 900 },
