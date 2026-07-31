@@ -53,13 +53,20 @@ jobs:
 
       - name: Wait for backend
         run: |
-          echo "Waiting for backend to be healthy..."
+          # Probe a real API route, NOT /health. nginx answers /health itself
+          # with a static `return 200 "OK"` (see the Dockerfile's nginx.conf), so
+          # it goes green the moment nginx binds — before uvicorn is listening.
+          # Every /api/ request that followed then 502'd. Anything under /api/
+          # is actually proxied to the Python process, so it reflects readiness.
+          echo "Waiting for the API to answer..."
           for i in {1..60}; do
-            if curl -f http://localhost:3200/health; then
-              echo "Backend is healthy!"
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "X-User-ID: ci-probe" http://localhost:3200/api/widget?size=small || true)
+            if [ "$code" = "200" ]; then
+              echo "API is up (HTTP $code)"
               exit 0
             fi
-            echo "Attempt $i/60, waiting 2s..."
+            echo "Attempt $i/60 (HTTP ${code:-none}), waiting 2s..."
             sleep 2
           done
           echo "Backend failed to start"
@@ -263,8 +270,12 @@ jobs:
 
       - name: Wait for backend
         run: |
+          # See the note in the deployment job: /health is served by nginx and
+          # says nothing about whether the Python process is up yet.
           for i in {1..30}; do
-            if curl -f http://localhost:3200/health; then
+            code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "X-User-ID: ci-probe" http://localhost:3200/api/widget?size=small || true)
+            if [ "$code" = "200" ]; then
               exit 0
             fi
             sleep 2
