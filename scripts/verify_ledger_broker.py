@@ -7,12 +7,33 @@ only partly pins down. Three of its assumptions are load-bearing, and one is a
 known-degraded path. This script checks all four against a REAL connected Gmail
 account, so they're facts rather than hopes.
 
-Run it once Gmail is connected for the user, with the platform env set:
+Prerequisites (all four, or every probe returns NOT_CONNECTED):
 
-    CLARITTY_PLATFORM_URL=... CLARITTY_AUTH_TOKEN=... \\
-    DATABASE_URL=... python3 scripts/verify_ledger_broker.py [user_id]
+    CLARITTY_PLATFORM_URL=https://api.claritty.ai
+    CLARITY_INTERNAL_SECRET=<platform master — "ask a platform admin">
+    CLARITTY_APP_ID=<this app's id, e.g. from .claritty.json>
+    CLARITY_APP_INTEGRATION_SECRET=<HMAC-SHA256(master, appId), hex>
 
-Nothing here writes to the mailbox — it is read-only.
+    python3 scripts/verify_ledger_broker.py <platform-user-uuid>
+
+Three things this got wrong before, each of which silently wastes a run:
+
+* **Not `CLARITTY_AUTH_TOKEN`.** That is the LLM-proxy bearer;
+  `backend/shared/adapters.execute_tool` never reads it. The broker wants
+  `CLARITY_INTERNAL_SECRET`.
+* **Not `dev-user`.** The platform scopes credentials per (user, app) with no
+  user-level fallback, so this needs the real platform user UUID —
+  `GET /api/cli/me` with your CLI session returns it. Gmail must be connected
+  for THIS app id, not merely for your account.
+* **`CLARITY_APP_INTEGRATION_SECRET` is not optional against a current broker.**
+  `assertBrokerCaller` requires `X-Claritty-App-Secret` and
+  `BROKER_STRICT_APP_IDENTITY` defaults to strict, so an unproven caller gets
+  403 "app identity not proven" — see docs/publishing-status.md. Note that
+  `execute_tool` does not currently send that header at all, so a 403 here is a
+  finding about the seed, not about your setup.
+
+No DATABASE_URL is needed: `gmail_ops` ignores the session it is handed, and
+SQLAlchemy connects lazily. Nothing here writes to the mailbox — all reads.
 
 What it checks
 --------------
@@ -60,7 +81,18 @@ def _epoch(dt: datetime) -> int:
 
 
 def main() -> int:
-    user_id = sys.argv[1] if len(sys.argv) > 1 else os.getenv("VERIFY_USER_ID", "dev-user")
+    user_id = sys.argv[1] if len(sys.argv) > 1 else os.getenv("VERIFY_USER_ID", "")
+    if not user_id or user_id == "dev-user":
+        # Defaulting to "dev-user" made this look like it ran and found nothing
+        # connected, when really it asked about a user that doesn't exist on the
+        # platform. Refuse rather than produce a confidently wrong answer.
+        print(
+            f"  {BAD} Pass your PLATFORM USER UUID, not a local dev id.\n"
+            "     Credentials are scoped per (user, app) with no user-level\n"
+            "     fallback, so 'dev-user' can only ever report not-connected.\n"
+            "     Get it from GET /api/cli/me with your CLI session."
+        )
+        return 2
     db = SessionLocal()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     print(f"\nverifying broker assumptions for user={user_id}\n")
