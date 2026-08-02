@@ -24,9 +24,25 @@ failing since 2026-07-20. Along the way I deployed one exact commit
 | 18:03 | failed |
 | 18:24 | failed (after a 13-minute cooldown) |
 
-**It is not only the draft path.** At 18:45 the app owner clicked **Publish to
-live** in your UI — a different action, a different code path, not the CLI — and
-it failed with the same string after ~2 minutes of "Building image":
+**It is not any one path — it is all three.**
+
+| path | how it was triggered | result |
+|---|---|---|
+| draft build | `claritty deploy` on the existing app | fails |
+| publish to live | **your UI**, "Publish to live" button | fails |
+| first upload of a NEW app | `claritty deploy` after unbinding + renaming | fails |
+
+That last one matters most: a brand-new app (`0e6382d1-cd68-41a1-8690-479a475573cc`,
+"Inbox Sentry", created 19:09 UTC) has no draft, no prior deployment and no
+history of any kind, and it still ends at `validationStatus: VALIDATION_FAILED`
+with `failureReason: null` and `validationErrors: []`. Nothing about my app's
+existing state can explain a fresh app failing, and there is no error text
+anywhere in the API for me to act on. (Please feel free to delete that app —
+it's a stray from this test.)
+
+At 18:45 the app owner clicked **Publish to live** in your UI — a different
+action, a different code path, not the CLI — and it failed with the same string
+after ~2 minutes of "Building image":
 
 ```
 13:46:42 (local)  Publish failed: Build failed. Please check that your app builds
