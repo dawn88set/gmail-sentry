@@ -335,6 +335,7 @@ def recompute(db: Session, user_id: str, *, limit_threads: int = 4000) -> int:
             )
             .first()
         )
+        first_time = cp is None
         if cp is None:
             cp = models.Counterparty(user_id=user_id, email=email)
             db.add(cp)
@@ -378,14 +379,24 @@ def recompute(db: Session, user_id: str, *, limit_threads: int = 4000) -> int:
         # person's mail is filed into AND how long their silence is tolerated
         # before a thread counts as cold. Doing that silently means the user
         # can't correct it, because they never learn it happened.
-        if cp.relationship != was and was != UNKNOWN:
+        #
+        # The gate is "was this row already here", NOT "was it previously
+        # unknown". Skipping every unknown→X transition looked like it avoided
+        # noise, but unknown is where nearly all real reclassifications START:
+        # a contact sits unclassified for weeks, then enough evidence arrives to
+        # call them a client, and that is exactly the moment worth telling
+        # someone about. Keying on newness silences only the first sweep, which
+        # is the one that would genuinely flood the feed.
+        if cp.relationship != was and not first_time:
             activity.record(
                 db, user_id, "relationship_changed",
                 f"{cp.display_name or email} looks like a "
                 f"{_REL_WORD.get(cp.relationship, cp.relationship)} now",
                 detail=(
-                    f"Was {_REL_WORD.get(was, was)}. This changes where their mail is "
-                    "filed and how long silence is normal — correct it on the People "
+                    ("Enough back-and-forth to tell. " if was == UNKNOWN
+                     else f"Previously a {_REL_WORD.get(was, was)}. ")
+                    + "This changes where their mail is filed and how long silence is "
+                    "normal before a thread counts as cold — correct it on the People "
                     "screen if it’s wrong."
                 ),
                 subject_type="counterparty", subject_id=cp.id or "",

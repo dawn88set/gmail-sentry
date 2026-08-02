@@ -441,7 +441,9 @@ def close_alerts_replied_elsewhere(db: Session, user_id: str, *, now: Optional[d
             # it. Saying so out loud is the difference.
             activity.record(
                 db, user_id, "alert_auto_closed",
-                f"Closed — you already replied to {alert.sender or 'this'}",
+                # short_sender, not the raw header — "Dana Levi", not
+                # "Dana Levi <dana@northwind.co>".
+                f"Closed — you already replied to {activity.short_sender(alert.sender or '') if alert.sender else 'this'}",
                 detail=alert.subject or "",
                 subject_type="alert", subject_id=alert.id,
                 counterparty_email=alert.sender or "", at=ref,

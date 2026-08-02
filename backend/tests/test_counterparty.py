@@ -333,3 +333,40 @@ def test_an_inbound_led_client_gets_a_filing_folder():
     )
     from backend.services import filing
     assert filing.folder_for_thread(person, "Q3 quote")[0] == "Clients/Northwind"
+
+
+def test_becoming_classifiable_is_recorded_for_an_existing_contact():
+    """unknown → client is where nearly all real reclassifications START: a
+    contact sits unclassified for weeks, then enough evidence arrives. Gating on
+    "was it unknown" silenced exactly the moment worth reporting."""
+    db = _session()
+    st = models.ThreadSyncState(user_id="u1", self_domain="mybiz.co")
+    db.add(st)
+    seq = 0
+    for i in range(4):
+        for direction in ("in", "out"):
+            seq += 1
+            ts = utcnow() - timedelta(days=3 + i, hours=0 if direction == "in" else -1)
+            db.add(models.ThreadMessage(
+                user_id="u1", gmail_message_id=f"m{seq}", thread_id=f"t{i}",
+                direction=direction, ts_lo=ts, ts_hi=ts, hydrated=True,
+                sender=("Priya <priya@acme.io>" if direction == "in" else "me@mybiz.co"),
+                counterparty_email="priya@acme.io", subject="Contract"))
+    db.commit()
+
+    cp.recompute(db, "u1")                       # first sweep — creates the row
+    created = db.query(models.ActivityEvent).filter_by(
+        user_id="u1", kind="relationship_changed").count()
+    assert created == 0, "the first sweep must not flood the feed"
+
+    person = db.query(models.Counterparty).filter_by(user_id="u1").one()
+    person.relationship = cp.UNKNOWN             # as if we couldn't tell before
+    db.commit()
+
+    cp.recompute(db, "u1")                       # now it can tell
+
+    evs = db.query(models.ActivityEvent).filter_by(
+        user_id="u1", kind="relationship_changed").all()
+    assert len(evs) == 1, "an established contact becoming classifiable is news"
+    assert "filed" in evs[0].detail and "cold" in evs[0].detail, \
+        "must say what the reclassification actually changes"

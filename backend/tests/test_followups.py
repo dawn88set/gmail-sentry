@@ -522,3 +522,23 @@ def test_an_outbound_only_thread_still_resolves_the_address():
 
     fu = db.query(models.FollowUp).one()
     assert fu.counterparty_email == "dana@northwind.co"
+
+
+def test_the_auto_close_event_names_a_person_not_a_header():
+    """"Dana Levi", not "Dana Levi <dana@northwind.co>"."""
+    db = _session()
+    msg(db, "u1", "t1", "in", ago_h=4, sender="Dana Levi <dana@northwind.co>", subject="Q3")
+    alert = models.Alert(
+        user_id="u1", gmail_message_id="a1", thread_id="t1",
+        sender="Dana Levi <dana@northwind.co>", subject="Q3",
+        tier="needs_reply", status="new", created_at=utcnow() - timedelta(hours=4),
+    )
+    db.add(alert)
+    db.commit()
+    msg(db, "u1", "t1", "out", ago_h=1, sender="dana@northwind.co")
+
+    assert fu_service.close_alerts_replied_elsewhere(db, "u1") == 1
+
+    ev = db.query(models.ActivityEvent).filter_by(user_id="u1", kind="alert_auto_closed").one()
+    assert "Dana Levi" in ev.title
+    assert "<" not in ev.title and "@" not in ev.title
