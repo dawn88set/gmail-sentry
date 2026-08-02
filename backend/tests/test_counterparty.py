@@ -274,3 +274,62 @@ def test_empty_ledger_is_a_no_op():
     db = _session()
     assert cp.recompute(db, "u1") == 0
     assert cp.triage_rules_for(db, "u1") == []
+
+
+# ── inbound-led relationships ───────────────────────────────────────────────
+#
+# `their_reply_rate` is measured over threads YOU started. When you never
+# started one it's undefined, not zero — and reading it as zero left anyone who
+# always writes first permanently `unknown`, which means no filing folder. That
+# is the ordinary shape of an inbound-led business.
+
+def test_someone_who_always_writes_first_can_still_be_a_client():
+    person = models.Counterparty(
+        email="dana@northwind.co", domain="northwind.co",
+        thread_count=5, your_reply_rate=100, their_reply_rate=0,
+    )
+    assert cp.infer_relationship(
+        person, vendor_hint=False, you_ever_started=False,
+    ) == cp.CUSTOMER
+
+
+def test_one_polite_reply_to_a_stranger_is_not_a_relationship():
+    """A folder per stranger would be worse than no filing at all."""
+    person = models.Counterparty(
+        email="someone@elsewhere.com", domain="elsewhere.com",
+        thread_count=1, your_reply_rate=100, their_reply_rate=0,
+    )
+    assert cp.infer_relationship(
+        person, vendor_hint=False, you_ever_started=False,
+    ) == cp.UNKNOWN
+
+
+def test_mail_you_never_answer_stays_unknown_however_much_arrives():
+    person = models.Counterparty(
+        email="loud@vendor.com", domain="vendor.com",
+        thread_count=40, your_reply_rate=0, their_reply_rate=0,
+    )
+    assert cp.infer_relationship(
+        person, vendor_hint=False, you_ever_started=False,
+    ) == cp.UNKNOWN
+
+
+def test_the_two_way_rules_are_unchanged_when_you_did_start_threads():
+    person = models.Counterparty(
+        email="lead@acme.io", domain="acme.io",
+        thread_count=2, your_reply_rate=50, their_reply_rate=80,
+    )
+    assert cp.infer_relationship(person, vendor_hint=False) == cp.PROSPECT
+
+
+def test_an_inbound_led_client_gets_a_filing_folder():
+    """The point of the fix: unclassified means unfiled."""
+    person = models.Counterparty(
+        email="dana@northwind.co", domain="northwind.co",
+        thread_count=5, your_reply_rate=100, their_reply_rate=0,
+    )
+    person.relationship = cp.infer_relationship(
+        person, vendor_hint=False, you_ever_started=False,
+    )
+    from backend.services import filing
+    assert filing.folder_for_thread(person, "Q3 quote")[0] == "Clients/Northwind"

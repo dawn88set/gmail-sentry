@@ -205,11 +205,32 @@ def importance_score(cp: models.Counterparty, *, two_way_recently: bool) -> int:
     return max(0, min(100, int(round(score))))
 
 
-def infer_relationship(cp: models.Counterparty, *, vendor_hint: bool) -> str:
+#: Threads they started and you answered before an inbound-led correspondent
+#: counts as a real relationship. Three separate conversations is a pattern; one
+#: is a stranger you were polite to.
+INBOUND_LED_THREADS = 3
+
+
+def infer_relationship(
+    cp: models.Counterparty,
+    *,
+    vendor_hint: bool,
+    you_ever_started: bool = True,
+) -> str:
     """Deterministic classification. Returns `unknown` rather than guessing.
 
     User and CRM classifications are never overwritten — inference only fills in
     what nobody has stated.
+
+    `their_reply_rate` is measured over threads YOU started, so when you never
+    started one it isn't 0 — it's **undefined**, and there's no evidence either
+    way about whether they answer you. Both rules below read it as a number,
+    which used to mean anyone who always writes first stayed `unknown` forever
+    no matter how many conversations they had with you. That's the ordinary
+    shape of an inbound-led business: the client emails, you answer, every time.
+    Unknown means no filing folder, so their mail was the least organised of
+    anyone's. `you_ever_started` lets that case be judged on the evidence that
+    does exist — how reliably you answer them, over how many conversations.
     """
     if (cp.relationship_source or "inferred") in ("user", "crm"):
         return cp.relationship or UNKNOWN
@@ -222,8 +243,18 @@ def infer_relationship(cp: models.Counterparty, *, vendor_hint: bool) -> str:
         return CUSTOMER if stage in ("customer", "closedwon", "closed won") else PROSPECT
     if vendor_hint:
         return VENDOR
+
     threads = int(cp.thread_count or 0)
-    if threads >= 3 and int(cp.their_reply_rate or 0) > 60 and int(cp.your_reply_rate or 0) > 60:
+    yours = int(cp.your_reply_rate or 0)
+
+    if not you_ever_started:
+        # No `their_reply_rate` to lean on. Answering a repeat correspondent is
+        # the strongest signal available, and it's a choice the user already
+        # made. Deliberately strict: nothing below three conversations, so a
+        # one-off exchange never invents a folder.
+        return CUSTOMER if (threads >= INBOUND_LED_THREADS and yours > 60) else UNKNOWN
+
+    if threads >= 3 and int(cp.their_reply_rate or 0) > 60 and yours > 60:
         return CUSTOMER
     if int(cp.their_reply_rate or 0) > 50 and threads >= 1:
         return PROSPECT
@@ -336,7 +367,11 @@ def recompute(db: Session, user_id: str, *, limit_threads: int = 4000) -> int:
             and int(slot["you_replied"]) > 0
         )
         was = cp.relationship or UNKNOWN
-        cp.relationship = infer_relationship(cp, vendor_hint=bool(slot["vendor_hint"]))
+        cp.relationship = infer_relationship(
+            cp,
+            vendor_hint=bool(slot["vendor_hint"]),
+            you_ever_started=started > 0,
+        )
         cp.importance = importance_score(cp, two_way_recently=two_way)
 
         # A reclassification is not cosmetic: it changes which folder this
