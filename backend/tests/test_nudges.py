@@ -323,3 +323,22 @@ def test_users_are_isolated():
     nudges.generate_nudge(db, "u1", fu)
 
     assert nudges.open_proposal(db, "u2", fu.id) is None
+
+
+def test_a_discarded_draft_does_not_come_back():
+    """The composer never pre-generates, because a ready-to-send nudge nobody
+    asked for is one mis-tap from an unrequested email. But a draft persists and
+    reloads pre-filled next time the sheet opens — so a draft the user thought
+    better of quietly becomes exactly that. Discarding has to actually clear it."""
+    db = _session()
+    a_sync_state(db, "u1")
+    fu = a_loop(db, "u1")
+
+    nudge, why = nudges.generate_nudge(db, "u1", fu)
+    assert nudge is not None, why
+    assert nudges.open_proposal(db, "u1", fu.id) is not None
+
+    nudge.status = "skipped"   # what POST /api/nudges/{id}/skip does
+    db.commit()
+
+    assert nudges.open_proposal(db, "u1", fu.id) is None, "a discarded draft reappeared"

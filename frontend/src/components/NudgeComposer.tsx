@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Send, Loader2, Sparkles } from 'lucide-react';
+import { Send, Loader2, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import {
   getNudge,
   draftNudge,
   sendNudge,
+  skipNudge,
   toApiError,
   type FollowUp,
   type Nudge,
@@ -119,6 +120,33 @@ export function NudgeComposer({
     }
   };
 
+  /**
+   * Throw the draft away.
+   *
+   * This composer never pre-generates, precisely because a ready-to-send nudge
+   * nobody asked for is one mis-tap from an unrequested email to a client. But
+   * a draft PERSISTS once created, and reloads pre-filled the next time this
+   * sheet opens — so a draft the user thought better of quietly became exactly
+   * the thing the no-pre-generation rule exists to prevent. Discarding closes
+   * that loop.
+   */
+  const discard = async () => {
+    if (!nudge) return;
+    setDrafting(true);
+    try {
+      await skipNudge(nudge.id);
+      setNudge(null);
+      setBody('');
+      setArmed(false);
+      show({ tone: 'success', text: 'Draft discarded. Nothing was sent.' });
+    } catch (err) {
+      show({ tone: 'error', text: `Couldn’t discard that: ${toApiError(err).message}` });
+    } finally {
+      setDrafting(false);
+      void load();
+    }
+  };
+
   const who = followUp.counterparty_name || followUp.counterparty_email || 'them';
   const silentDays = followUp.last_outbound_at
     ? Math.max(
@@ -206,15 +234,27 @@ export function NudgeComposer({
             </p>
           </div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-center"
-            disabled={drafting}
-            onClick={() => void draft()}
-          >
-            {drafting ? 'Rewriting…' : 'Rewrite'}
-          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="justify-center"
+              disabled={drafting}
+              onClick={() => void draft()}
+            >
+              {drafting ? 'Rewriting…' : 'Rewrite'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="justify-center"
+              disabled={drafting}
+              icon={<Trash2 className="h-4 w-4" />}
+              onClick={() => void discard()}
+            >
+              Discard
+            </Button>
+          </div>
         </>
       )}
     </div>
