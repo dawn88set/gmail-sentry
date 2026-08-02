@@ -153,12 +153,13 @@ it. That would explain why every local reproduction passes.
 `claritty-app-7e925d43-dft`. If it turns out to be a timeout, I'd also like to
 know the current limit.
 
-**A workaround I'd rather not use.** Per `upload-deploy.processor.ts:63`, the
-FIRST upload of an app (no `deployedAt` yet) still goes live rather than
-building a draft. So deploying this codebase under a new app name would reach
-users. I haven't, because it would abandon this app's instance, its database,
-its subdomain and its marketplace submission — but it does mean the code itself
-deploys fine through your own pipeline, just not down the draft path.
+**The workaround in your own source does not work either.** Per
+`upload-deploy.processor.ts:63`, the FIRST upload of an app (no `deployedAt`
+yet) goes live rather than building a draft — a different target from the draft
+lambda. I tried it, accepting that it would abandon this app's instance,
+database, subdomain and marketplace submission. It failed too (the "Inbox
+Sentry" app above). So there is currently **no path by which any code, new or
+old, can be deployed on this account.**
 
 ---
 
