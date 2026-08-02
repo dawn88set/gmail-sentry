@@ -152,6 +152,10 @@ export interface ScanRunItem {
   ago: string;
   scanned: number;
   flagged: number;
+  /** Messages labelled — by a filing rule or by smart filing. Written on every
+   *  run since filing shipped, but dropped by the API until now, so the work
+   *  the app does most of never reached the screen. */
+  labeled: number;
   notified: number;
   error?: string | null;
 }
@@ -562,6 +566,10 @@ export interface MailFolder {
   counterparty_email: string;
   thread_count: number;
   created_at?: string | null;
+  /** When this folder last received something — a count alone can't tell an
+   *  active folder from one that stopped being used in April. */
+  last_filed_at?: string | null;
+  last_filed_ago?: string;
 }
 
 export const getFolders = async (): Promise<{
@@ -569,6 +577,28 @@ export const getFolders = async (): Promise<{
   filing_enabled: boolean;
   pending: number;
 }> => (await api.get('/api/folders')).data;
+
+/** One conversation filed into a folder. */
+export interface FolderThread {
+  thread_id: string;
+  subject: string;
+  counterparty_email: string;
+  counterparty_name: string;
+  status: 'pending' | 'filed' | 'failed';
+  filed_count: number;
+  filed_at: string | null;
+  filed_ago: string;
+  error: string;
+  deep_link: string;
+}
+
+/** What's actually in a folder. A folder that shows only a number is a claim
+ *  the user can't check; this is what makes filing auditable. */
+export const getFolderThreads = async (
+  id: string,
+  limit = 50,
+): Promise<{ folder: MailFolder; threads: FolderThread[] }> =>
+  (await api.get(`/api/folders/${id}/threads`, { params: { limit } })).data;
 
 export const approveFolder = async (id: string, name?: string) =>
   (await api.post(`/api/folders/${id}/approve`, name ? { name } : {})).data;
@@ -665,3 +695,107 @@ export const updateCounterparty = async (
   patch: { relationship?: Relationship; pinned?: boolean; muted?: boolean; notes?: string },
 ): Promise<{ counterparty: Counterparty }> =>
   (await api.put(`/api/counterparties/${id}`, patch)).data;
+
+// ── Activity: what this app actually did ────────────────────────────────────
+// Changes, never runs. A scan that found nothing writes nothing, so every line
+// in the feed is worth reading — the scan cadence lives on Today instead.
+
+export type ActivityKind =
+  | 'thread_filed'
+  | 'filing_failed'
+  | 'folder_proposed'
+  | 'folder_approved'
+  | 'folder_rejected'
+  | 'mail_flagged'
+  | 'replies_drafted'
+  | 'reply_sent'
+  | 'nudge_sent'
+  | 'went_quiet'
+  | 'loop_closed'
+  | 'alert_auto_closed'
+  | 'relationship_changed'
+  | 'report_sent';
+
+export interface ActivityEvent {
+  id: string;
+  at: string | null;
+  kind: ActivityKind;
+  /** The sentence, written server-side when it happened — so a folder renamed
+   *  next month can't retroactively rewrite what happened in this one. */
+  title: string;
+  detail: string;
+  subject_type: string;
+  subject_id: string;
+  counterparty_email: string;
+  folder_name: string;
+  count: number;
+}
+
+export interface ActivityDay {
+  day: string;
+  /** "Today" / "Yesterday" / a weekday — grouped server-side so the app and the
+   *  daily report describe a day the same way. */
+  label: string;
+  events: ActivityEvent[];
+}
+
+export interface ActivitySummary {
+  filed: number;
+  flagged: number;
+  drafted: number;
+  sent: number;
+  went_quiet: number;
+  days: number;
+  total: number;
+}
+
+export const getActivity = async (
+  days = 14,
+): Promise<{ days: ActivityDay[]; summary: ActivitySummary; total: number; window_days: number }> =>
+  (await api.get('/api/activity', { params: { days } })).data;
+
+// ── Insights: true statements about how this mailbox works ──────────────────
+// Countable facts only. No modelled hours saved, no imputed money value — one
+// invented number a user can disprove makes every other number here suspect.
+
+export interface Insights {
+  coverage: { days: number; messages: number; threads: number; since: string | null };
+  response: {
+    groups: {
+      relationship: Relationship;
+      label: string;
+      people: number;
+      you_answer_in_h: number | null;
+      they_answer_in_h: number | null;
+      /** Too few conversations to be a pattern — shown, but labelled as thin. */
+      thin: boolean;
+    }[];
+    caveat: string;
+  };
+  attention: {
+    people: {
+      email: string;
+      display_name: string;
+      relationship: Relationship;
+      relationship_label: string;
+      thread_count: number;
+      your_reply_rate: number;
+      importance: number;
+    }[];
+  };
+  at_risk: {
+    counts: FollowUpCounts;
+    threads: {
+      id: string;
+      thread_id: string;
+      who: string;
+      email: string;
+      subject: string;
+      silent_days: number;
+      risk: number;
+    }[];
+  };
+  handled: ActivitySummary & { folders_active: number; folders_pending: number };
+}
+
+export const getInsights = async (): Promise<Insights> => (await api.get('/api/insights')).data;

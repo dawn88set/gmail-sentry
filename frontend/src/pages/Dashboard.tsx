@@ -435,7 +435,8 @@ export default function Dashboard() {
                     </span>
                   ) : (
                     <span className="text-[12px] text-muted-foreground">
-                      {r.scanned} scanned · {r.flagged} flagged · {r.notified} pinged
+                      {r.scanned} scanned · {r.flagged} flagged · {r.labeled} filed ·{' '}
+                      {r.notified} pinged
                     </span>
                   )}
                 </div>

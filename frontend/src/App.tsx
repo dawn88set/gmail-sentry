@@ -6,6 +6,8 @@ import Teach from './pages/Teach';
 import Attention from './pages/Attention';
 import FollowUps from './pages/FollowUps';
 import People from './pages/People';
+import Activity from './pages/Activity';
+import FolderDetail from './pages/FolderDetail';
 import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
 import Layout from './components/Layout';
@@ -34,6 +36,9 @@ function App() {
           <Route path="/followups" element={<Layout><FollowUps /></Layout>} />
           <Route path="/people" element={<Layout><People /></Layout>} />
           <Route path="/attention" element={<Layout><Attention /></Layout>} />
+          {/* What the app did while nobody was looking — activity, folders, insights. */}
+          <Route path="/activity" element={<Layout><Activity /></Layout>} />
+          <Route path="/folders/:folderId" element={<Layout><FolderDetail /></Layout>} />
           <Route path="/cleanup/:category" element={<Layout><CategoryList /></Layout>} />
           <Route path="/rules" element={<Layout><Rules /></Layout>} />
         </Routes>
