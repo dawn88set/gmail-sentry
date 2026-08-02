@@ -109,6 +109,96 @@ app it never touched. It should report the draft outcome. **That's a real bug
 worth fixing in `create-claritty-app`**, because it makes a failed deploy
 indistinguishable from a successful one.
 
+### 2026-08-01: reproduced their build exactly — it passes
+
+Previous attempts ruled our code out with *local* checks (`npm ci`, `docker
+compose`, the test suite). Those all use our laptop's architecture and Docker
+cache, so they were suggestive rather than conclusive. This run closed the gap:
+
+1. Rebuilt the **exact tarball the CLI uploads** — same `tar` flags, same
+   `BUNDLE_EXCLUDES` (`index.ts:772`: node_modules, .git, dist, build,
+   test-results, …). **1.4 MB, 320 files.** Nowhere near the CLI's 100 MB cap.
+2. Extracted it to a **clean directory** — no working-tree contamination.
+3. Built it with **the platform's own generated `Dockerfile`** (the one in this
+   repo), `--platform linux/amd64`, `--no-cache`.
+
+**Result: builds in 63 s, exit 0.** The image then boots, serves `/health` 200,
+answers `/api/*` with a correct 401 (no `X-User-ID`), and migrates the schema to
+head against Postgres.
+
+So the artifact they are handed does build, on their architecture, from cold.
+
+### The failure timeline (polled 2026-08-01, every 30 s)
+
+```
+21:50:25  Running security scan
+21:50:56  Preparing to publish
+21:51:26  Building image · Preparing · 0.5m
+21:51:56  Building image · Building · 1.0m
+21:52:27  Building image · Building · 1.5m
+21:52:58  Draft deploy failed        ← draftErrorAt 2026-08-02T02:52:28.309Z
+```
+
+It dies **~60–90 s into the build phase** — which is roughly how long the whole
+build legitimately takes (63 s locally). Consistent with either a build timeout
+set just under what this app needs, or an early failure in a step we can't see.
+
+### The Dockerfile that fails is NOT the one we can test
+
+`infrastructure.lambda.imageUri` is `…:1.0.0-lambda` and the function is
+`claritty-app-7e925d43`, so the platform builds a **Lambda** image. The
+Dockerfile in this repo is the **Fargate** variant — its own header says
+`Platform: linux/amd64 (AWS Fargate requirement)`, and it runs nginx +
+supervisor, which is not a Lambda entrypoint. The platform therefore generates a
+different Dockerfile at build time, and **that** is the one failing. Nobody
+outside the AWS account can build or read it, which is exactly why every local
+reproduction passes.
+
+### The platform's own diagnosis agrees
+
+`GET /api/apps/7e925d43-…` → `errorAnalysis`:
+
+```json
+{ "type": "UNKNOWN", "userActionable": false, "fixable": true,
+  "userMessage": "Something went wrong on our end. Please try again in a moment.",
+  "technicalDetails": "Deployment was interrupted - please retry …" }
+```
+
+`userActionable: false`. The app-level `error` is literally
+`"Deployment was interrupted - please retry"` — but it has now failed on every
+attempt since **2026-07-20T19:36:07Z**, the last time `draftDeployedAt` moved.
+Twelve days is not a transient.
+
+### Everything on our side that passes
+
+| Check | Result |
+|---|---|
+| `claritty doctor` (incl. the platform's **authoritative** manifest dry-run) | ✅ all checks passed |
+| `claritty deploy` pre-flight gates: seed-verify, identity, type-check, build, widget-tests | ✅ 5/5 |
+| Exact upload bundle → clean dir → their Dockerfile → amd64 → `--no-cache` | ✅ 63 s |
+| That image boots, `/health` 200, migrates to head | ✅ |
+| 196 backend tests · `npm run test:all` · design rubric 12/12 | ✅ |
+
+### What support needs to be asked
+
+> Submission `6819e987-ee90-457f-ae4d-0c41374bcc3e`, app
+> `7e925d43-7188-4d48-8a55-9eb203f59378`, draft lambda
+> `claritty-app-7e925d43-dft`. Draft builds have failed on every attempt since
+> 2026-07-20T19:36Z, most recently 2026-08-02T02:52:28Z, always with the generic
+> "Build failed" string; `draftError` carries no detail and
+> `GET /api/apps/:id/logs` returns stub lines rather than build output.
+> **Please send the CodeBuild log for that draft build.**
+
+Two platform bugs worth reporting alongside it:
+
+* **The CLI reports success for a failed deploy.** This run printed
+  "✓ Gmail Sentry is live in your workspace" ~90 s *before* the draft build
+  failed — see the timeline above. It polls the app's existing `ACTIVE` status
+  instead of the draft outcome.
+* **`GET /api/apps/:id` returns the tenant Postgres password and full
+  connection string** in `infrastructure`, to any caller with a session. Even
+  scoped to the owner, that does not belong in an app-metadata response.
+
 ### It is NOT our code
 
 Everything reproducible locally passes, from exactly what's on `main`:
