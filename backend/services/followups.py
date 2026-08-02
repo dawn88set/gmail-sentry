@@ -47,6 +47,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend import models
+from backend.services import activity
 from backend.services import counterparty as cp_service
 from backend.services import ledger
 
@@ -147,6 +148,13 @@ def _thread_identity(db: Session, user_id: str, thread_id: str) -> Dict[str, str
         .all()
     )
     email = name = subject = ""
+    # An outbound row can only supply the address, never the display name — the
+    # sender there is the user. Tracked separately so it can't pre-empt the
+    # inbound branch: rows are newest-first, and on a thread that's gone quiet
+    # the user's own reply IS the newest, so a single shared `email` guard used
+    # to consume the fallback and lose the name on exactly the threads where it
+    # matters most ("Mark Ruiz has gone quiet", not "mark@meridian-supply.com").
+    fallback_email = ""
     for m in rows:
         if m.direction == "in" and m.counterparty_email and not email:
             email = m.counterparty_email
@@ -154,9 +162,9 @@ def _thread_identity(db: Session, user_id: str, thread_id: str) -> Dict[str, str
             name = raw.split("<")[0].strip().strip('"') if "<" in raw else ""
         if m.subject and not subject:
             subject = m.subject
-        if not email and m.direction == "out" and m.counterparty_email:
-            email = m.counterparty_email
-    return {"email": email, "name": name, "subject": subject}
+        if not fallback_email and m.direction == "out" and m.counterparty_email:
+            fallback_email = m.counterparty_email
+    return {"email": email or fallback_email, "name": name, "subject": subject}
 
 
 def _has_live_alert(db: Session, user_id: str, thread_id: str, *, now: datetime) -> bool:
@@ -275,6 +283,30 @@ def sync_followups(db: Session, user_id: str, *, now: Optional[datetime] = None)
             if elapsed_h >= float(fu.stale_after_hours or DEFAULT_STALE_HOURS):
                 if fu.state != GOING_COLD:
                     stats["went_cold"] += 1
+                    # The single most valuable thing this app notices, and until
+                    # now it was computed here and thrown away. Silence sends no
+                    # email; this is the only record that it was ever spotted.
+                    who = fu.counterparty_name or fu.counterparty_email or "someone"
+                    days = max(0, int(elapsed_h // 24))
+                    silence = (
+                        f"No reply for {days} day{'s' if days != 1 else ''} — longer than usual for them."
+                        if days else "No reply yet — longer than usual for them."
+                    )
+                    activity.record(
+                        db, user_id, "went_quiet",
+                        # The subject is in the title, not the detail: one person
+                        # can have several threads go cold at once, and two rows
+                        # reading "Mark Ruiz has gone quiet" with identical
+                        # sub-text look like a duplication bug rather than two
+                        # separate conversations at risk.
+                        f"{who} has gone quiet on “{fu.subject}”" if fu.subject
+                        else f"{who} has gone quiet",
+                        detail=silence,
+                        subject_type="followup", subject_id=fu.id,
+                        counterparty_email=fu.counterparty_email or "",
+                        count=days, at=ref,
+                        meta={"subject": fu.subject or "", "thread_id": thread_id},
+                    )
                 fu.state = GOING_COLD
             else:
                 fu.state = AWAITING_THEM
@@ -404,6 +436,16 @@ def close_alerts_replied_elsewhere(db: Session, user_id: str, *, now: Optional[d
             if alert.reply_status == "none":
                 alert.reply_status = "sent"  # answered, just not through this app
             closed += 1
+            # Without this the alert just disappears from the list, which reads
+            # as a bug rather than as the app noticing the user already handled
+            # it. Saying so out loud is the difference.
+            activity.record(
+                db, user_id, "alert_auto_closed",
+                f"Closed — you already replied to {alert.sender or 'this'}",
+                detail=alert.subject or "",
+                subject_type="alert", subject_id=alert.id,
+                counterparty_email=alert.sender or "", at=ref,
+            )
     if closed:
         db.commit()
     return closed
@@ -482,6 +524,17 @@ def mark_done(db: Session, fu: models.FollowUp, reason: str = "you_closed") -> m
     fu.state = DONE
     fu.closed_reason = reason
     fu.closed_at = ledger.utcnow()
+    # `closed_at` is NULLed if the loop reopens, so the column alone can never
+    # tell you how many loops were closed. This row survives the reopen.
+    who = fu.counterparty_name or fu.counterparty_email or "someone"
+    activity.record(
+        db, fu.user_id, "loop_closed",
+        f"Closed the loop with {who}",
+        detail=fu.subject or "",
+        subject_type="followup", subject_id=fu.id,
+        counterparty_email=fu.counterparty_email or "",
+        meta={"reason": reason},
+    )
     db.commit()
     return fu
 

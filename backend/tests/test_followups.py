@@ -491,3 +491,34 @@ def test_an_empty_ask_never_blanks_an_existing_one():
     fu_service.apply_asks(db, "u1", {"t1": {"ask": "", "confidence": 0, "due": ""}})
 
     assert db.query(models.FollowUp).one().ask_summary == "Send the deck"
+
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+def test_the_name_survives_when_the_user_replied_last():
+    """Rows are read newest-first, and on a thread that's gone quiet the user's
+    own reply IS the newest. The outbound fallback used to consume the same
+    `email` guard the inbound branch checked, so the display name was lost on
+    exactly the threads where it matters most — "Mark Ruiz has gone quiet"
+    became "mark@meridian-supply.com has gone quiet"."""
+    db = _session()
+    msg(db, "u1", "t1", "in", ago_h=200, sender="Mark Ruiz <mark@meridian-supply.com>", subject="Renewal")
+    msg(db, "u1", "t1", "out", ago_h=190, sender="mark@meridian-supply.com")
+
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).one()
+    assert fu.counterparty_email == "mark@meridian-supply.com"
+    assert fu.counterparty_name == "Mark Ruiz"
+
+
+def test_an_outbound_only_thread_still_resolves_the_address():
+    """The fallback still has to work — a thread the user started and nobody
+    answered is precisely a follow-up worth tracking."""
+    db = _session()
+    msg(db, "u1", "t1", "out", ago_h=100, sender="dana@northwind.co", subject="Quote")
+
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).one()
+    assert fu.counterparty_email == "dana@northwind.co"
