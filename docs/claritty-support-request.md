@@ -24,6 +24,19 @@ failing since 2026-07-20. Along the way I deployed one exact commit
 | 18:03 | failed |
 | 18:24 | failed (after a 13-minute cooldown) |
 
+**It is not only the draft path.** At 18:45 the app owner clicked **Publish to
+live** in your UI — a different action, a different code path, not the CLI — and
+it failed with the same string after ~2 minutes of "Building image":
+
+```
+13:46:42 (local)  Publish failed: Build failed. Please check that your app builds
+                  successfully locally...
+```
+
+`deployedAt` did not move, so the live app was untouched. Both the draft build
+and the publish-to-live build fail identically, which points at the image build
+itself rather than at either path's plumbing.
+
 Since 17:29 every build has failed — roughly 15 in 55 minutes, across every
 input including the two that had just succeeded. Before that there was a
 ~50-minute window (16:38–17:29) in which builds worked at all.
