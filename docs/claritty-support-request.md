@@ -24,22 +24,23 @@ for the failing draft build.**
 | Draft lambda | `claritty-app-7e925d43-dft` |
 | Account | dawn88set@gmail.com |
 | Last successful `draftDeployedAt` | 2026-07-20T19:36:07.271Z |
-| Most recent `draftErrorAt` | 2026-08-02T02:52:28.309Z |
+| Recent `draftErrorAt` values | 2026-08-02T01:01:28.771Z, 02:52:28.309Z, 16:28:15.840Z |
 
-**What the failure looks like**, polled every 30 s during a fresh
-`claritty deploy` on 2026-08-01:
+**What the failure looks like.** Two `claritty deploy` runs, polled throughout:
 
 ```
-21:50:56  Preparing to publish
-21:51:26  Building image · Preparing · 0.5m
-21:51:56  Building image · Building  · 1.0m
-21:52:27  Building image · Building  · 1.5m
-21:52:58  Draft deploy failed        ← draftErrorAt 2026-08-02T02:52:28.309Z
+2026-08-01                              2026-08-02
+21:50:56  Preparing to publish          11:27:05  Preparing to publish
+21:51:26  Building image · Preparing    11:27:31  Building image · Building 0.5m
+21:51:56  Building image · Building 1m  11:27:56  Building image · Building 1.0m
+21:52:27  Building image · Building     11:28:22  Draft deploy failed
+21:52:58  Draft deploy failed
 ```
 
-It dies **~60–90 s into the build phase**. For reference, the full build takes
-63 s on my machine, so this is either a build timeout set just below what this
-app needs, or an early failure in a step I can't see.
+Identical shape both times: it dies **~60–90 s into the build phase**, at the
+same point, with the same message. Not intermittent. For reference the full
+build takes 63 s on my machine, so this is either a build timeout set just
+below what this app needs, or an early failure in a step I can't see.
 
 `draftError` is only:
 
@@ -91,6 +92,13 @@ it. That would explain why every local reproduction passes.
 **The ask:** please send the CodeBuild log for the draft build of
 `claritty-app-7e925d43-dft`. If it turns out to be a timeout, I'd also like to
 know the current limit.
+
+**A workaround I'd rather not use.** Per `upload-deploy.processor.ts:63`, the
+FIRST upload of an app (no `deployedAt` yet) still goes live rather than
+building a draft. So deploying this codebase under a new app name would reach
+users. I haven't, because it would abandon this app's instance, its database,
+its subdomain and its marketplace submission — but it does mean the code itself
+deploys fine through your own pipeline, just not down the draft path.
 
 ---
 
