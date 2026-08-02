@@ -58,7 +58,60 @@ status to `VERIFYING` and fires the pipeline), then poll
 
 ---
 
-## ⚠️ Before this goes public: a likely production outage
+## ✅ Tested in production — the outage hypothesis was WRONG
+
+Ran a real scan through the deployed app on 2026-08-02, signed in as the real
+user with Gmail and Slack both connected:
+
+```
+Scanned 20 emails — flagged 4, filed 0, notified 0
+```
+
+Promotions moved 139 → 207, Social 2 → 4, attention 29 → 33, "scanned just now",
+and new genuine alerts appeared. Those numbers come from `gmail.count`,
+`gmail.search` and `gmail.get_message` — every one of them through
+`execute_tool`.
+
+**So the broker is not rejecting unproven callers in production.** Either prod
+isn't running the strict-identity build yet, or `BROKER_STRICT_APP_IDENTITY` is
+set to `false` somewhere outside the repo. The reasoning below was sound from the
+source, and wrong about the deployed reality. Left on the record because it is
+still a live *latent* risk: the moment prod picks up that build, every generated
+app's integration actions start failing. The seed fix is worth making before
+that happens, not after.
+
+## ⚠️ The real problem the test found: the running app is 12 days stale
+
+The deployed container is from **2026-07-20** (`deployedAt`, and
+`installedSourceKey: apps/7e925d43-…/generations/2026-07-20T18-28-17-232Z/`).
+The live UI proves it: two nav tabs instead of four, "29 need attention" instead
+of "open loops", and no Follow-ups, Folders or People anywhere.
+
+**None of the ledger, counterparties, follow-ups, filing, nudges or People work
+is running** — even though `claritty deploy --yes` reported
+"✓ Gmail Sentry is live in your workspace" on every attempt.
+
+The chain: `claritty deploy` updates the **template submission**, and the
+installed **app instance** is only refreshed when validation passes. Validation
+is stuck on the GitHub App. So the same missing App blocks *both* the marketplace
+listing *and* getting the new code live — which makes installing it the single
+highest-value action outstanding.
+
+## Also seen in production: Slack channel listing fails
+
+The Rules screen reports:
+
+```
+Channel list unavailable (slack.list_channels failed: HTTP 502
+integration tool execution failed: Slack conversations.list …)
+```
+
+A 502, not a 403 — so this is `IntegrationError`, a genuine downstream failure
+rather than the identity gate. Worth a look, but it degrades gracefully: the
+channel picker falls back to manual ID entry, which is why the guide text is
+there.
+
+## The original reasoning (kept for the seed fix)
 
 Found while investigating something else. **This matters more than the listing**,
 because it would affect every user who installs the app.
