@@ -199,6 +199,37 @@ Two platform bugs worth reporting alongside it:
   connection string** in `infrastructure`, to any caller with a session. Even
   scoped to the owner, that does not belong in an app-metadata response.
 
+### ⚠️ 2026-08-02: the "not our code" proof below was WRONG, then right for the wrong reason
+
+Read this before the sections underneath it. Two corrections, in order:
+
+1. The clean-amd64-build evidence below proves only that the *Fargate* Dockerfile
+   in this repo builds. It does not prove the platform's *Lambda* build works,
+   and I over-claimed from it.
+2. Deploying the last pre-30-July commit (`c3c14d8`) DID build, so for a while it
+   looked like our `app-config.json` was the cause. That isn't established: the
+   same file later failed.
+
+**What is actually established** — one exact commit, byte-identical source and
+`app-config.json` (sha verified), deployed four times:
+
+| 17:01 | 17:29 | 18:03 | 18:24 |
+|---|---|---|---|
+| built | built | failed | failed (after cooldown) |
+
+The build is **non-deterministic**. Roughly 15 consecutive failures followed
+17:29, across every input including ones that had just succeeded, so no
+statement of the form "commit X breaks it" survives.
+
+A weak lead, kept as a lead: inside the 16:38-17:29 window when builds worked at
+all, the pre-30-July `app-config.json` built 4/4 and the current one failed 3/3.
+Seven trials, and it collapsed afterwards. `app-config.json` has been restored to
+the older bytes on that basis alone (see the commit) - a reversible bet, not a
+diagnosis, and it costs us the honest `configSchema`.
+
+**Do not spend more deploys on bisection.** ~37 runs went into this; the signal
+is not in our repo.
+
 ### It is NOT our code
 
 Everything reproducible locally passes, from exactly what's on `main`:

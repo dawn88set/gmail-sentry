@@ -9,11 +9,30 @@ Paste the block below. Everything in it is verified; nothing is a guess.
 
 Hi,
 
-Every draft build of my app has failed since **2026-07-20T19:36:07Z**, always
-with the same generic string, and the platform doesn't expose enough for me to
-act on it. I've ruled out my own code as thoroughly as I can from outside your
-AWS account — details below — so I need one thing from you: **the CodeBuild log
-for the failing draft build.**
+**Your draft build pipeline is non-deterministic.** I can hand you the same
+input succeeding and then failing, and that is the core of this report.
+
+On 2026-08-02 I ran ~37 controlled draft deploys to find out why mine had been
+failing since 2026-07-20. Along the way I deployed one exact commit
+(`c3c14d8`) several times. Byte-identical source, byte-identical
+`app-config.json` (sha256 verified between runs), nothing else changed:
+
+| time (UTC) | outcome |
+|---|---|
+| 17:01 | **built** |
+| 17:29 | **built** |
+| 18:03 | failed |
+| 18:24 | failed (after a 13-minute cooldown) |
+
+Since 17:29 every build has failed — roughly 15 in 55 minutes, across every
+input including the two that had just succeeded. Before that there was a
+~50-minute window (16:38–17:29) in which builds worked at all.
+
+So "check that your app builds successfully locally", which is the only guidance
+`draftError` gives, cannot be the issue: the same bytes both build and don't.
+
+I still need **the CodeBuild log for the failing draft builds** — that is the
+one thing nobody outside your AWS account can get.
 
 **IDs**
 
@@ -79,6 +98,17 @@ have retried repeatedly over twelve days.
    platform-side manifest dry-run.
 6. `claritty deploy` passes all five pre-flight gates (seed-verify, identity,
    type-check, build, widget-tests).
+
+**One more datum, offered as a lead rather than a claim.** Within the
+16:38–17:29 window when builds worked at all, the outcome tracked
+`app-config.json` exactly: the version from before my 30 July changes built 4/4,
+and the newer version failed 3/3. That is only seven trials, and it collapsed
+afterwards when the older version also began failing — so I am NOT claiming
+`app-config.json` causes this. But if your builder does anything with that file
+(parses it, hashes it, generates from it), it may be worth a look alongside
+whatever makes the pipeline intermittent. The two versions differ in
+`configSchema`, `metadata`, `clarity_marketplace`, `appVersion` and
+`description`.
 
 **Why I think the failing image isn't one I can test.** My app's
 `infrastructure.lambda.imageUri` is `…:1.0.0-lambda` and the function is
