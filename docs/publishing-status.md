@@ -80,7 +80,66 @@ still a live *latent* risk: the moment prod picks up that build, every generated
 app's integration actions start failing. The seed fix is worth making before
 that happens, not after.
 
-## ⚠️ The real problem the test found: the running app is 12 days stale
+## 🔴 ROOT CAUSE FOUND: the platform's draft build is failing
+
+The app editor (`app.claritty.ai/apps/7e925d43-…`) shows:
+
+> **Draft build failed — the live app wasn't updated**
+> Build failed. Please check that your app builds successfully locally.
+
+That is why every deploy left the live app untouched.
+
+### How the deploy model actually works (undocumented, and the CLI lies about it)
+
+`upload-deploy.processor.ts:63` states it plainly:
+
+> *"a CLI re-deploy of an ALREADY-LIVE app builds the DRAFT runtime (the
+> developer Publishes to go live) … the FIRST upload (no deployedAt yet) still
+> goes live."*
+
+So `claritty deploy` on a live app **only ever updates the draft**. Going live
+needs a separate **Publish to live** (UI) or
+`POST /api/generation/apps/:appId/publish-draft`.
+
+**The CLI reports the wrong thing.** `waitForUploadDeploy` polls
+`GET /api/apps/templates/direct/:appId`, which returns the app's *current*
+status — already `ACTIVE` from a previous deploy — so the CLI prints
+"✓ Gmail Sentry is live in your workspace" for a build that failed and a live
+app it never touched. It should report the draft outcome. **That's a real bug
+worth fixing in `create-claritty-app`**, because it makes a failed deploy
+indistinguishable from a successful one.
+
+### It is NOT our code
+
+Everything reproducible locally passes, from exactly what's on `main`:
+
+| Check | Result |
+|---|---|
+| Fresh `git clone` + `npm ci` + `npm run build` | ✅ builds, 1947 modules |
+| `pip install --dry-run -r backend/requirements.txt` | ✅ resolves |
+| `import backend.main` with the seed's PLATFORM_INFRA_FILES restored over ours | ✅ boots |
+| `docker compose up --build` | ✅ healthy, migrations to head |
+| 175 backend tests · `npm run test:all` | ✅ green |
+
+The last successful live deploy was **2026-07-20**, and `draftDeployedAt` is
+stuck at the same date — so the draft build has failed on every attempt since.
+Every other app in the workspace deployed as recently as 2026-07-31, and Gmail
+Sentry is the only one with `hasDraftChanges: true`. The deployment queue is
+healthy; this app's build specifically is not.
+
+### What's needed to get past it
+
+The actual compiler/packaging error only exists in **AWS CodeBuild logs** for
+the draft build of app `7e925d43-…` (draft Lambda
+`claritty-app-7e925d43-dft`, per `metadata.draftInfrastructure`). The platform
+surfaces only a generic string — `draftError` carries no detail, and
+`GET /api/apps/:id/logs` returns stub lines, not build output.
+
+**→ Read the CodeBuild log for that draft build.** That is the one piece of
+information nobody outside the AWS account can get, and it turns this from a
+guess into a fix.
+
+## Secondary: the running app is 12 days stale
 
 The deployed container is from **2026-07-20** (`deployedAt`, and
 `installedSourceKey: apps/7e925d43-…/generations/2026-07-20T18-28-17-232Z/`).
