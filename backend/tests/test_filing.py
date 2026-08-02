@@ -505,3 +505,166 @@ def test_the_record_is_scoped_to_one_user(gmail):
     filing.run_filing(db, "u1", cfg1)
 
     assert _events(db, "u2") == []
+
+
+# ── the backlog ─────────────────────────────────────────────────────────────
+#
+# Automatic filing is forward-only, which is right — but it left the mail
+# someone actually installed this to organise untouched forever. These cover
+# the explicit path, where the danger is the opposite one: thousands of old
+# threads relabelled at once.
+
+def test_the_preview_does_not_count_threads_already_filed(gmail):
+    """The preview's number is what the user decides on, so it has to mean
+    "conversations that would move" — otherwise running it twice offers the same
+    work again and looks like the first run did nothing."""
+    db = _session()
+    cfg = a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    msg(db, "u1", "t2", "in", sender="Dana <dana@northwind.co>", subject="Q4")
+
+    assert filing.preview_backlog(db, "u1")[0]["threads"] == 2
+
+    filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    assert filing.preview_backlog(db, "u1") == []
+
+
+def test_organizing_files_only_the_folders_the_user_picked(gmail):
+    db = _session()
+    a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    a_counterparty(db, "u1", "mark@meridian-supply.com", relationship=cp_service.VENDOR)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    msg(db, "u1", "t2", "in", sender="Mark <mark@meridian-supply.com>", subject="Invoice")
+
+    out = filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    assert out["threads"] == 1
+    assert list(out["by_folder"]) == ["Clients/Northwind"]
+    assert all(c["add"] == ["Clients/Northwind"] for c in gmail.calls)
+    # The folder they didn't pick was never created.
+    assert db.query(models.MailFolder).filter_by(name="Vendors/Meridian Supply").count() == 0
+
+
+def test_picking_a_folder_from_the_preview_is_the_approval(gmail):
+    """It's a deliberate choice against a preview that says how many
+    conversations go where — a stronger signal than the passive queue."""
+    db = _session()
+    a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+
+    filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    folder = db.query(models.MailFolder).one()
+    assert folder.status == "active" and folder.approved_at is not None
+    assert folder.source == "user"
+
+
+def test_organizing_still_respects_muted_bulk_and_label_rules(gmail):
+    """The explicit path is not a bypass of the other gates."""
+    db = _session()
+    a_config(db, "u1")
+    muted = a_counterparty(db, "u1", "quiet@northwind.co", relationship=cp_service.CUSTOMER)
+    muted.muted = True
+    db.add(models.LabelRule(
+        user_id="u1", name="own rule", match_type="sender",
+        match_value="acme.io", target_label="Prospects/Acme", active=True,
+    ))
+    db.commit()
+    a_counterparty(db, "u1", "priya@acme.io", relationship=cp_service.PROSPECT)
+    msg(db, "u1", "t1", "in", sender="Quiet <quiet@northwind.co>", subject="Q3")
+    msg(db, "u1", "t2", "in", sender="Priya <priya@acme.io>", subject="Contract")
+
+    out = filing.organize_backlog(
+        db, "u1", days=30, folders=["Clients/Northwind", "Prospects/Acme"],
+    )
+
+    assert out["threads"] == 0
+    assert gmail.calls == []
+
+
+def test_a_large_backlog_is_metered_and_says_what_is_left(gmail, monkeypatch):
+    """One broker call per thread. A run that quietly stopped halfway would look
+    like filing simply didn't work on the rest."""
+    monkeypatch.setattr(filing, "MAX_BACKLOG_THREADS_PER_RUN", 2)
+    db = _session()
+    a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    for i in range(5):
+        msg(db, "u1", f"t{i}", "in", sender="Dana <dana@northwind.co>", subject=f"Q{i}")
+
+    out = filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    assert out["threads"] == 2
+    assert out["remaining"] == 3
+    assert len(gmail.calls) == 2
+
+    # Continuing picks up exactly where it left off.
+    out2 = filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+    assert out2["threads"] == 2 and out2["remaining"] == 1
+
+
+def test_organizing_never_removes_inbox(gmail):
+    db = _session()
+    a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+
+    filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    assert gmail.calls[0]["remove"] == []
+
+
+def test_organizing_nothing_does_nothing(gmail):
+    db = _session()
+    a_config(db, "u1")
+    out = filing.organize_backlog(db, "u1", days=30, folders=[])
+    assert out["threads"] == 0 and gmail.calls == []
+
+
+def test_the_backlog_run_is_on_the_record(gmail):
+    db = _session()
+    a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+
+    filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    kinds = [e.kind for e in _events(db)]
+    assert "folder_approved" in kinds and "thread_filed" in kinds
+    filed = [e for e in _events(db, kind="thread_filed")][0]
+    assert "already had" in filed.detail, "the feed should say this was the backlog"
+
+
+def test_a_folder_that_receives_nothing_is_not_left_behind(gmail):
+    """A stale preview shouldn't leave a label in someone's real mailbox that
+    never receives mail — nor a "you approved this" line for a decision that did
+    nothing."""
+    db = _session()
+    a_config(db, "u1")
+    # Nothing in the ledger matches this folder.
+    out = filing.organize_backlog(db, "u1", days=30, folders=["Clients/Ghost"])
+
+    assert out["threads"] == 0
+    assert out["folders"] == []
+    assert db.query(models.MailFolder).filter_by(name="Clients/Ghost").count() == 0
+    assert _events(db, kind="folder_approved") == []
+
+
+def test_a_folder_the_user_already_had_survives_an_empty_run(gmail):
+    """Only folders this run created are cleaned up. Deleting one they'd
+    approved earlier would be destroying their configuration."""
+    db = _session()
+    cfg = a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    filing.run_filing(db, "u1", cfg)
+    filing.approve_folder(db, db.query(models.MailFolder).one())
+    filing.run_filing(db, "u1", cfg)          # thread is filed now
+
+    filing.organize_backlog(db, "u1", days=30, folders=["Clients/Northwind"])
+
+    assert db.query(models.MailFolder).filter_by(name="Clients/Northwind").count() == 1

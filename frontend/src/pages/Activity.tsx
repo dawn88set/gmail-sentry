@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Badge, Button, EmptyState, ErrorState, Tabs } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
+import { OrganizeBacklog } from '@/components/OrganizeBacklog';
 import { Screen } from '@/components/ios/Screen';
 import { ListGroup, ListRow, ListSection } from '@/components/ios/List';
 import { SkeletonRows } from '@/components/ios/Skeleton';
@@ -419,6 +420,10 @@ function Folders() {
           </ListGroup>
         </ListSection>
       )}
+
+      {/* The backlog is the mail they installed this to organize, and the
+          forward-only rule means nothing else will ever reach it. */}
+      {enabled && <OrganizeBacklog onDone={load} />}
 
       {active.length > 0 ? (
         <ListSection title="Folders in use" footer="Tap a folder to see exactly what was filed there.">

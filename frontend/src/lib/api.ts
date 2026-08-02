@@ -609,10 +609,37 @@ export const rejectFolder = async (id: string) =>
 export const setFilingEnabled = async (enabled: boolean): Promise<{ filing_enabled: boolean }> =>
   (await api.put('/api/folders/settings', { enabled })).data;
 
+/** One line of "here's what organizing your existing mail would do". */
+export interface BacklogPreviewRow {
+  folder: string;
+  /** Conversations that would MOVE — already-filed threads are excluded, so
+   *  running it twice doesn't offer the same work again. */
+  threads: number;
+  exists: boolean;
+  /** You said no to this folder before. Picking it now is a visible reversal. */
+  rejected: boolean;
+}
+
 export const getBacklogPreview = async (
   days = 30,
-): Promise<{ preview: { folder: string; threads: number; exists: boolean }[] }> =>
+): Promise<{ preview: BacklogPreviewRow[] }> =>
   (await api.get('/api/folders/backlog-preview', { params: { days } })).data;
+
+/** File the mail that was already there. Automatic filing is forward-only from
+ *  the moment it's switched on, so without this the backlog — the mail someone
+ *  installed this to organize — is never touched. Ticking a folder in the
+ *  preview IS the approval. Capped per run; `remaining` says what's left. */
+export const organizeBacklog = async (
+  folders: string[],
+  days = 30,
+): Promise<{
+  success: boolean;
+  filed: number;
+  threads: number;
+  by_folder: Record<string, number>;
+  remaining: number;
+  folders: string[];
+}> => (await api.post('/api/folders/organize-backlog', { folders, days })).data;
 
 // ── Nudges: chasing a thread that's gone quiet ──────────────────────────────
 // The only message this app puts in front of someone the user didn't just hear

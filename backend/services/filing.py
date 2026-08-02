@@ -317,9 +317,8 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
     Returns a summary the scan turns into one notification line. Never raises
     for a filing problem — organising mail must not be able to fail a scan.
     """
-    out: Dict[str, object] = {"filed": 0, "threads": 0, "proposed": [], "by_folder": {}}
     if not cfg.filing_enabled:
-        return out
+        return {"filed": 0, "threads": 0, "proposed": [], "by_folder": {}}
 
     started = cfg.filing_started_at
     if started is None:
@@ -327,6 +326,37 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
         # now rather than treating all of history as fair game.
         cfg.filing_started_at = started = ledger.utcnow()
         db.commit()
+
+    # Forward-only: threads active since filing was switched on. The backfilled
+    # history is reached only through organize_backlog, which the user asks for.
+    return _sweep(db, user_id, since=started, max_proposals=MAX_PROPOSALS_PER_SWEEP)
+
+
+def _sweep(
+    db: Session,
+    user_id: str,
+    *,
+    since: datetime,
+    max_proposals: int,
+    max_threads: Optional[int] = None,
+    only_folders: Optional[set] = None,
+    note: str = "",
+) -> Dict[str, object]:
+    """The one filing pass, shared by the five-minute sweep and the backlog run.
+
+    Both paths must apply exactly the same gates — approval, rejected folders,
+    muted and bulk senders, the user's own LabelRules, INBOX untouched. Keeping
+    them in one function is the only way that stays true; a second
+    implementation for the backlog would drift, and the backlog is the run where
+    a mistake is measured in thousands of mislabelled threads.
+
+    `only_folders` restricts the run to folders the user explicitly picked.
+    `max_threads` caps broker calls — one `batch_modify` per thread — and the
+    leftovers come back as `remaining` so the caller can offer to continue.
+    """
+    out: Dict[str, object] = {
+        "filed": 0, "threads": 0, "proposed": [], "by_folder": {}, "remaining": 0,
+    }
 
     known = _known_folders(db, user_id)
     active = {name for name, f in known.items() if f.status == "active"}
@@ -345,23 +375,24 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
         .all()
     }
 
-    # Candidate threads: active since filing was switched on. Forward-only — the
-    # backfilled history is not touched unless the user explicitly asks.
     rows = (
         db.query(models.ThreadMessage)
         .filter(
             models.ThreadMessage.user_id == user_id,
-            models.ThreadMessage.ts_hi >= started,
+            models.ThreadMessage.ts_hi >= since,
         )
         .order_by(models.ThreadMessage.ts_hi.desc())
-        .limit(2000)
+        .limit(20000)
         .all()
     )
     by_thread: Dict[str, List[models.ThreadMessage]] = {}
     for m in rows:
         by_thread.setdefault(m.thread_id, []).append(m)
 
-    proposals_left = MAX_PROPOSALS_PER_SWEEP
+    proposals_left = max_proposals
+    # Newest first, so a capped run organises the mail the user is most likely
+    # to go looking for rather than an arbitrary slice.
+    filed_threads = 0
     by_folder: Dict[str, int] = {}
     # Conversations, not messages. The notification counts labels applied, but
     # "6 conversations filed" is what a person recognises as work done — a
@@ -385,6 +416,8 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
             name, kind, confidence = folder_for_thread(cp, subject, known)
             if not name or name in reserved:
                 continue  # nothing confident to say, or the user's own rule owns it
+            if only_folders is not None and name not in only_folders:
+                continue  # the user picked which folders this run may touch
 
             folder = known.get(name)
             if folder is not None and folder.status == "rejected":
@@ -421,13 +454,24 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
         # Only file into folders the user has actually approved.
         if tf.folder_name not in active:
             continue
+        if only_folders is not None and tf.folder_name not in only_folders:
+            continue
         # Already fully filed and no new messages since — nothing to do.
         if tf.status == "filed" and int(tf.filed_count or 0) >= len(msgs):
+            continue
+
+        # Each thread costs one broker call, so a large backlog is metered
+        # rather than fired off in one burst. What's left is reported, not
+        # silently dropped — a run that quietly stopped halfway would look like
+        # filing simply didn't work on the rest.
+        if max_threads is not None and filed_threads >= max_threads:
+            out["remaining"] = int(out["remaining"]) + 1
             continue
 
         try:
             n = apply_thread_folder(db, user_id, tf)
             if n:
+                filed_threads += 1
                 out["filed"] = int(out["filed"]) + n
                 out["threads"] = int(out["threads"]) + 1
                 by_folder[tf.folder_name] = by_folder.get(tf.folder_name, 0) + n
@@ -455,7 +499,10 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
         activity.record(
             db, user_id, "thread_filed",
             f"Filed {threads} conversation{'s' if threads != 1 else ''} into {name}",
-            detail=f"{by_folder.get(name, 0)} messages labelled, including your own replies.",
+            detail=(
+                note or
+                f"{by_folder.get(name, 0)} messages labelled, including your own replies."
+            ),
             subject_type="folder", subject_id=(known.get(name).id if known.get(name) else ""),
             folder_name=name, count=threads,
         )
@@ -500,6 +547,130 @@ def filing_summary_line(result: Dict[str, object]) -> str:
     return "\n".join(parts)
 
 
+#: One broker call per thread, so a first-time organise of a busy mailbox is
+#: metered. What's left over comes back as `remaining` and the user can continue.
+MAX_BACKLOG_THREADS_PER_RUN = 300
+
+
+def organize_backlog(
+    db: Session,
+    user_id: str,
+    *,
+    days: int = 30,
+    folders: List[str],
+) -> Dict[str, object]:
+    """File the mail that was already there, into folders the user just picked.
+
+    Filing is forward-only from the moment it's switched on, which is right for
+    the automatic path — nobody wants an app relabelling four thousand old
+    threads because they flipped a toggle. But it left the actual inbox, the one
+    with the backlog in it, untouched forever. Someone installs this to get
+    organised and the thing they wanted organised is the one thing it won't
+    touch.
+
+    So this is the explicit version: preview first (`preview_backlog`), then the
+    user names the folders they want, and only those are created and filled.
+    **Picking a folder here IS the approval** — it's a deliberate choice made
+    against a preview that says how many conversations go where, which is a
+    stronger signal than the passive queue the automatic path uses.
+
+    Not a bypass of any other gate: muted contacts, bulk senders, the user's own
+    LabelRules and previously-rejected folders are all still respected, and
+    INBOX is still never removed. It runs the same `_sweep` as the scan.
+    """
+    wanted = [f for f in {(f or "").strip() for f in folders} if f]
+    if not wanted:
+        return {"filed": 0, "threads": 0, "by_folder": {}, "remaining": 0, "folders": []}
+
+    reserved = _label_rule_labels(db, user_id)
+    known = _known_folders(db, user_id)
+    approved: List[str] = []
+    #: Folders this call brought into existence. If the sweep then puts nothing
+    #: in one, it gets removed again — see the cleanup below.
+    created: List[str] = []
+
+    for name in wanted:
+        if name in reserved:
+            continue  # the user's own rule owns this label; stay out of its way
+        folder = known.get(name)
+        if folder is None:
+            folder = models.MailFolder(
+                user_id=user_id, name=name, kind="counterparty",
+                source="user", status="active", approved_at=ledger.utcnow(),
+            )
+            db.add(folder)
+            try:
+                db.flush()
+            except IntegrityError:
+                db.rollback()
+                continue
+            created.append(name)
+        elif folder.status != "active":
+            # Includes previously-rejected folders: choosing one from the
+            # preview is the user changing their mind, in the open.
+            folder.status = "active"
+            folder.approved_at = ledger.utcnow()
+        approved.append(name)
+        activity.record(
+            db, user_id, "folder_approved",
+            f"You approved the folder {name}",
+            detail="Chosen while organising the mail you already had.",
+            subject_type="folder", subject_id=folder.id, folder_name=name,
+        )
+    db.commit()
+
+    if not approved:
+        return {"filed": 0, "threads": 0, "by_folder": {}, "remaining": 0, "folders": []}
+
+    since = ledger.utcnow() - timedelta(days=max(1, min(days, 90)))
+    out = _sweep(
+        db, user_id,
+        since=since,
+        max_proposals=0,          # nothing new gets proposed mid-organise
+        max_threads=MAX_BACKLOG_THREADS_PER_RUN,
+        only_folders=set(approved),
+        note="From the mail you already had.",
+    )
+
+    # Leave no debris. A folder we created for this run that ended up with
+    # nothing in it is a label sitting in someone's real mailbox that will never
+    # receive mail — and a "you approved this" line in their history for a
+    # decision that did nothing. Happens when the preview was stale, or when a
+    # thread stopped qualifying between preview and run.
+    #
+    # Only ones created HERE, only when genuinely empty, and never when the run
+    # was capped — with work still queued, an empty folder is just waiting.
+    if int(out.get("remaining") or 0) == 0:
+        for name in created:
+            if name in (out.get("by_folder") or {}):
+                continue
+            used = (
+                db.query(models.ThreadFolder)
+                .filter(
+                    models.ThreadFolder.user_id == user_id,
+                    models.ThreadFolder.folder_name == name,
+                )
+                .count()
+            )
+            if used:
+                continue
+            db.query(models.MailFolder).filter(
+                models.MailFolder.user_id == user_id,
+                models.MailFolder.name == name,
+            ).delete(synchronize_session=False)
+            db.query(models.ActivityEvent).filter(
+                models.ActivityEvent.user_id == user_id,
+                models.ActivityEvent.kind == "folder_approved",
+                models.ActivityEvent.folder_name == name,
+            ).delete(synchronize_session=False)
+            if name in approved:
+                approved.remove(name)
+        db.commit()
+
+    out["folders"] = approved
+    return out
+
+
 def preview_backlog(db: Session, user_id: str, *, days: int = 30) -> List[Dict[str, object]]:
     """What organising the recent backlog WOULD do, without doing it.
 
@@ -525,8 +696,24 @@ def preview_backlog(db: Session, user_id: str, *, days: int = 30) -> List[Dict[s
     for m in rows:
         by_thread.setdefault(m.thread_id, []).append(m)
 
+    # Threads already filed must not be counted. The preview's number is what
+    # the user decides on, so it has to mean "conversations that would move",
+    # not "conversations that belong here" — otherwise running it twice offers
+    # the same work again and looks like nothing happened the first time.
+    settled = {
+        tf.thread_id
+        for tf in db.query(models.ThreadFolder)
+        .filter(
+            models.ThreadFolder.user_id == user_id,
+            models.ThreadFolder.status == "filed",
+        )
+        .all()
+    }
+
     tally: Dict[str, int] = {}
-    for msgs in by_thread.values():
+    for thread_id, msgs in by_thread.items():
+        if thread_id in settled:
+            continue
         inbound = [m for m in msgs if m.direction == "in" and m.counterparty_email]
         email = inbound[0].counterparty_email if inbound else ""
         cp = counterparties.get(email or "")
@@ -541,6 +728,13 @@ def preview_backlog(db: Session, user_id: str, *, days: int = 30) -> List[Dict[s
         tally[name] = tally.get(name, 0) + 1
 
     return [
-        {"folder": name, "threads": count, "exists": name in known}
+        {
+            "folder": name,
+            "threads": count,
+            "exists": name in known,
+            # Surfaced rather than hidden: the user said no to this one before,
+            # and picking it now should be a visibly deliberate reversal.
+            "rejected": (known.get(name).status == "rejected") if name in known else False,
+        }
         for name, count in sorted(tally.items(), key=lambda kv: kv[1], reverse=True)
     ]

@@ -1372,6 +1372,47 @@ async def backlog_preview(
     return {"preview": filing.preview_backlog(db, user_id, days=max(1, min(days, 90)))}
 
 
+class OrganizeBacklogBody(BaseModel):
+    days: int = 30
+    #: Exactly the folders the user ticked in the preview. Picking one here IS
+    #: the approval — a deliberate choice against a preview that says how many
+    #: conversations go where.
+    folders: List[str] = []
+
+
+@router.post("/api/folders/organize-backlog")
+async def organize_backlog_route(
+    payload: OrganizeBacklogBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """File the mail that was already there.
+
+    Automatic filing is forward-only from the moment it's switched on, which is
+    right — nobody wants an app relabelling four thousand old threads because
+    they flipped a toggle. But that left the actual backlog untouched forever,
+    which is the mail someone installed this to get organised.
+
+    Capped per run; anything left over comes back as `remaining` so the UI can
+    offer to continue rather than silently stopping halfway.
+    """
+    if not payload.folders:
+        raise HTTPException(status_code=400, detail="Pick at least one folder to organize into.")
+    try:
+        return {
+            "success": True,
+            **filing.organize_backlog(
+                db, user_id,
+                days=max(1, min(payload.days, 90)),
+                folders=payload.folders[:50],
+            ),
+        }
+    except IntegrationNotConnected:
+        raise HTTPException(status_code=409, detail="Connect Gmail, then try again.")
+    except IntegrationError as e:
+        raise HTTPException(status_code=502, detail=f"Gmail couldn’t apply the labels: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Nudges — chasing a thread that's gone quiet. Draft-only until approved.
 # ---------------------------------------------------------------------------
