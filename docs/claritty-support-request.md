@@ -70,9 +70,10 @@ one thing nobody outside your AWS account can get.
 ```
 
 Identical shape both times: it dies **~60–90 s into the build phase**, at the
-same point, with the same message. Not intermittent. For reference the full
-build takes 63 s on my machine, so this is either a build timeout set just
-below what this app needs, or an early failure in a step I can't see.
+same point, with the same message. For reference the full build takes 63 s on my
+machine, and the builds that DID succeed took ~3 minutes — so failures are
+consistently much faster than successes, which reads more like an early error
+than a timeout.
 
 `draftError` is only:
 
