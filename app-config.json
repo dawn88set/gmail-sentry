@@ -1,270 +1,131 @@
 {
   "$schema": "https://clarity.ai/schemas/app-config-v1.json",
   "appName": "Gmail Sentry",
-  "appVersion": "1.0.0",
-  "description": "Inbox watchdog: triage incoming Gmail against your rules, Slack-ping you with a deep link on what needs attention, and clear Promotions/Social/Spam in one tap.",
+  "appVersion": "1.1.0",
+  "description": "Know what your inbox needs from you. Gmail Sentry triages new mail against rules you write in plain language, tracks the threads you owe people and the ones that have gone quiet, files whole conversations into folders you approve, and drafts replies in your own voice \u2014 you approve, it sends.",
   "configSchema": {
     "version": "1.0",
     "sections": [
       {
-        "id": "ai_settings",
-        "label": "AI Configuration",
-        "description": "Configure how AI agents operate in your application",
-        "icon": "sparkles",
+        "id": "triage",
+        "label": "Triage & alerts",
+        "description": "Starting defaults for a new user. Everything here can be changed later in the app on the Rules screen, which then owns the value.",
+        "icon": "bell",
         "order": 1,
         "fields": [
           {
-            "key": "AI_OPERATION_MODE",
-            "label": "AI Operation Mode",
-            "description": "How should AI agents behave?",
+            "key": "SENTRY_NOTIFY_TIER",
+            "label": "Ping me about",
+            "description": "Which mail is worth interrupting you for.",
             "type": "select",
-            "required": true,
-            "default": "balanced",
+            "required": false,
+            "default": "urgent",
             "options": [
               {
-                "value": "fast",
-                "label": "Fast",
-                "description": "Quick responses, lower cost, good for simple tasks"
+                "value": "urgent",
+                "label": "Urgent only",
+                "description": "Only mail Sentry classifies as urgent."
               },
               {
-                "value": "balanced",
-                "label": "Balanced",
-                "description": "Good balance of speed and quality"
-              },
-              {
-                "value": "quality",
-                "label": "Quality",
-                "description": "Best quality responses, slower, higher cost"
+                "value": "needs_reply",
+                "label": "Urgent + needs a reply",
+                "description": "Also ping for mail that's waiting on an answer from you."
               }
             ],
             "validation": {
               "enum": [
-                "fast",
-                "balanced",
-                "quality"
+                "urgent",
+                "needs_reply"
               ]
             }
           },
           {
-            "key": "AI_RESPONSE_TEMPERATURE",
-            "label": "AI Creativity Level",
-            "description": "How creative should AI responses be? (0 = consistent, 100 = very creative)",
-            "type": "number",
+            "key": "SENTRY_AUTO_DRAFT",
+            "label": "Draft replies automatically",
+            "description": "Write a reply in your voice as soon as mail is flagged, so the notification carries a ready-to-send draft. Nothing is ever sent without your approval.",
+            "type": "boolean",
             "required": false,
-            "default": 70,
-            "validation": {
-              "min": 0,
-              "max": 100
-            },
-            "help_text": "Lower values produce more consistent responses, higher values more creative"
+            "default": true
           }
         ]
       },
       {
-        "id": "workflow_settings",
-        "label": "Workflow Execution",
-        "description": "Configure how workflows execute",
-        "icon": "workflow",
+        "id": "organizing",
+        "label": "Organizing",
+        "description": "Filing settings. Folders are always proposed for your approval first \u2014 nothing is created in your mailbox without a yes.",
+        "icon": "folder",
         "order": 2,
         "fields": [
           {
-            "key": "WORKFLOW_RETRY_FAILED",
-            "label": "Auto-Retry Failed Workflows",
-            "description": "Automatically retry workflows that fail",
-            "type": "boolean",
-            "required": false,
-            "default": true
-          },
-          {
-            "key": "WORKFLOW_MAX_RETRIES",
-            "label": "Maximum Retries",
-            "description": "How many times to retry failed workflows",
-            "type": "number",
-            "required": false,
-            "default": 2,
-            "validation": {
-              "min": 0,
-              "max": 5
-            },
-            "condition": {
-              "field": "WORKFLOW_RETRY_FAILED",
-              "equals": true
-            }
-          },
-          {
-            "key": "WORKFLOW_PARALLEL_LIMIT",
-            "label": "Parallel Workflow Limit",
-            "description": "Maximum number of workflows to run simultaneously",
-            "type": "number",
-            "required": false,
-            "default": 3,
-            "validation": {
-              "min": 1,
-              "max": 10
-            },
-            "help_text": "Higher values allow more concurrent workflows but use more resources"
-          }
-        ]
-      },
-      {
-        "id": "notification_settings",
-        "label": "Notifications",
-        "description": "Configure when and how you receive notifications",
-        "icon": "bell",
-        "order": 3,
-        "fields": [
-          {
-            "key": "NOTIFY_ON_WORKFLOW_COMPLETE",
-            "label": "Workflow Completion Notifications",
-            "description": "Get notified when workflows complete",
-            "type": "boolean",
-            "required": false,
-            "default": true
-          },
-          {
-            "key": "NOTIFY_ON_WORKFLOW_FAILURE",
-            "label": "Workflow Failure Notifications",
-            "description": "Get notified when workflows fail",
-            "type": "boolean",
-            "required": false,
-            "default": true
-          },
-          {
-            "key": "NOTIFICATION_EMAIL",
-            "label": "Notification Email Address",
-            "description": "Where to send notifications",
-            "type": "email",
-            "required": false,
-            "validation": {
-              "email": true
-            },
-            "help_text": "Leave empty to use your account email"
-          }
-        ]
-      },
-      {
-        "id": "integration_settings",
-        "label": "External Integrations",
-        "description": "Connect to external services (optional)",
-        "icon": "plug",
-        "order": 4,
-        "fields": [
-          {
-            "key": "ENABLE_SLACK_INTEGRATION",
-            "label": "Enable Slack Integration",
-            "description": "Send notifications to Slack",
+            "key": "SENTRY_FILING_ENABLED",
+            "label": "File conversations into folders",
+            "description": "Suggest a folder for each new conversation, based on who it's with. Nothing is filed until you approve the folder, and filing never removes mail from your inbox.",
             "type": "boolean",
             "required": false,
             "default": false
-          },
-          {
-            "key": "SLACK_WEBHOOK_URL",
-            "label": "Slack Webhook URL",
-            "description": "Webhook URL from Slack",
-            "type": "url",
-            "secure": true,
-            "required": false,
-            "validation": {
-              "url": true,
-              "pattern": "^https://hooks\\.slack\\.com/.*$"
-            },
-            "condition": {
-              "field": "ENABLE_SLACK_INTEGRATION",
-              "equals": true
-            },
-            "help_text": "Get this from Slack: Settings > Incoming Webhooks"
-          }
-        ]
-      },
-      {
-        "id": "advanced_settings",
-        "label": "Advanced",
-        "description": "Advanced configuration options",
-        "icon": "settings",
-        "order": 5,
-        "collapsible": true,
-        "collapsed": true,
-        "fields": [
-          {
-            "key": "DEBUG_MODE",
-            "label": "Debug Mode",
-            "description": "Enable verbose logging for troubleshooting",
-            "type": "boolean",
-            "required": false,
-            "default": false,
-            "help_text": "Only enable when debugging issues. Performance impact."
-          },
-          {
-            "key": "CUSTOM_METADATA",
-            "label": "Custom Metadata",
-            "description": "Add custom metadata (JSON format)",
-            "type": "json",
-            "required": false,
-            "help_text": "Advanced users only. Must be valid JSON."
           }
         ]
       }
     ]
   },
   "metadata": {
-    "author": "",
+    "author": "Shahar Cohen",
     "license": "MIT",
-    "documentation": "",
-    "support": ""
+    "documentation": "https://github.com/dawn88set/gmail-sentry#readme",
+    "support": "https://github.com/dawn88set/gmail-sentry/issues"
   },
   "clarity_marketplace": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "category": "productivity",
     "tags": [
       "gmail",
       "email",
       "inbox",
       "triage",
+      "follow-ups",
+      "reminders",
       "slack",
-      "whatsapp",
       "telegram",
-      "notifications",
-      "auto-reply",
-      "productivity"
+      "whatsapp",
+      "productivity",
+      "sales"
     ],
     "pricing_model": "free",
     "developer": {
-      "name": "",
+      "name": "Shahar Cohen",
       "email": "",
-      "website": "",
+      "website": "https://github.com/dawn88set/gmail-sentry",
       "support_email": ""
     },
     "features": [
-      "Teach it in plain language what to watch for — it turns your words into triage rules, grounded in your real inbox",
-      "Learns how you actually communicate: VIPs you correspond with + your writing voice",
-      "AI triage of incoming Gmail into urgent / needs-reply / FYI",
-      "Notify via Slack, WhatsApp, Telegram, or Discord — with a ready-to-send reply in your voice",
-      "Approve & send a reply in one tap, from the app or straight from the notification",
-      "Daily inbox report of what needs attention + the replies waiting",
-      "Auto-file mail by sender/subject with label rules",
-      "One-tap bulk clear of Promotions, Social, and Spam",
-      "Runs on a schedule (every 5 minutes by default)"
+      "Tells you what you owe people and who has gone quiet \u2014 the silences that cost you customers",
+      "Chase a thread that's gone quiet with a short follow-up in your voice \u2014 you approve every one, and it won't let you over-chase",
+      "Teach it in plain language what matters; it turns your words into rules, grounded in your real inbox",
+      "AI triage of incoming Gmail into urgent / needs-reply / FYI, with the actual ask pulled out in one line",
+      "Learns who matters from how you really behave \u2014 who you answer, how fast \u2014 not from who emails most, and lets you correct it when it's wrong",
+      "Files whole conversations into folders you approve, your replies included, so a thread lives in one place",
+      "One-tap replies written in your own voice, learned from your real sent mail",
+      "Nothing ever sends without you \u2014 every reply shows the recipient before it goes",
+      "Notice replies you sent from your phone, so the app never nags about mail you already handled",
+      "A daily report of what needs answering, what's going quiet, and what got filed",
+      "Alerts on Slack, WhatsApp, Telegram or Discord \u2014 with a ready-to-send reply attached",
+      "One-tap bulk clear of Promotions, Social and Spam"
     ],
     "screenshot_instructions": {
       "required_files": [
         "./screenshots/widget-small.png",
+        "./screenshots/widget-medium.png",
         "./screenshots/widget-large.png"
       ],
       "how_to_capture": [
-        "1. Run your app: docker-compose up",
-        "2. Open frontend at http://localhost:3200",
-        "3. For widget-small.png: Capture the small widget from /widget page",
-        "4. For widget-large.png: Capture the large widget from /widget page",
-        "5. Save screenshots to ./screenshots/ directory in your app root",
-        "6. Use PNG format with transparent or white background",
-        "7. Ensure screenshots show REAL DATA, not empty states"
+        "Run `cd frontend && npm run screenshots` \u2014 regenerates every declared file at 2x from the live widget.",
+        "Re-run it after any widget change; the PNGs are build output, not hand-captured art."
       ],
       "best_practices": [
-        "Use high-quality screenshots (2x resolution recommended)",
-        "Show the widget in action with realistic data",
-        "Avoid screenshots with obvious test/placeholder data",
-        "Widget screenshots are PRIMARY - users see these in marketplace",
-        "Ensure good lighting and contrast for visibility"
+        "Element screenshots at deviceScaleFactor 2 \u2014 exactly 170\u00d7170 / 360\u00d7170 / 360\u00d7360 at 2x, no page chrome.",
+        "Data comes from frontend/tests/fixtures/widget-marketing.json: plausible people, companies and asks.",
+        "The fixture uses pre-rendered relative strings ('4m ago'), so re-running gives byte-identical files.",
+        "Never ship 'test'/'foo'/'lorem'/'example.com'/'John Doe' \u2014 obvious placeholder data reads as unfinished."
       ]
     },
     "required_integrations": [
@@ -277,7 +138,7 @@
       "twilio"
     ],
     "core_action": {
-      "definition_of_done": "A new email that needs a reply arrives; within a scan the user gets a notification on their channel (Slack/WhatsApp/Telegram/Discord) carrying a reply drafted in their own voice and a one-tap approve link. Tapping it (or opening the app) lands on the email with Approve & Send, which really sends the reply through Gmail (in-thread) and marks it done \u2014 or shows a clear connect-Gmail/reconnect-channel prompt when an integration is not connected (never a faked success). Urgent mail is flagged in the dashboard and widget, matching mail is auto-filed by label rules, a daily digest reports what's waiting, and Promotions/Social/Spam clear in one tap.",
+      "definition_of_done": "A new email that needs a reply arrives; within a scan the user gets a notification on their channel carrying a reply drafted in their own voice and a one-tap approve link. Tapping it lands on the email with Approve & Send, which really sends through Gmail in-thread \u2014 or shows a clear connect-Gmail prompt when an integration isn't connected, never a faked success. The thread then stays visible as an open loop waiting on them rather than disappearing, and surfaces as going cold if they never answer. A reply the user sends from their phone closes the alert on its own. Conversations are filed into folders the user approved \u2014 their own replies included \u2014 and nothing is ever labelled with a folder they haven't approved. A daily report says what needs answering, who has gone quiet, and what was filed.",
       "external_systems": [
         "gmail",
         "slack"
