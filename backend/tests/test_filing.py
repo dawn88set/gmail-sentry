@@ -417,3 +417,91 @@ def test_the_summary_flags_folders_waiting_for_approval():
 
 def test_a_quiet_sweep_says_nothing():
     assert filing.filing_summary_line({"filed": 0, "by_folder": {}, "proposed": []}) == ""
+
+
+# ── the record ──────────────────────────────────────────────────────────────
+#
+# Filing used to be announced only in a chat message. In the app a folder showed
+# a name and a number, so there was no way to see what had been put where, or
+# when, or that anything had failed.
+
+def _events(db, user="u1", kind=None):
+    q = db.query(models.ActivityEvent).filter(models.ActivityEvent.user_id == user)
+    if kind:
+        q = q.filter(models.ActivityEvent.kind == kind)
+    return q.order_by(models.ActivityEvent.at.asc()).all()
+
+
+def test_filing_records_one_event_per_folder_counting_conversations(gmail):
+    db = _session()
+    cfg = a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    msg(db, "u1", "t2", "in", sender="Dana <dana@northwind.co>", subject="Q4")
+    filing.run_filing(db, "u1", cfg)
+    filing.approve_folder(db, db.query(models.MailFolder).one())
+    filing.run_filing(db, "u1", cfg)
+
+    filed = _events(db, kind="thread_filed")
+    assert len(filed) == 1, "one row per folder per sweep, not one per thread"
+    assert filed[0].count == 2, "counts conversations, which is what the user recognises"
+    assert filed[0].folder_name == "Clients/Northwind"
+    assert "2 conversations into Clients/Northwind" in filed[0].title
+
+
+def test_a_settled_thread_records_nothing_on_later_sweeps(gmail):
+    """The scan runs every five minutes. If a quiet sweep wrote a row, the feed
+    would become the log it exists to replace."""
+    db = _session()
+    cfg = a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    filing.run_filing(db, "u1", cfg)
+    filing.approve_folder(db, db.query(models.MailFolder).one())
+    filing.run_filing(db, "u1", cfg)
+    for _ in range(5):
+        filing.run_filing(db, "u1", cfg)
+
+    assert len(_events(db, kind="thread_filed")) == 1
+
+
+def test_a_filing_failure_is_recorded_rather_than_only_logged(gmail):
+    """It used to be invisible everywhere: the thread simply never appeared in
+    its folder and nothing said why."""
+    db = _session()
+    cfg = a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    filing.run_filing(db, "u1", cfg)
+    filing.approve_folder(db, db.query(models.MailFolder).one())
+
+    gmail.fail = True
+    filing.run_filing(db, "u1", cfg)
+
+    failures = _events(db, kind="filing_failed")
+    assert len(failures) == 1
+    assert "Clients/Northwind" in failures[0].title
+    assert failures[0].detail, "the reason has to survive, not just the fact"
+
+
+def test_proposing_approving_and_rejecting_a_folder_are_all_on_the_record(gmail):
+    db = _session()
+    cfg = a_config(db, "u1")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    filing.run_filing(db, "u1", cfg)
+    assert [e.kind for e in _events(db)] == ["folder_proposed"]
+
+    filing.reject_folder(db, db.query(models.MailFolder).one())
+    assert [e.kind for e in _events(db)] == ["folder_proposed", "folder_rejected"]
+
+
+def test_the_record_is_scoped_to_one_user(gmail):
+    db = _session()
+    cfg1 = a_config(db, "u1")
+    a_config(db, "u2")
+    a_counterparty(db, "u1", "dana@northwind.co", relationship=cp_service.CUSTOMER)
+    msg(db, "u1", "t1", "in", sender="Dana <dana@northwind.co>", subject="Q3")
+    filing.run_filing(db, "u1", cfg1)
+
+    assert _events(db, "u2") == []

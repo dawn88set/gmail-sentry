@@ -47,6 +47,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from backend import models
+from backend.services import activity
 from backend.services import counterparty as cp_service
 from backend.services import followups as fu_service
 from backend.services import ledger
@@ -384,5 +385,17 @@ def mark_sent(
     fu.stale_after_hours = min(
         fu_service.MAX_STALE_HOURS,
         int(round(int(fu.stale_after_hours or fu_service.DEFAULT_STALE_HOURS) * 1.5)),
+    )
+    # The one message this app sends to someone the user didn't just hear from,
+    # so it belongs on the record more than anything else here does.
+    who = fu.counterparty_name or fu.counterparty_email or nudge.to_email or "someone"
+    activity.record(
+        db, user_id, "nudge_sent",
+        f"Followed up with {who}",
+        detail=nudge.subject or fu.subject or "",
+        subject_type="followup", subject_id=fu.id,
+        counterparty_email=nudge.to_email or fu.counterparty_email or "",
+        count=int(nudge.attempt_no or 1), at=ref,
+        meta={"tone": nudge.tone or "gentle", "attempt": int(nudge.attempt_no or 1)},
     )
     db.commit()

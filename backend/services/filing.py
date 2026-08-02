@@ -53,6 +53,7 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.integrations import gmail_ops as gmail_adapter
+from backend.services import activity
 from backend.services import counterparty as cp_service
 from backend.services import ledger
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
@@ -223,6 +224,13 @@ def propose_folder(
 def approve_folder(db: Session, folder: models.MailFolder) -> models.MailFolder:
     folder.status = "active"
     folder.approved_at = ledger.utcnow()
+    activity.record(
+        db, folder.user_id, "folder_approved",
+        f"You approved the folder {folder.name}",
+        detail="Conversations with this contact will be filed here from now on.",
+        subject_type="folder", subject_id=folder.id, folder_name=folder.name,
+        counterparty_email=folder.counterparty_email or "",
+    )
     db.commit()
     return folder
 
@@ -235,6 +243,14 @@ def reject_folder(db: Session, folder: models.MailFolder) -> models.MailFolder:
         models.ThreadFolder.folder_name == folder.name,
         models.ThreadFolder.status == "pending",
     ).delete(synchronize_session=False)
+    # Worth recording: a rejection is the user teaching the app something, and
+    # without it the folder simply disappears with no evidence they were asked.
+    activity.record(
+        db, folder.user_id, "folder_rejected",
+        f"You turned down the folder {folder.name}",
+        detail="It won’t be suggested again.",
+        subject_type="folder", subject_id=folder.id, folder_name=folder.name,
+    )
     db.commit()
     return folder
 
@@ -347,6 +363,10 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
 
     proposals_left = MAX_PROPOSALS_PER_SWEEP
     by_folder: Dict[str, int] = {}
+    # Conversations, not messages. The notification counts labels applied, but
+    # "6 conversations filed" is what a person recognises as work done — a
+    # 12-message thread is one thing they no longer have to sort.
+    threads_by_folder: Dict[str, int] = {}
 
     for thread_id, msgs in by_thread.items():
         tf = already.get(thread_id)
@@ -383,6 +403,13 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
                     continue  # previously rejected
                 known[name] = folder
                 proposals_left -= 1
+                activity.record(
+                    db, user_id, "folder_proposed",
+                    f"Suggested a folder: {name}",
+                    detail="Waiting for your OK — nothing is filed there until you approve it.",
+                    subject_type="folder", subject_id=folder.id,
+                    folder_name=name, counterparty_email=email or "",
+                )
 
             tf = models.ThreadFolder(
                 user_id=user_id, thread_id=thread_id, folder_name=name,
@@ -404,12 +431,34 @@ def run_filing(db: Session, user_id: str, cfg: models.SentryConfig) -> Dict[str,
                 out["filed"] = int(out["filed"]) + n
                 out["threads"] = int(out["threads"]) + 1
                 by_folder[tf.folder_name] = by_folder.get(tf.folder_name, 0) + n
+                threads_by_folder[tf.folder_name] = threads_by_folder.get(tf.folder_name, 0) + 1
         except IntegrationNotConnected:
             raise
         except IntegrationError as e:
             tf.status = "failed"
             tf.error = str(e)[:500]
             logger.info("filing failed for thread %s: %s", thread_id, e)
+            # Previously this was invisible everywhere: the thread simply never
+            # appeared in its folder and nothing said why.
+            activity.record(
+                db, user_id, "filing_failed",
+                f"Couldn’t file a conversation into {tf.folder_name}",
+                detail=str(e)[:500],
+                subject_type="thread", subject_id=thread_id,
+                folder_name=tf.folder_name,
+            )
+
+    # One event per folder per sweep, not one per thread. Filing runs every five
+    # minutes; per-thread rows would turn the feed into the log it exists to
+    # replace.
+    for name, threads in threads_by_folder.items():
+        activity.record(
+            db, user_id, "thread_filed",
+            f"Filed {threads} conversation{'s' if threads != 1 else ''} into {name}",
+            detail=f"{by_folder.get(name, 0)} messages labelled, including your own replies.",
+            subject_type="folder", subject_id=(known.get(name).id if known.get(name) else ""),
+            folder_name=name, count=threads,
+        )
 
     db.commit()
 

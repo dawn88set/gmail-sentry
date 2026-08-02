@@ -28,6 +28,8 @@ from backend.services.sentry import run_scan, get_config
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
+from backend.services import activity
+from backend.services import insights as insights_service
 from backend.services import ledger
 from backend.services import followups
 from backend.services import filing
@@ -308,6 +310,17 @@ async def send_reply_alert(
     alert.reply_sent_at = datetime.utcnow()
     alert.reply_error = None
     alert.status = "done"
+    # Only after a real Gmail message id — the feed must never claim a send that
+    # didn't happen, which is the whole point of the 502 branches above.
+    activity.record(
+        db, user_id, "reply_sent",
+        f"You replied to {activity.short_sender(alert.sender or '')}",
+        detail=alert.subject or "",
+        subject_type="alert", subject_id=alert.id,
+        counterparty_email=_sender_email(alert.sender or ""),
+        at=alert.reply_sent_at,
+        meta={"message_id": message_id},
+    )
     db.commit()
 
     # Tell the ledger straight away rather than waiting for the next `in:sent`
@@ -731,7 +744,11 @@ async def recent_scans(
 ):
     """The last few scan runs (newest first) so the user can SEE the actual cadence
     — the interval is owned by the Claritty platform, and this makes any drift or
-    gaps visible + diagnosable. Returns [{at, ago, scanned, flagged, notified, error}]."""
+    gaps visible + diagnosable.
+
+    Returns [{at, ago, scanned, flagged, labeled, notified, error}]. `labeled` was
+    written on every run and then dropped here, so the filing volume the app was
+    proudest of never reached the client."""
     runs = (
         db.query(models.ScanRun)
         .filter(models.ScanRun.user_id == user_id)
@@ -746,6 +763,7 @@ async def recent_scans(
                 "ago": _relative_time(r.started_at),
                 "scanned": r.scanned or 0,
                 "flagged": r.flagged or 0,
+                "labeled": r.labeled or 0,
                 "notified": r.notified or 0,
                 "error": r.error or None,
             }
@@ -1153,17 +1171,133 @@ async def list_folders(
         .group_by(models.ThreadFolder.folder_name)
         .all()
     )
+    # When each folder last received something. A count alone can't tell an
+    # active folder from one that stopped being used in April.
+    last_filed = dict(
+        db.query(models.ThreadFolder.folder_name, func.max(models.ThreadFolder.filed_at))
+        .filter(
+            models.ThreadFolder.user_id == user_id,
+            models.ThreadFolder.status == "filed",
+        )
+        .group_by(models.ThreadFolder.folder_name)
+        .all()
+    )
     cfg = get_config(db, user_id)
     out = []
     for f in rows:
         d = f.to_dict()
         d["thread_count"] = int(filed_counts.get(f.name, 0))
+        when = last_filed.get(f.name)
+        d["last_filed_at"] = when.isoformat() if when else None
+        d["last_filed_ago"] = _relative_time(when) if when else ""
         out.append(d)
     return {
         "folders": out,
         "filing_enabled": bool(cfg.filing_enabled),
         "pending": sum(1 for f in rows if f.status == "proposed"),
     }
+
+
+@router.get("/api/folders/{folder_id}/threads")
+async def folder_threads(
+    folder_id: str,
+    limit: int = 50,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The conversations filed into one folder.
+
+    A folder that shows only a number is a claim the user can't check. This is
+    what makes filing auditable: they can see exactly what was put where, and
+    open any of it in Gmail if the answer is "not that one".
+
+    Subject and counterparty come from the ledger rather than from Gmail — the
+    rows are already local, so browsing a folder costs no broker calls.
+    """
+    folder = _get_folder(db, folder_id, user_id)
+    rows = (
+        db.query(models.ThreadFolder)
+        .filter(
+            models.ThreadFolder.user_id == user_id,
+            models.ThreadFolder.folder_name == folder.name,
+        )
+        .order_by(models.ThreadFolder.filed_at.desc().nullslast())
+        .limit(max(1, min(limit, 200)))
+        .all()
+    )
+
+    ids = [r.thread_id for r in rows]
+    identity: dict = {}
+    if ids:
+        for m in (
+            db.query(models.ThreadMessage)
+            .filter(
+                models.ThreadMessage.user_id == user_id,
+                models.ThreadMessage.thread_id.in_(ids),
+            )
+            .order_by(models.ThreadMessage.ts_hi.asc())
+            .all()
+        ):
+            slot = identity.setdefault(m.thread_id, {"subject": "", "email": "", "name": ""})
+            if not slot["subject"] and m.subject:
+                slot["subject"] = m.subject
+            if not slot["email"] and m.direction == "in" and m.counterparty_email:
+                slot["email"] = m.counterparty_email
+                slot["name"] = activity.short_sender(m.sender or "")
+
+    return {
+        "folder": folder.to_dict(),
+        "threads": [
+            {
+                "thread_id": r.thread_id,
+                "subject": identity.get(r.thread_id, {}).get("subject") or "(no subject)",
+                "counterparty_email": identity.get(r.thread_id, {}).get("email") or "",
+                "counterparty_name": identity.get(r.thread_id, {}).get("name") or "",
+                "status": r.status,
+                "filed_count": int(r.filed_count or 0),
+                "filed_at": r.filed_at.isoformat() if r.filed_at else None,
+                "filed_ago": _relative_time(r.filed_at) if r.filed_at else "",
+                "error": r.error or "",
+                "deep_link": f"https://mail.google.com/mail/u/0/#all/{r.thread_id}",
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/api/activity")
+async def get_activity(
+    days: int = 14,
+    limit: int = 120,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """What this app actually did, newest first, grouped by day.
+
+    Changes only — never runs. A scan that found nothing writes nothing, so
+    every line here is worth reading. Scan cadence lives on the dashboard.
+    """
+    events = activity.feed(db, user_id, days=days, limit=limit)
+    return {
+        "days": activity.by_day(events),
+        "summary": activity.summary(db, user_id, days=7),
+        "total": len(events),
+        "window_days": days,
+    }
+
+
+@router.get("/api/insights")
+async def get_insights(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """True statements about how this mailbox works.
+
+    Countable facts only — no modelled hours saved, no imputed money value. One
+    invented number a user can disprove makes every other number in the app
+    suspect, including the ones their mail depends on.
+    """
+    return insights_service.build(db, user_id)
 
 
 class FolderBody(BaseModel):

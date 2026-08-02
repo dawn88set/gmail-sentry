@@ -37,6 +37,7 @@ from backend import models
 from backend.services.triage import classify_email, TIER_RANK
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile
+from backend.services import activity
 from backend.services import ledger
 from backend.services import counterparty
 from backend.services import followups
@@ -366,6 +367,14 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
                     a.reply_status = "drafted" if not is_fallback else a.reply_status
                 except Exception as e:  # noqa: BLE001 — drafting is best-effort
                     logger.info(f"pre-draft failed for alert {a.id}: {type(e).__name__}: {e}")
+            drafted = [a for a in to_reply if a.reply_status == "drafted"]
+            if drafted:
+                activity.record(
+                    db, user_id, "replies_drafted",
+                    f"Wrote {len(drafted)} repl{'ies' if len(drafted) != 1 else 'y'} in your voice",
+                    detail="Waiting for your approval — nothing sends without it.",
+                    count=len(drafted),
+                )
             db.commit()
 
     # 3) Fan each fresh alert out to the channels whose urgency routing accepts it
@@ -377,6 +386,24 @@ def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> 
         if any(r["ok"] for r in results):
             alert.slack_sent = True  # reused as the "notified" flag
             notified += 1
+
+    # One row for the whole scan, not one per alert. The Alerts screen already
+    # lists them individually; the feed's job is to say what changed, and a burst
+    # of eleven separate "flagged" lines would drown the rarer events that only
+    # exist here.
+    if new_alerts:
+        who = [activity.short_sender(a.sender or "") for a in new_alerts[:3] if a.sender]
+        more = len(new_alerts) - len(who)
+        activity.record(
+            db, user_id, "mail_flagged",
+            f"Flagged {len(new_alerts)} email{'s' if len(new_alerts) != 1 else ''} for your attention",
+            detail=(", ".join(who) + (f", +{more} more" if more > 0 else "")) if who else "",
+            count=len(new_alerts),
+            meta={
+                "urgent": sum(1 for a in new_alerts if a.tier == "urgent"),
+                "needs_reply": sum(1 for a in new_alerts if a.tier == "needs_reply"),
+            },
+        )
     db.commit()
 
     # 3.5) Refresh who matters from the ledger we just extended. Pure SQL — no

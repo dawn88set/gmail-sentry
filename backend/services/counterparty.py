@@ -38,6 +38,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from backend import models
+from backend.services import activity
 from backend.services.ledger import utcnow
 from backend.services.onboarding import _BULK_LOCALPARTS
 
@@ -51,6 +52,18 @@ INTERNAL = "internal"
 VENDOR = "vendor"
 BULK = "bulk"
 UNKNOWN = "unknown"
+
+#: How each class is said in a sentence. The People screen shows the same words
+#: as plural labels; a person must not be a "Client" there and a "customer" in
+#: the activity feed.
+_REL_WORD = {
+    CUSTOMER: "client",
+    PROSPECT: "prospect",
+    INTERNAL: "colleague",
+    VENDOR: "supplier",
+    BULK: "automated sender",
+    UNKNOWN: "unclassified contact",
+}
 
 #: Subjects that mark a supplier relationship rather than a customer one.
 _VENDOR_HINTS = ("invoice", "receipt", "billing", "subscription", "payment due", "renewal notice")
@@ -322,8 +335,28 @@ def recompute(db: Session, user_id: str, *, limit_threads: int = 4000) -> int:
             and cp.last_seen_at >= now - timedelta(days=30)
             and int(slot["you_replied"]) > 0
         )
+        was = cp.relationship or UNKNOWN
         cp.relationship = infer_relationship(cp, vendor_hint=bool(slot["vendor_hint"]))
         cp.importance = importance_score(cp, two_way_recently=two_way)
+
+        # A reclassification is not cosmetic: it changes which folder this
+        # person's mail is filed into AND how long their silence is tolerated
+        # before a thread counts as cold. Doing that silently means the user
+        # can't correct it, because they never learn it happened.
+        if cp.relationship != was and was != UNKNOWN:
+            activity.record(
+                db, user_id, "relationship_changed",
+                f"{cp.display_name or email} looks like a "
+                f"{_REL_WORD.get(cp.relationship, cp.relationship)} now",
+                detail=(
+                    f"Was {_REL_WORD.get(was, was)}. This changes where their mail is "
+                    "filed and how long silence is normal — correct it on the People "
+                    "screen if it’s wrong."
+                ),
+                subject_type="counterparty", subject_id=cp.id or "",
+                counterparty_email=email,
+                meta={"from": was, "to": cp.relationship},
+            )
         written += 1
 
     db.commit()

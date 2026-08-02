@@ -35,16 +35,15 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.services.sentry import get_config
-from backend.services import followups
+from backend.services import activity, followups
 from backend.integrations import notify
 
 logger = logging.getLogger(__name__)
 
 
-def _short_sender(sender: str) -> str:
-    """A compact display name from a "Name <a@b.com>" sender."""
-    s = (sender or "").split("<")[0].strip().strip('"')
-    return s or (sender or "someone")
+#: One definition, so the report and the in-app activity feed name the same
+#: person the same way.
+_short_sender = activity.short_sender
 
 
 def _open_alerts(db: Session, user_id: str, limit: int = 50) -> List[models.Alert]:
@@ -197,8 +196,20 @@ def run_digest(db: Session, user_id: str) -> Dict[str, Any]:
     if not text:
         return {"ok": True, "sent": False, "reason": "all_clear"}
     results = notify.notify_all(db, user_id, cfg, text)
+    ok = [r for r in results if r["ok"]]
+    if ok:
+        # The report is the app's only unprompted output. Someone who wasn't at
+        # their desk should be able to see that it went, and where.
+        channels = ", ".join(sorted({str(r.get("channel") or "a channel") for r in ok}))
+        activity.record(
+            db, user_id, "report_sent",
+            "Sent your daily report",
+            detail=f"Delivered to {channels}." if channels else "",
+            count=len(ok),
+        )
+        db.commit()
     return {
         "ok": True,
-        "sent": any(r["ok"] for r in results),
+        "sent": bool(ok),
         "channels": results,
     }

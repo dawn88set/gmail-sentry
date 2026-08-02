@@ -11,6 +11,7 @@ filters by it):
 - CommProfile   — the learned voice + the people the user actually replies to
 - ThreadMessage — the thread ledger: every observed message, in and out
 - ThreadSyncState — the ledger's per-user sweep cursor
+- ActivityEvent — the record of what Sentry actually did, so it isn't invisible
 
 Kept from the seed (used by the SDK runtime + integrations layer):
 - UserIntegration, WorkflowExecution
@@ -767,6 +768,74 @@ class ThreadFolder(Base):
 
     def __repr__(self):
         return f"<ThreadFolder {self.thread_id} → {self.folder_name} ({self.status})>"
+
+
+class ActivityEvent(Base):
+    """One thing that happened, in the user's mailbox, because of this app.
+
+    Everything else in this schema stores *state*: what a thread's status is
+    now, which folder it ended up in, how many conversations a label holds.
+    None of it can answer "what did you do for me this week?" — and a scan
+    performs a dozen side effects every five minutes with no trace of any of
+    them. Filing was announced only in a chat message; an alert closed because
+    the user replied from their phone simply vanished from the list, which reads
+    as a bug rather than as the app being clever.
+
+    So this is an append-only log of *changes*, never of runs. A scan that finds
+    nothing writes nothing — 288 "scanned 20 messages" rows a day would bury the
+    handful of events that matter. Rows are written at the moment the thing
+    happens, because most of these transitions are otherwise unrecoverable:
+    `FollowUp.closed_at` is nulled when a loop reopens, `filed_at` is overwritten
+    when a thread is re-filed, and going cold is computed and thrown away.
+
+    The denormalised `counterparty_email` / `folder_name` / `count` columns are
+    deliberate. The feed must still render a truthful sentence years later even
+    if the folder was renamed or the contact deleted, so each row carries what it
+    needs to describe itself rather than joining out to mutable state.
+    """
+    __tablename__ = "activity_events"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+
+    at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    #: A stable machine key — see services/activity.py for the vocabulary and
+    #: the copy each one renders as. Never shown raw.
+    kind = Column(String, nullable=False, index=True)
+    #: The sentence shown in the feed, written at record time.
+    title = Column(String, nullable=False, default="")
+    #: Optional second line: the subject, the reason, the error.
+    detail = Column(Text, default="")
+
+    #: What this is about, for the tap target. thread | folder | followup |
+    #: alert | counterparty | none.
+    subject_type = Column(String, default="")
+    subject_id = Column(String, default="", index=True)
+
+    counterparty_email = Column(String, default="", index=True)
+    folder_name = Column(String, default="")
+    #: How many things — messages labelled, threads filed, drafts written.
+    count = Column(Integer, default=0)
+
+    meta = Column(JSON)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "at": self.at.isoformat() if self.at else None,
+            "kind": self.kind,
+            "title": self.title or "",
+            "detail": self.detail or "",
+            "subject_type": self.subject_type or "",
+            "subject_id": self.subject_id or "",
+            "counterparty_email": self.counterparty_email or "",
+            "folder_name": self.folder_name or "",
+            "count": int(self.count or 0),
+        }
+
+    def __repr__(self):
+        return f"<ActivityEvent {self.kind} at={self.at} user={self.user_id}>"
 
 
 class UserIntegration(Base):
