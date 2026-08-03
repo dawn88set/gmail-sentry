@@ -26,6 +26,23 @@ So "check that your app builds successfully locally" cannot be the issue. My
 app builds locally, builds in your pipeline during a window, and is running in
 your infrastructure right now.
 
+**The build itself succeeds — the failure is after it.** Polling
+`installationStep` through a deploy on 2026-08-03:
+
+```
+15:13:34  Building image · Building · 0.5m
+15:14:15  Building image · Done · 1.5m      <- image built
+15:14:56  Draft deploy failed: Build failed…
+```
+
+Your own pipeline reports the image as **Done**, then fails ~40 seconds later,
+and the message shown to the developer still says "Build failed. Please check
+that your app builds successfully locally." So the failing step is whatever
+happens after the image is built — ECR push, Lambda update, or the post-deploy
+health check — and the error text points developers at the one thing that is
+demonstrably fine. It also auto-retried once and failed the same way
+(`draftErrorAt` moved twice, 15:14:45 then 15:16:35).
+
 **The ask:** the CodeBuild log for any failing build of
 `claritty-app-7e925d43-dft`. Failures die ~60–90s into "Building image", while
 successful builds take ~3 minutes — so they're failing early rather than timing
