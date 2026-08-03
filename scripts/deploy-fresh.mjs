@@ -76,7 +76,7 @@ try {
   const deployName = `${realName} ${stamp}`;
 
   console.log(`  app          ${realName}`);
-  console.log(`  deploying as ${deployName}  (unique, so a NEW app is created)`);
+  console.log(`  deploying as ${realName}  (the real identity — no stamp in the bundle)`);
 
   // Surgical string edits, NOT a JSON round-trip: re-serialising app-config.json
   // rewrites bytes that have no business mattering (spacing, non-ASCII escaping,
@@ -117,9 +117,16 @@ try {
     api('DELETE', `/api/apps/templates/${templateId}`);
   };
 
+  // Attempt 1 uses the REAL name. The CLI reads the submission name from
+  // app-meta.ts — the same constant that renders the app header and the browser
+  // title — so stamping a unique name compiles that stamp into the shipped
+  // bundle. That is exactly how a deployed app ended up calling itself "Probe
+  // Services" in its own UI. If the real name is free (rename or retire whatever
+  // holds it first), attempt 1 ships correct branding and nothing needs undoing.
+  // Only fall back to stamping if that first attempt can't create a new app.
   let r = null;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const name = attempt === 1 ? deployName : `${realName} ${stamp}-${attempt}`;
+    const name = attempt === 1 ? realName : `${realName} ${stamp}-${attempt}`;
     setName(name);
     writeFileSync(REF, JSON.stringify({ deployments: {} }, null, 2) + '\n');
     console.log(`  attempt ${attempt}/${ATTEMPTS} as "${name}" …`);
