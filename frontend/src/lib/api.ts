@@ -842,3 +842,41 @@ export const refineDraft = async (
   context = '',
 ): Promise<{ text: string }> =>
   (await api.post('/api/reply/refine', { text, how, context })).data;
+
+// ── The worklist: what your email needs from you, ranked ────────────────────
+// The app used to show inventory — alerts here, loops there, junk counts in a
+// third place — and leave you to assemble the plan. This is the plan.
+
+export type WorkKind = 'reply' | 'owe' | 'chase';
+
+export interface WorkItem {
+  id: string;
+  kind: WorkKind;
+  who: string;
+  email: string;
+  /** What to DO — the extracted ask when we have one, else the subject. */
+  headline: string;
+  subject: string;
+  urgent: boolean;
+  due_at: string | null;
+  /** "due Friday" / "2 days overdue" — empty when we genuinely don't know. */
+  due_label: string;
+  overdue: boolean;
+  age_label: string;
+  reply_ready: boolean;
+  thread_id: string;
+  alert_id: string;
+  followup_id: string;
+}
+
+export interface Worklist {
+  items: WorkItem[];
+  total: number;
+  /** Cleared in the last 24h — the thing that makes this finishable. */
+  done_today: number;
+  ready_to_send: number;
+  overdue: number;
+}
+
+export const getWorklist = async (limit = 12): Promise<Worklist> =>
+  (await api.get('/api/worklist', { params: { limit } })).data;

@@ -29,6 +29,7 @@ from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.services import activity
+from backend.services import worklist as worklist_service
 from backend.services import insights as insights_service
 from backend.services import ledger
 from backend.services import followups
@@ -1327,6 +1328,25 @@ async def get_activity(
         "total": len(events),
         "window_days": days,
     }
+
+
+@router.get("/api/worklist")
+async def get_worklist(
+    limit: int = 12,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """What your email needs from you, ranked — one list, not four inventories.
+
+    Merges the two things that represent an obligation (mail waiting on an
+    answer, and open loops) into a single ordered plan, each row phrased as the
+    thing to DO rather than the thing that arrived, carrying the deadline the
+    app already parses and previously showed nowhere.
+
+    The two sources are disjoint by construction, so the count can be trusted —
+    see followups.py on the Alert/FollowUp boundary.
+    """
+    return worklist_service.build(db, user_id, limit=max(1, min(limit, 50)))
 
 
 @router.get("/api/insights")
