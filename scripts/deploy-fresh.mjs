@@ -24,7 +24,7 @@
  *   5. renames the app and its submission back to the proper name once live
  *   6. restores every file it touched — including on Ctrl-C
  *
- * Usage:  node scripts/deploy-fresh.mjs [--keep-name]
+ * Usage:  node scripts/deploy-fresh.mjs [--keep-name] [--publish public|organization|private]
  *
  * DELETE THIS once draft builds work again — normal `claritty deploy` is the
  * right tool, and leaving a "make a new app every time" script lying around is
@@ -171,6 +171,26 @@ try {
   restore();
   writeFileSync(REF, JSON.stringify(
     { deployments: { [API]: { templateId } } }, null, 2) + '\n');
+
+  // The CLI publish flow, which is the point of deploying fresh.
+  //
+  // `claritty publish` POSTs /api/marketplace/publish and gates on the app's
+  // validation checks. A DIRECT-UPLOAD submission (no githubRepoUrl) validates
+  // on the platform and passes. The moment a repo URL is attached, validation
+  // switches to the GitHub path and demands the Claritty GitHub App be
+  // installed on the repository — and that URL cannot be removed afterwards:
+  // PATCH with "" is a 400 and PATCH with null is silently ignored. That is why
+  // the original submission can never publish from the CLI, and why publishing
+  // has to ride on an app that was never given a repo.
+  if (process.argv.includes('--publish')) {
+    const scope = (process.argv[process.argv.indexOf('--publish') + 1] || 'public');
+    console.log(`\n  publishing to the marketplace (${scope}) …`);
+    const pub = spawnSync('claritty',
+      ['publish', '--app-id', templateId, '--scope', scope],
+      { cwd: ROOT, encoding: 'utf8' });
+    console.log((pub.stdout || '').trim().split('\n').map((l) => `    ${l}`).join('\n'));
+    if (pub.status !== 0) console.error(`    publish failed: ${(pub.stderr || '').trim().slice(0, 200)}`);
+  }
 
   console.log(`\n  ✓ live: https://app.claritty.ai/apps/${app.id}`);
   console.log(`    direct: ${app.proxyUrl}`);
