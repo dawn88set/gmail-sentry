@@ -139,6 +139,17 @@ try {
         sleep(15000);
       }
     }
+      // A live instance is necessary but NOT sufficient: a deploy can land with
+    // the wrong contents. Confirm the served bundle is actually THIS app by
+    // checking it carries a route the seed template does not have.
+    if (live) {
+      const probe = spawnSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}',
+        '--max-time', '25', `${live.proxyUrl}/health`], { encoding: 'utf8' });
+      if (probe.stdout?.trim() !== '200') {
+        console.log('    landed but is not serving; treating as a failure');
+        live = null;
+      }
+    }
     if (live) { r = { live, tid }; break; }
 
     cleanUp(tid, 'failed');
