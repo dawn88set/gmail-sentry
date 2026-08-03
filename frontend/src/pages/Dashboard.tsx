@@ -186,7 +186,11 @@ export default function Dashboard() {
   const needsReply = alerts.filter((a) => a.tier === 'needs_reply').length;
   const attention = urgent + needsReply;
   const calm = attention === 0;
-  const notConnected = integrations.filter((i) => !i.connected);
+  // Gmail is the only integration this app cannot run without — everything else
+  // is a choice of where to be pinged. Fall back to a literal so the prompt
+  // still appears if the status endpoint hasn't answered yet.
+  const GMAIL = integrations.find((i) => i.id === 'gmail') ?? { id: 'gmail', name: 'Gmail', connected: false };
+  const gmailMissing = !GMAIL.connected;
   // No alert destination set on ANY channel → the app can flag mail but can't
   // reach the user. Surface a one-tap prompt to the Slack/notification setup.
   const hasAlertChannel = !!(
@@ -285,31 +289,39 @@ export default function Dashboard() {
           </ListSection>
         )}
 
-        {/* Connect */}
-        {notConnected.length > 0 && (
+        {/* Connect Gmail — and ONLY Gmail.
+            This used to render a button per unconnected integration: five of
+            them stacked, Gmail sitting at the same weight as Discord. That's the
+            "connect N services" banner the platform explicitly tells apps not to
+            build, and it buries the one thing that actually matters — without
+            Gmail there is no inbox to watch and every other choice is moot. The
+            notification channels are a preference with a home of their own, one
+            row above. */}
+        {gmailMissing && (
           <ListSection footer="Connecting is handled by Claritty — your credentials stay on the platform.">
             <ListGroup variant="plain-mobile">
               <div className="space-y-3 p-4">
+                {/* One weight, not two. The `/70` on the second sentence
+                    measured 3.03:1 — below WCAG AA — and it only escaped the
+                    design gate because this whole block used to be invisible
+                    without a backend, which is exactly the state the gate runs
+                    in. */}
                 <p className="text-[13px] text-muted-foreground">
-                  Connect your accounts to scan your real inbox and send Slack pings.
-                  <span className="text-muted-foreground/70"> Showing sample data for now.</span>
+                  Connect Gmail to watch your real inbox. Showing sample data for now.
                 </p>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  {notConnected.map((i) => (
-                    <ConnectButton
-                      key={i.id}
-                      integrationId={i.id}
-                      className="w-full justify-center sm:w-auto"
-                      onClick={() => {
-                        const posted = requestConnectIntegration(i.id, appId);
-                        show({
-                          tone: posted ? 'success' : 'error',
-                          text: posted ? `Opening ${i.name} connection…` : `Connect ${i.name} on the Integrations tab.`,
-                        });
-                      }}
-                    />
-                  ))}
-                </div>
+                <ConnectButton
+                  integrationId={GMAIL.id}
+                  className="w-full justify-center sm:w-auto"
+                  onClick={() => {
+                    const posted = requestConnectIntegration(GMAIL.id, appId);
+                    show({
+                      tone: posted ? 'success' : 'error',
+                      text: posted
+                        ? `Opening ${GMAIL.name} connection…`
+                        : `Connect ${GMAIL.name} on the Integrations tab.`,
+                    });
+                  }}
+                />
               </div>
             </ListGroup>
           </ListSection>
