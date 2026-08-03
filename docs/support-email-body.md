@@ -17,7 +17,7 @@ failing since 2026-07-20. Along the way I deployed one exact commit
 | 18:03 | failed |
 | 18:24 | failed (after a 13-minute cooldown) |
 
-**It is not any one path — it is all three.**
+**It is not any one path — every path fails.**
 
 | path | how it was triggered | result |
 |---|---|---|
@@ -26,7 +26,7 @@ failing since 2026-07-20. Along the way I deployed one exact commit
 | first upload of a NEW app | `claritty deploy` after unbinding + renaming | fails |
 | publish-draft | `POST /api/generation/apps/:id/publish-draft` directly | fails |
 
-That last one matters most: a brand-new app (`0e6382d1-cd68-41a1-8690-479a475573cc`,
+The new-app row matters most: a brand-new app (`0e6382d1-cd68-41a1-8690-479a475573cc`,
 "Inbox Sentry", created 19:09 UTC) has no draft, no prior deployment and no
 history of any kind, and it still ends at `validationStatus: VALIDATION_FAILED`
 with `failureReason: null` and `validationErrors: []`. Nothing about my app's
