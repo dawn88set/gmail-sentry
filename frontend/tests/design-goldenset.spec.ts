@@ -23,7 +23,7 @@ import {
 const BASE = process.env.AUDIT_BASE_URL || 'http://localhost:3200';
 // Golden corpus. Runs without a backend, so these are graded on their
 // empty/error states — the first thing a new user actually sees.
-const PAGES = ['/', '/followups', '/people', '/attention', '/activity'];
+const PAGES = ['/', '/followups', '/people', '/attention', '/activity', '/mail'];
 const THEMES = ['light', 'dark'] as const;
 const VIEWPORTS = [
   { name: 'desktop', w: 1280, h: 900 },

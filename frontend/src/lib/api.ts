@@ -880,3 +880,66 @@ export interface Worklist {
 
 export const getWorklist = async (limit = 12): Promise<Worklist> =>
   (await api.get('/api/worklist', { params: { limit } })).data;
+
+// ── Mail: reading and writing ───────────────────────────────────────────────
+// The watchdog half hands you a short list; this is for when a row isn't
+// enough and you need to read the thread, reply in context, or write to
+// someone the app never flagged.
+
+export type MailBox = 'inbox' | 'unread' | 'sent' | 'starred' | 'archive';
+
+export interface MailRow {
+  id: string;
+  thread_id: string;
+  sender: string;
+  subject: string;
+  snippet: string;
+  unread: boolean;
+  starred: boolean;
+  rfc822_msgid: string;
+}
+
+export interface MailMessage {
+  id: string;
+  sender: string;
+  subject: string;
+  body: string;
+  /** Sent by the user — rendered on the other side of the conversation. */
+  outbound: boolean;
+  rfc822_msgid: string;
+}
+
+export interface MailThread {
+  thread_id: string;
+  subject: string;
+  messages: MailMessage[];
+  /** The ledger didn't know this conversation, so this is ONE message rather
+   *  than the exchange. Said out loud instead of implying completeness. */
+  partial: boolean;
+  deep_link: string;
+}
+
+export const getMail = async (
+  box: MailBox = 'inbox',
+  pageToken = '',
+  q = '',
+): Promise<{ messages: MailRow[]; next_page_token: string; query: string }> =>
+  (await api.get('/api/mail', { params: { box, page_token: pageToken, q } })).data;
+
+export const getMailThread = async (threadId: string, seed = ''): Promise<MailThread> =>
+  (await api.get(`/api/mail/thread/${threadId}`, { params: { seed } })).data;
+
+/** Sends for real. A Gmail message id comes back, or it throws — never an
+ *  optimistic success. 409 = Gmail not connected. */
+export const sendMail = async (m: {
+  to: string;
+  subject?: string;
+  body: string;
+  thread_id?: string;
+  in_reply_to?: string;
+}): Promise<{ success: boolean; message_id: string }> =>
+  (await api.post('/api/mail/send', m)).data;
+
+export const archiveMail = async (id: string): Promise<void> => {
+  await api.post(`/api/mail/${id}/archive`);
+};

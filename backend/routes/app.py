@@ -29,6 +29,7 @@ from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.services import activity
+from backend.services import mail as mail_service
 from backend.services import worklist as worklist_service
 from backend.services import insights as insights_service
 from backend.services import ledger
@@ -1328,6 +1329,89 @@ async def get_activity(
         "total": len(events),
         "window_days": days,
     }
+
+
+# ---------------------------------------------------------------------------
+# Mail — reading and writing, the client half of the app
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/mail")
+async def list_mail(
+    box: str = "inbox",
+    q: str = "",
+    page_token: str = "",
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """One page of a mailbox, or of a search when `q` is given.
+
+    `box` is a closed set (inbox | unread | sent | starred | archive) rather than
+    a free-text Gmail query, because an arbitrary query from the URL is both a
+    performance footgun and a way to ask for mail the UI can't render.
+    """
+    try:
+        return mail_service.list_box(db, user_id, box=box, query=q, page_token=page_token)
+    except IntegrationNotConnected:
+        return _not_connected("gmail")
+
+
+@router.get("/api/mail/thread/{thread_id}")
+async def read_mail_thread(
+    thread_id: str,
+    seed: str = "",
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """A whole conversation, oldest first. `partial` is true when the ledger
+    didn't know this thread, so what comes back is one message rather than the
+    exchange — the UI says so rather than implying completeness."""
+    try:
+        return mail_service.read_thread(db, user_id, thread_id, seed_id=seed)
+    except IntegrationNotConnected:
+        return _not_connected("gmail")
+
+
+class SendMailBody(BaseModel):
+    to: str
+    subject: str = ""
+    body: str
+    #: Set both to keep a reply in its Gmail conversation.
+    thread_id: str = ""
+    in_reply_to: str = ""
+
+
+@router.post("/api/mail/send")
+async def send_mail_route(
+    payload: SendMailBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Send an email. Same honest contract as every other outbound action: a
+    real Gmail message id, or an error — never an optimistic success."""
+    if not payload.to.strip() or not payload.body.strip():
+        raise HTTPException(status_code=400, detail="A recipient and a message are required.")
+    try:
+        return {"success": True, **mail_service.send_mail(
+            db, user_id,
+            to=payload.to.strip(), subject=payload.subject.strip(), body=payload.body,
+            thread_id=payload.thread_id, in_reply_to=payload.in_reply_to,
+        )}
+    except IntegrationNotConnected:
+        raise HTTPException(status_code=409, detail="Connect Gmail, then try again.")
+    except IntegrationError as e:
+        raise HTTPException(status_code=502, detail=f"Couldn’t send: {e}")
+
+
+@router.post("/api/mail/{message_id}/archive")
+async def archive_mail(message_id: str, user_id: str = Depends(require_user), db: Session = Depends(get_db)):
+    try:
+        gmail_adapter.archive(db, user_id, message_id)
+        return {"success": True}
+    except IntegrationNotConnected:
+        raise HTTPException(status_code=409, detail="Connect Gmail, then try again.")
+    except IntegrationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.get("/api/worklist")

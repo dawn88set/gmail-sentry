@@ -1,4 +1,4 @@
-import { Home, Repeat2, Bell, Activity, SlidersHorizontal } from 'lucide-react';
+import { Home, Mail, Bell, Activity, SlidersHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -20,10 +20,13 @@ export interface NavItem {
  * font.
  */
 export const NAV_ITEMS: NavItem[] = [
-  // "Today", not "Inbox": next to Follow-ups, "Inbox" reads as a competing list
-  // when it's actually the composed view of everything that needs the user.
+  // "Today", not "Inbox": the composed view of everything that needs the user,
+  // as distinct from Mail, which is the mailbox itself.
   { name: 'Today', href: '/', icon: Home },
-  { name: 'Follow-ups', href: '/followups', icon: Repeat2 },
+  // Five is the ceiling, so Mail takes the slot Follow-ups had. Follow-ups is
+  // still one tap away from the worklist footer, and a mailbox is the more
+  // frequent need — you open it to read a thread, not to audit open loops.
+  { name: 'Mail', href: '/mail', icon: Mail },
   { name: 'Alerts', href: '/attention', icon: Bell },
   // What the app did while nobody was looking — the answer to "is this thing
   // actually doing anything?", which nothing in the product could give before.

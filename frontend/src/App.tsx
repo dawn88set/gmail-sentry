@@ -7,6 +7,8 @@ import Attention from './pages/Attention';
 import FollowUps from './pages/FollowUps';
 import People from './pages/People';
 import Activity from './pages/Activity';
+import Mail from './pages/Mail';
+import MailThread from './pages/MailThread';
 import FolderDetail from './pages/FolderDetail';
 import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
@@ -36,6 +38,10 @@ function App() {
           <Route path="/followups" element={<Layout><FollowUps /></Layout>} />
           <Route path="/people" element={<Layout><People /></Layout>} />
           <Route path="/attention" element={<Layout><Attention /></Layout>} />
+          {/* The client half — read a whole thread, reply in context, write to
+              someone the app never flagged. */}
+          <Route path="/mail" element={<Layout><Mail /></Layout>} />
+          <Route path="/mail/:threadId" element={<Layout><MailThread /></Layout>} />
           {/* What the app did while nobody was looking — activity, folders, insights. */}
           <Route path="/activity" element={<Layout><Activity /></Layout>} />
           <Route path="/folders/:folderId" element={<Layout><FolderDetail /></Layout>} />
