@@ -12,7 +12,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 # Make the repo root importable so `backend.*` resolves when alembic runs.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -22,10 +22,22 @@ from backend import models  # noqa: E402,F401  (register models on Base.metadata
 
 config = context.config
 
-# Inject the runtime DATABASE_URL (env wins over anything in the ini).
+# The runtime DATABASE_URL (env wins over anything in the ini).
+#
+# NEVER put this through `config.set_main_option`. Alembic's config is a
+# ConfigParser, which treats `%` as interpolation syntax — and the Claritty
+# platform hands every app a URL of the form
+#
+#     …/clarity_platform?options=-csearch_path%3Dtenant_<id>&sslmode=require
+#
+# so the `%3D` (a URL-encoded `=`, pinning the tenant's schema) makes
+# set_main_option raise `ValueError: invalid interpolation syntax`. Alembic
+# dies before a single migration runs, the container never comes up healthy,
+# and the platform reports it as "Build failed. Please check that your app
+# builds successfully locally" — which it does, because a local DATABASE_URL
+# has no `%` in it and the crash is invisible until you run against a
+# tenant-scoped database.
 _db_url = os.getenv("DATABASE_URL")
-if _db_url:
-    config.set_main_option("sqlalchemy.url", _db_url)
 
 if config.config_file_name is not None:
     try:
@@ -36,9 +48,14 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _url() -> str:
+    """The URL to migrate against, taken raw so `%` is never interpolated."""
+    return _db_url or config.get_main_option("sqlalchemy.url") or ""
+
+
 def run_migrations_offline() -> None:
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -49,11 +66,10 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # create_engine, not engine_from_config: the latter reads back through the
+    # ConfigParser section and would re-introduce the `%` interpolation problem
+    # even if the value got in by another route.
+    connectable = create_engine(_url(), poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
