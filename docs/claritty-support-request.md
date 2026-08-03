@@ -31,6 +31,7 @@ failing since 2026-07-20. Along the way I deployed one exact commit
 | draft build | `claritty deploy` on the existing app | fails |
 | publish to live | **your UI**, "Publish to live" button | fails |
 | first upload of a NEW app | `claritty deploy` after unbinding + renaming | fails |
+| publish-draft | `POST /api/generation/apps/:id/publish-draft` directly | fails |
 
 That last one matters most: a brand-new app (`0e6382d1-cd68-41a1-8690-479a475573cc`,
 "Inbox Sentry", created 19:09 UTC) has no draft, no prior deployment and no
