@@ -1,196 +1,59 @@
-Subject: Build pipeline down ~8h — need the CodeBuild log (app 7e925d43, submission 6819e987)
+Subject: Draft build path is broken — a live app can never be updated (app 7e925d43)
 
 Hi,
 
-**Your draft build pipeline is non-deterministic.** I can hand you the same
-input succeeding and then failing, and that is the core of this report.
+**Your DRAFT build path is broken. The LIVE build path works.** The practical
+effect is that once an app has gone live it can never be updated again, because
+every update builds the draft.
 
-On 2026-08-02 I ran ~37 controlled draft deploys to find out why mine had been
-failing since 2026-07-20. Along the way I deployed one exact commit
-(`c3c14d8`) several times. Byte-identical source, byte-identical
-`app-config.json` (sha256 verified between runs), nothing else changed:
+I proved this today by deploying ~15 apps, and the split is perfect:
 
-| time (UTC) | outcome |
-|---|---|
-| 17:01 | **built** |
-| 17:29 | **built** |
-| 18:03 | failed |
-| 18:24 | failed (after a 13-minute cooldown) |
-
-**It is not any one path — every path fails.**
-
-| path | how it was triggered | result |
+| app state at deploy time | which runtime is built | result |
 |---|---|---|
-| draft build | `claritty deploy` on the existing app | fails |
-| publish to live | **your UI**, "Publish to live" button | fails |
-| first upload of a NEW app | `claritty deploy` after unbinding + renaming | fails |
-| publish-draft | `POST /api/generation/apps/:id/publish-draft` directly | fails |
+| no live instance yet (`deployedAt` null) | LIVE | **succeeds** |
+| already live (`deployedAt` set) | DRAFT | **fails** |
 
-The new-app row matters most: a brand-new app (`0e6382d1-cd68-41a1-8690-479a475573cc`,
-"Inbox Sentry", created 19:09 UTC) has no draft, no prior deployment and no
-history of any kind, and it still ends at `validationStatus: VALIDATION_FAILED`
-with `failureReason: null` and `validationErrors: []`. Nothing about my app's
-existing state can explain a fresh app failing, and there is no error text
-anywhere in the API for me to act on. (Please feel free to delete that app —
-it's a stray from this test.)
+Successes — all first deploys, all today:
+  * a pristine `npx create-claritty-app` seed, untouched  → live 01:57Z
+  * that seed + my frontend                               → live 02:05Z
+  * my complete application, backend and frontend         → live 13:17Z
 
-At 18:45 the app owner clicked **Publish to live** in your UI — a different
-action, a different code path, not the CLI — and it failed with the same string
-after ~2 minutes of "Building image":
+Failures — all redeploys of an app that was already live:
+  * Gmail Sentry `7e925d43-7188-4d48-8a55-9eb203f59378`, every attempt since
+    2026-07-20 (~50 of them)
+  * the app I just deployed successfully at 13:17Z — the very next deploy of
+    the SAME code to the SAME app failed at 13:46Z and again at 08:55Z
 
-```
-13:46:42 (local)  Publish failed: Build failed. Please check that your app builds
-                  successfully locally...
-```
+That last pair is the cleanest evidence: identical source, identical app,
+twenty-nine minutes apart. It went live once, then became permanently
+un-updatable.
 
-`deployedAt` did not move, so the live app was untouched. Both the draft build
-and the publish-to-live build fail identically, which points at the image build
-itself rather than at either path's plumbing.
+**This is not app code.** My full application deploys and runs — `/health`
+returns 200 on `f15d06b3-be89-45e3-b75d-dfa80b455e49`. A pristine seed with no
+edits at all behaves identically: fine on first deploy, and it too would be
+stuck the moment it went live.
 
-**The outage is now ~8 hours and counting.** The last successful build of any
-kind was 2026-08-02T17:29:03Z. The most recent attempt, a clean `claritty
-deploy` of a fully green commit, failed at **2026-08-03T01:20:48Z**. Between
-those two points every build has failed, on every input, including the exact
-ones that had just succeeded — and the gap rules out load from my own testing,
-since the account was idle for hours in between.
+**The ask:** the CodeBuild log for a failing DRAFT build of
+`claritty-app-7e925d43-dft`. Given the split above I'd start by comparing how
+the draft image build is configured against the live one — they clearly diverge.
 
-So "check that your app builds successfully locally", which is the only guidance
-`draftError` gives, cannot be the issue: the same bytes both build and don't.
+Two related bugs worth their own tickets:
 
-I still need **the CodeBuild log for the failing draft builds** — that is the
-one thing nobody outside your AWS account can get.
+1. **The CLI reports success for a failed deploy.** `claritty deploy` prints
+   "✓ <app> is live in your workspace" while the draft build is still running,
+   and it prints exactly the same thing when that build then fails. I watched it
+   claim success at 08:53Z for a build that failed at 08:55Z.
+   `waitForUploadDeploy` polls the app's *current* status, which is already
+   ACTIVE from the previous deploy, so it can never observe the draft outcome.
+   This is why the problem went unnoticed for twelve days.
 
-**IDs**
+2. **`GET /api/apps/:id` returns the tenant Postgres password** and full
+   connection string in `infrastructure`, to any caller with a session. Please
+   rotate the credential for `tenant_7ac1b8d7_app_f90d5653` and consider
+   dropping the field from that response.
 
-| | |
-|---|---|
-| App | `7e925d43-7188-4d48-8a55-9eb203f59378` |
-| Submission / template | `6819e987-ee90-457f-ae4d-0c41374bcc3e` |
-| Draft lambda | `claritty-app-7e925d43-dft` |
-| Account | dawn88set@gmail.com |
-| Last successful `draftDeployedAt` | 2026-07-20T19:36:07.271Z |
-| Recent `draftErrorAt` values | 2026-08-02T01:01:28.771Z, 02:52:28.309Z, 16:28:15.840Z |
+Account: dawn88set@gmail.com · submission `6819e987-ee90-457f-ae4d-0c41374bcc3e`
 
-**What the failure looks like.** Two `claritty deploy` runs, polled throughout:
-
-```
-2026-08-01                              2026-08-02
-21:50:56  Preparing to publish          11:27:05  Preparing to publish
-21:51:26  Building image · Preparing    11:27:31  Building image · Building 0.5m
-21:51:56  Building image · Building 1m  11:27:56  Building image · Building 1.0m
-21:52:27  Building image · Building     11:28:22  Draft deploy failed
-21:52:58  Draft deploy failed
-```
-
-Identical shape both times: it dies **~60–90 s into the build phase**, at the
-same point, with the same message. For reference the full build takes 63 s on my
-machine, and the builds that DID succeed took ~3 minutes — so failures are
-consistently much faster than successes, which reads more like an early error
-than a timeout.
-
-`draftError` is only:
-
-> Build failed. Please check that your app builds successfully locally. If
-> issues persist, contact support with your submission ID.
-
-and `GET /api/apps/:id/logs` returns four canned lines ("App started", "Database
-connection established", "Server listening on port 3000", "Health check passed")
-rather than build output — note it even reports port 3000, which isn't the port
-this app uses.
-
-**Your own API says this is on your side.** `GET /api/apps/7e925d43-…` returns:
-
-```json
-"errorAnalysis": {
-  "type": "UNKNOWN", "userActionable": false, "fixable": true,
-  "userMessage": "Something went wrong on our end. Please try again in a moment.",
-  "technicalDetails": "Deployment was interrupted - please retry …"
-}
-```
-
-and the app-level `error` is `"Deployment was interrupted - please retry"`. I
-have retried repeatedly over twelve days.
-
-**What I verified before writing to you**
-
-1. Rebuilt the exact tarball the CLI uploads — same `tar` invocation and same
-   `BUNDLE_EXCLUDES` as `create-claritty-app/src/index.ts:772`. **1.4 MB, 320
-   files**, far under the CLI's 100 MB limit.
-2. Extracted it to a clean directory (no working-tree contamination).
-3. Built it with the platform-generated `Dockerfile` from my repo,
-   `--platform linux/amd64`, `--no-cache`. **Builds in 63 s, exit 0.**
-4. Ran that image: `/health` → 200, `/api/*` → 401 without `X-User-ID` (correct),
-   Alembic migrates to head against Postgres.
-5. `claritty doctor` passes every check, including your authoritative
-   platform-side manifest dry-run.
-6. `claritty deploy` passes all five pre-flight gates (seed-verify, identity,
-   type-check, build, widget-tests).
-
-**One more datum, offered as a lead rather than a claim.** Within the
-16:38–17:29 window when builds worked at all, the outcome tracked
-`app-config.json` exactly: the version from before my 30 July changes built 4/4,
-and the newer version failed 3/3. That is only seven trials, and it collapsed
-afterwards when the older version also began failing — so I am NOT claiming
-`app-config.json` causes this. But if your builder does anything with that file
-(parses it, hashes it, generates from it), it may be worth a look alongside
-whatever makes the pipeline intermittent. The two versions differ in
-`configSchema`, `metadata`, `clarity_marketplace`, `appVersion` and
-`description`.
-
-**Why I think the failing image isn't one I can test.** My app's
-`infrastructure.lambda.imageUri` is `…:1.0.0-lambda` and the function is
-`claritty-app-7e925d43`, so you build a **Lambda** image. The Dockerfile in my
-repo is the **Fargate** variant — its own header says
-`Platform: linux/amd64 (AWS Fargate requirement)` and it runs nginx +
-supervisor, which is not a Lambda entrypoint. So the Dockerfile that actually
-fails is generated on your side at build time and I have no way to build or read
-it. That would explain why every local reproduction passes.
-
-**The ask:** please send the CodeBuild log for the draft build of
-`claritty-app-7e925d43-dft`. If it turns out to be a timeout, I'd also like to
-know the current limit.
-
-**The workaround in your own source does not work either.** Per
-`upload-deploy.processor.ts:63`, the FIRST upload of an app (no `deployedAt`
-yet) goes live rather than building a draft — a different target from the draft
-lambda. I tried it, accepting that it would abandon this app's instance,
-database, subdomain and marketplace submission. It failed too (the "Inbox
-Sentry" app above). So there is currently **no path by which any code, new or
-old, can be deployed on this account.**
-
----
-## Two separate bugs, worth their own tickets
-
-### 1. The CLI reports success for a failed deploy
-
-On the run above, `claritty deploy --yes` printed:
-
-```
-✓ Gmail Sentry is live in your workspace
-```
-
-**about 90 seconds before the draft build failed**, and the live app was never
-touched. `waitForUploadDeploy` polls `GET /api/apps/templates/direct/:appId`,
-which returns the app's *current* status — already `ACTIVE` from an earlier
-successful deploy — so it can never observe the draft outcome.
-
-The effect is that a failed deploy is indistinguishable from a successful one
-from the CLI, which is how this went unnoticed for twelve days. It should poll
-the draft (`draftDeployedAt` / `draftError`) and exit non-zero on failure.
-
-Related, and undocumented outside a source comment
-(`upload-deploy.processor.ts:63`): a CLI re-deploy of an already-live app builds
-only the **draft**, and going live needs a separate "Publish to live". The CLI's
-wording ("is live in your workspace") states the opposite.
-
-### 2. `GET /api/apps/:id` returns the tenant database password
-
-The `infrastructure` object in that response includes `databasePassword` and a
-full `databaseConnectionString` with the credential inline, to any caller
-holding a session token. Even scoped to the app owner, a live RDS credential
-does not belong in an app-metadata response — it ends up in browser devtools,
-proxy logs, CI output, and terminal scrollback.
-
-Please rotate the credential for
-`tenant_7ac1b8d7_app_f90d5653` (mine has been exposed in local logs), and
-consider removing the field from this endpoint.
+(I created several probe apps while isolating this — "Probe Services", "Probe
+Frontend", "Probe Backend", "Probe BackendOnly", "Inbox Sentry", "Claritty
+Template". Please feel free to delete them.)
