@@ -132,3 +132,6 @@ dmypy.json
 frontend/test-results/
 frontend/playwright-report/
 frontend/.last-run.json
+
+# transient backups written by scripts/deploy-fresh.mjs
+*.deploy-bak

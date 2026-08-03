@@ -1,7 +1,0 @@
-{
-  "deployments": {
-    "https://api.claritty.ai": {
-      "templateId": "6819e987-ee90-457f-ae4d-0c41374bcc3e"
-    }
-  }
-}
