@@ -3,24 +3,26 @@
  * Deploy this app to a BRAND-NEW Claritty app, because updating a live one
  * currently cannot work.
  *
- * The platform builds two runtimes. A first upload (the app has no `deployedAt`
- * yet) builds the LIVE one and succeeds. Every later deploy of that same app
- * builds the DRAFT one, and the draft build is broken — so the moment an app
- * goes live it is frozen. Proven on 2026-08-03: an app deployed successfully at
- * 13:17Z, and the very next deploy of identical code to the same app failed
- * 29 minutes later. Gmail Sentry has been stuck this way since 20 July.
+ * Claritty's image build only works in windows. Observed good 2026-08-02
+ * 16:38–17:29Z and 2026-08-03 ~01:57–13:17Z; outside those, everything fails —
+ * brand-new apps and redeploys alike, this app and an untouched
+ * `create-claritty-app` seed alike. Nothing about the app predicts the outcome,
+ * only the time does. Redeploying an app that is already live has never once
+ * worked, which is why Gmail Sentry has been frozen since 20 July.
  *
- * Until Claritty fixes the draft build, the only way to ship is to create a new
- * app each time. This does that safely:
+ * So this deploys to a NEW app and keeps trying until a window opens:
  *
  *   1. stamps a unique deploy name (the CLI matches existing apps BY NAME, so a
- *      reused name would find the old app and take the broken draft path)
+ *      reused name would find the old app and take the path that never works)
  *   2. unbinds .claritty.json so a new app is created
- *   3. deploys, then WAITS for the app to actually go live — the CLI prints
- *      "is live in your workspace" before the build finishes and says the same
- *      thing when it fails, so its output cannot be trusted
- *   4. renames the app back to its proper name once it is live
- *   5. restores every file it touched, and records the new app id
+ *   3. deploys, then asks the API whether a live instance exists — the CLI says
+ *      "is live in your workspace" before the build finishes, says the same
+ *      thing when it fails, and has also reported failure for a build that was
+ *      still running, so its output is worthless in both directions
+ *   4. DELETES the dead app each failed attempt leaves behind, so retrying does
+ *      not fill the workspace with "Gmail Sentry <stamp>" corpses
+ *   5. renames the app and its submission back to the proper name once live
+ *   6. restores every file it touched — including on Ctrl-C
  *
  * Usage:  node scripts/deploy-fresh.mjs [--keep-name]
  *
@@ -59,7 +61,13 @@ for (const f of backups) copyFileSync(f, `${f}.deploy-bak`);
 const restore = () => {
   for (const f of backups) if (existsSync(`${f}.deploy-bak`)) copyFileSync(`${f}.deploy-bak`, f);
 };
-process.on('exit', () => { for (const f of backups) try { execFileSync('rm', ['-f', `${f}.deploy-bak`]); } catch {} });
+const cleanBaks = () => { for (const f of backups) try { execFileSync('rm', ['-f', `${f}.deploy-bak`]); } catch {} };
+process.on('exit', cleanBaks);
+// A retry loop invites Ctrl-C. Without these the repo is left holding a stamped
+// app name and an unbound .claritty.json.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => { restore(); cleanBaks(); console.log('\n  interrupted — files restored'); process.exit(130); });
+}
 
 try {
   const cfg = JSON.parse(readFileSync(CFG, 'utf8'));
@@ -89,6 +97,26 @@ try {
   // still leaves a submission behind that the CLI would match on.
   const ATTEMPTS = Number(process.env.DEPLOY_ATTEMPTS || 12);
   const WAIT_MIN = Number(process.env.DEPLOY_WAIT_MIN || 10);
+
+  const appsFor = (templateId) => {
+    const d = api('GET', '/api/apps')?.data;
+    const rows = Array.isArray(d) ? d : d?.apps || [];
+    return rows.filter((a) => a?.templateId === templateId);
+  };
+
+  /** Delete the app + submission a failed attempt left behind.
+   *  Without this the workspace fills with dead "Gmail Sentry <stamp>" entries —
+   *  one per attempt, which is user-visible mess for a retry that is entirely
+   *  this script's business. */
+  const cleanUp = (templateId, why) => {
+    if (!templateId) return;
+    for (const a of appsFor(templateId)) {
+      api('DELETE', `/api/apps/${a.id}`);
+      console.log(`    removed the ${why} app it created (${a.id.slice(0, 8)}…)`);
+    }
+    api('DELETE', `/api/apps/templates/${templateId}`);
+  };
+
   let r = null;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     const name = attempt === 1 ? deployName : `${realName} ${stamp}-${attempt}`;
@@ -96,34 +124,37 @@ try {
     writeFileSync(REF, JSON.stringify({ deployments: {} }, null, 2) + '\n');
     console.log(`  attempt ${attempt}/${ATTEMPTS} as "${name}" …`);
     r = spawnSync('claritty', ['deploy', '--yes'], { cwd: ROOT, encoding: 'utf8' });
-    const ref = existsSync(REF) ? JSON.parse(readFileSync(REF, 'utf8')) : {};
-    if (r.status === 0 && ref.deployments?.[API]?.templateId) break;
-    if (attempt === ATTEMPTS) throw new Error(`all ${ATTEMPTS} attempts failed — the platform build window is closed`);
-    console.log(`    build failed; the platform's build window is shut. Retrying in ${WAIT_MIN} min.`);
+    const tid = existsSync(REF)
+      ? JSON.parse(readFileSync(REF, 'utf8')).deployments?.[API]?.templateId
+      : null;
+
+    // The CLI's exit code and its output both lie in each direction, so ask the
+    // API whether a live instance actually exists.
+    let live = null;
+    if (tid) {
+      for (let i = 0; i < 30; i++) {
+        const a = appsFor(tid)[0];
+        if (a?.deployedAt) { live = a; break; }
+        if (a?.status === 'FAILED') break;
+        sleep(15000);
+      }
+    }
+    if (live) { r = { live, tid }; break; }
+
+    cleanUp(tid, 'failed');
+    if (attempt === ATTEMPTS) {
+      throw new Error(`all ${ATTEMPTS} attempts failed — Claritty's build window never opened`);
+    }
+    console.log(`    build window shut; retrying in ${WAIT_MIN} min (nothing left behind)`);
     sleep(WAIT_MIN * 60_000);
   }
+  const templateId = r.tid;
+  const app = r.live;
 
-  const templateId = JSON.parse(readFileSync(REF, 'utf8'))
-    .deployments?.[API]?.templateId;
-  if (!templateId) throw new Error('no templateId was written — deploy did not create an app');
-
-  // The CLI's success line is unreliable; wait for a real live instance.
-  console.log('  waiting for the app to actually go live …');
-  let app = null;
-  for (let i = 0; i < 40; i++) {
-    sleep(15000);
-    const apps = api('GET', '/api/apps')?.data;
-    const rows = Array.isArray(apps) ? apps : apps?.apps || [];
-    app = rows.find((a) => a?.templateId === templateId);
-    if (app?.deployedAt) break;
-    if (app?.status === 'FAILED') throw new Error(`build failed: ${app.lastError || 'no detail'}`);
-    process.stdout.write('.');
-  }
-  process.stdout.write('\n');
-  if (!app?.deployedAt) throw new Error('timed out waiting for the app to go live');
 
   if (!process.argv.includes('--keep-name')) {
     api('PATCH', `/api/apps/templates/${templateId}`, { name: realName });
+    api('PUT', `/api/apps/${app.id}`, { name: realName });   // the instance, not just the submission
   }
 
   restore();
