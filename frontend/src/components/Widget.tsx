@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, ShieldCheck, Shield } from 'lucide-react';
+import { ArrowUpRight, ShieldCheck } from 'lucide-react';
 import { WidgetContainer, WidgetButton } from '@clarittyai/widget-toolkit';
 import {
   getWidgetData,
@@ -7,10 +7,9 @@ import {
   toApiError,
   type WidgetData,
   type WidgetAlert,
-  type Tier,
 } from '@/lib/api';
 import { runQuickAction, triggerDeepLink, notifyWidgetStateChanged } from '@/lib/widget-actions';
-import { parseSender } from '@/components/Avatar';
+import { Avatar, parseSender } from '@/components/Avatar';
 import { useToast } from '@/components/Toast';
 import { cn } from '@/lib/utils';
 import type { WidgetSize } from '@/lib/widget-sizes';
@@ -22,35 +21,32 @@ interface WidgetProps {
   className?: string;
 }
 
-const TIER_LABEL: Record<Tier, string> = { urgent: 'Urgent', needs_reply: 'Reply', fyi: 'FYI' };
-
-/** Rich, state-aware gradient backdrop + soft glows + a shield watermark. */
-function Backdrop({ calm }: { calm: boolean }) {
+/**
+ * The widget used to be a saturated blue card with white text, which made blue
+ * the SURFACE — so the accent stopped meaning "this is the action", and the
+ * widget read as a different product from the app beside it.
+ *
+ * Now it sits on the same neutral card the app uses, and the accent is spent
+ * only on the one thing worth tapping. Type weight and spacing carry the
+ * hierarchy instead of colour, which is also what stops the identity gate
+ * flagging a multi-stop gradient here.
+ */
+function LiveDot({ calm }: { calm: boolean }) {
   return (
-    <>
-      <div
-        className={cn(
-          'absolute inset-0 bg-gradient-to-br',
-          calm ? 'from-gmail-green-500 to-gmail-green-700' : 'from-accent to-accent-600',
-        )}
-      />
-      {/* soft light blooms for depth */}
-      <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full bg-white/25 blur-2xl" />
-      <div className="absolute -bottom-12 -left-8 h-32 w-32 rounded-full bg-black/10 blur-2xl" />
-      {/* subtle brand watermark */}
-      <Shield className="absolute -bottom-5 -right-4 h-28 w-28 text-white/10" strokeWidth={1.5} />
-    </>
+    <span className="relative flex h-1.5 w-1.5" aria-hidden>
+      {!calm && (
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-70" />
+      )}
+      <span className={cn('relative inline-flex h-1.5 w-1.5 rounded-full', calm ? 'bg-success' : 'bg-accent')} />
+    </span>
   );
 }
 
-/** White "watching" pulse for the colored surface. */
-function LiveDot() {
-  return (
-    <span className="relative flex h-2 w-2">
-      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-70" />
-      <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
-    </span>
-  );
+/** Sender-first identity. People scan mail by WHO before WHAT, and an initial
+ *  is legible at 360px where a name is not. */
+function Who({ sender, className }: { sender: string; className?: string }) {
+  const who = parseSender(sender);
+  return <Avatar name={who.name} email={who.email} className={cn('h-7 w-7 text-[11px]', className)} />;
 }
 
 export default function Widget({ size = 'medium', className }: WidgetProps) {
@@ -158,31 +154,33 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
   // ---- Small ---------------------------------------------------------------
   if (size === 'small') {
     return (
-      <WidgetContainer size="small" className={cn('relative text-white', className)}>
-        <Backdrop calm={allClear} />
-        <div className="relative z-10 flex h-full flex-col justify-between">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/80">
-            <LiveDot /> Watching
+      <WidgetContainer size="small" className={cn('bg-card', className)}>
+        <div className="flex h-full flex-col justify-between">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <LiveDot calm={allClear} /> Watching
           </div>
           <div>
-            <div className="text-6xl font-bold leading-none tracking-tighter">{attention}</div>
-            <div className="mt-1 text-xs font-medium text-white/80">
+            <div className="text-[56px] font-semibold leading-none tracking-tight text-foreground">
+              {attention}
+            </div>
+            <div className="mt-1 text-[12px] font-medium text-muted-foreground">
               open loop{attention === 1 ? '' : 's'}
             </div>
+            {/* Weight, not colour, does the ranking — going cold is the costly one. */}
             {qualifier && (
-              <div className={cn('mt-0.5 text-[11px] font-medium', cold > 0 ? 'text-white' : 'text-white/70')}>
+              <div className={cn('mt-0.5 text-[11px]', cold > 0 ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
                 {qualifier}
               </div>
             )}
           </div>
           {allClear ? (
-            <span className="flex items-center gap-1 text-sm font-semibold text-white">
-              <ShieldCheck className="h-4 w-4" /> No open loops
+            <span className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
+              <ShieldCheck className="h-4 w-4 text-success" /> All clear
             </span>
           ) : (
             <button
               onClick={openApp}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-full bg-white/25 py-2 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-white/35 active:scale-95"
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-full bg-accent py-2 text-[13px] font-semibold text-accent-foreground transition-transform active:scale-95"
             >
               Review <ArrowUpRight className="h-4 w-4" />
             </button>
@@ -196,26 +194,30 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
   if (size === 'medium') {
     const top = data.top_alerts?.[0];
     return (
-      <WidgetContainer size="medium" className={cn('relative text-white', className)}>
-        <Backdrop calm={allClear} />
-        <div className="relative z-10 flex h-full flex-row items-center gap-4">
-          <div className="flex w-[38%] flex-shrink-0 flex-col justify-center">
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/80">
-              <LiveDot /> Live
+      <WidgetContainer size="medium" className={cn('bg-card', className)}>
+        <div className="flex h-full flex-row items-center gap-3">
+          <div className="flex w-[36%] flex-shrink-0 flex-col justify-center border-r border-border/60 pr-3">
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <LiveDot calm={allClear} /> Live
             </div>
-            <div className="text-5xl font-bold leading-none tracking-tighter">{attention}</div>
-            <div className="mt-1 text-xs font-medium text-white/80">
+            <div className="text-[42px] font-semibold leading-none tracking-tight text-foreground">
+              {attention}
+            </div>
+            <div className="mt-1 text-[12px] font-medium text-muted-foreground">
               open loop{attention === 1 ? '' : 's'}
             </div>
-            {qualifier && <div className="mt-0.5 text-[11px] text-white/70">{qualifier}</div>}
-            <div className="mt-0.5 text-[11px] text-white/60">scanned {data.last_scan}</div>
+            {qualifier && (
+              <div className={cn('mt-0.5 text-[11px]', cold > 0 ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
+                {qualifier}
+              </div>
+            )}
           </div>
           <button onClick={() => (top ? openAlert(top) : openApp())} className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left" aria-label="Open Gmail Sentry">
             {top ? (
               <AlertPeek alert={top} />
             ) : (
-              <span className="flex items-center gap-1.5 text-sm font-semibold text-white">
-                <ShieldCheck className="h-4 w-4" /> Nothing open
+              <span className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
+                <ShieldCheck className="h-4 w-4 text-success" /> Nothing open
               </span>
             )}
           </button>
@@ -231,18 +233,19 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
   const shown = (data.top_alerts ?? []).slice(0, 3);
   const cleanup = data.cleanup ?? { promo: 0, social: 0, spam: 0 };
   return (
-    <WidgetContainer size="large" className={cn('relative text-white', className)}>
-      <Backdrop calm={allClear} />
-      <div className="relative z-10 flex h-full flex-col">
-        <div className="mb-3 flex items-center justify-between">
+    <WidgetContainer size="large" className={cn('bg-card', className)}>
+      <div className="flex h-full flex-col">
+        <div className="mb-2.5 flex items-center justify-between">
           <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-bold leading-none tracking-tighter">{attention}</span>
-            <span className="text-sm text-white/80">
+            <span className="text-[34px] font-semibold leading-none tracking-tight text-foreground">
+              {attention}
+            </span>
+            <span className="text-[13px] text-muted-foreground">
               open loop{attention === 1 ? '' : 's'}
             </span>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
-            <LiveDot /> Watching
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <LiveDot calm={allClear} /> Watching
           </span>
         </div>
 
@@ -250,8 +253,8 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
           {shown.length > 0 ? (
             shown.map((a) => <AlertRow key={a.id} alert={a} onClick={() => openAlert(a)} />)
           ) : (
-            <div className="flex flex-1 items-center justify-center gap-1.5 text-sm font-semibold text-white">
-              <ShieldCheck className="h-4 w-4" /> Inbox is calm
+            <div className="flex flex-1 items-center justify-center gap-1.5 text-[13px] font-medium text-muted-foreground">
+              <ShieldCheck className="h-4 w-4 text-success" /> Inbox is calm
             </div>
           )}
         </div>
@@ -260,10 +263,11 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
           <JunkButton label="Promo" count={cleanup.promo} onClick={() => void clearJunk('promotions')} />
           <JunkButton label="Social" count={cleanup.social} onClick={() => void clearJunk('social')} />
           <JunkButton label="Spam" count={cleanup.spam} onClick={() => void clearJunk('spam')} />
+          {/* The one accent on the surface: the single thing worth tapping. */}
           <button
             onClick={openApp}
             aria-label="Open Gmail Sentry"
-            className="flex h-full flex-shrink-0 items-center rounded-2xl bg-white px-3 py-2 text-accent shadow-sm transition-transform active:scale-95"
+            className="flex h-full flex-shrink-0 items-center rounded-2xl bg-accent px-3 py-2 text-accent-foreground transition-transform active:scale-95"
           >
             <ArrowUpRight className="h-4 w-4" />
           </button>
@@ -275,20 +279,19 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
 
 function AlertPeek({ alert }: { alert: WidgetAlert }) {
   return (
-    <>
-      <span className="inline-flex w-fit items-center gap-1.5">
-        <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
-          {TIER_LABEL[alert.tier] ?? 'FYI'}
+    <div className="flex min-w-0 items-center gap-2.5">
+      <Who sender={alert.sender} />
+      <div className="min-w-0 flex-1">
+        {/* Sender first: people scan mail by WHO before WHAT. */}
+        <span className="block truncate text-[13px] font-semibold text-foreground">
+          {parseSender(alert.sender).name}
         </span>
+        <span className="block truncate text-[12px] text-muted-foreground">{alert.subject}</span>
         {alert.reply_ready && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-accent">
-            Reply ready
-          </span>
+          <span className="mt-0.5 block text-[11px] font-medium text-accent">Reply ready</span>
         )}
-      </span>
-      <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
-      <span className="block truncate text-xs text-white/70">{parseSender(alert.sender).name}</span>
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -296,19 +299,22 @@ function AlertRow({ alert, onClick }: { alert: WidgetAlert; onClick: () => void 
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-xl bg-white/10 px-2.5 py-2 text-left backdrop-blur transition-transform active:scale-[0.98]"
+      className="flex w-full items-center gap-2.5 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-muted/50 active:bg-muted/70"
     >
-      <span className="flex-shrink-0 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-        {TIER_LABEL[alert.tier] ?? 'FYI'}
-      </span>
+      <Who sender={alert.sender} className="h-6 w-6 text-[10px]" />
       <div className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-white">{alert.subject}</span>
-        <span className="block truncate text-xs text-white/70">{parseSender(alert.sender).name}</span>
+        <span
+          className={cn(
+            'block truncate text-[13px] text-foreground',
+            alert.tier === 'urgent' ? 'font-bold' : 'font-medium',
+          )}
+        >
+          {parseSender(alert.sender).name}
+        </span>
+        <span className="block truncate text-[12px] text-muted-foreground">{alert.subject}</span>
       </div>
       {alert.reply_ready && (
-        <span className="flex-shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-accent">
-          Reply ready
-        </span>
+        <span className="flex-shrink-0 text-[11px] font-medium text-accent">Reply</span>
       )}
     </button>
   );
@@ -321,12 +327,12 @@ function JunkButton({ label, count, onClick }: { label: string; count: number; o
       disabled={count === 0}
       aria-label={`Clear ${count} ${label} emails`}
       className={cn(
-        'flex min-w-0 flex-1 flex-col items-center rounded-2xl bg-white/15 px-2 py-2 text-white backdrop-blur transition-transform active:scale-95',
-        count === 0 && 'opacity-50',
+        'flex min-w-0 flex-1 flex-col items-center rounded-2xl bg-muted/60 px-2 py-2 text-foreground transition-colors hover:bg-muted active:scale-95',
+        count === 0 && 'opacity-40',
       )}
     >
-      <span className="text-base font-bold leading-none">{count}</span>
-      <span className="mt-0.5 truncate text-[11px] font-medium text-white/80">{label}</span>
+      <span className="text-[15px] font-semibold leading-none">{count}</span>
+      <span className="mt-0.5 truncate text-[11px] text-muted-foreground">{label}</span>
     </button>
   );
 }
