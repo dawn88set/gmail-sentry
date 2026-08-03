@@ -826,3 +826,19 @@ export interface Insights {
 }
 
 export const getInsights = async (): Promise<Insights> => (await api.get('/api/insights')).data;
+
+// ── Refining a draft you're already looking at ──────────────────────────────
+// The edit people make when a draft is nearly right. Without it they retype it
+// themselves, which throws away the voice matching the draft existed for.
+export type Refinement = 'shorter' | 'warmer' | 'firmer' | 'formal';
+
+/** Rewrite a passage — the whole draft, or just the selection. Persists nothing;
+ *  the caller keeps the text and the user still approves before anything sends.
+ *  A 503 means it genuinely couldn't (no AI connection) — show the message
+ *  rather than pretending the button worked. */
+export const refineDraft = async (
+  text: string,
+  how: Refinement,
+  context = '',
+): Promise<{ text: string }> =>
+  (await api.post('/api/reply/refine', { text, how, context })).data;

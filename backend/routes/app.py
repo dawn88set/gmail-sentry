@@ -208,6 +208,49 @@ class DraftReplyBody(BaseModel):
     intent: Optional[str] = None
 
 
+class RefineBody(BaseModel):
+    #: The passage to rewrite — the whole draft, or just what the user selected.
+    text: str
+    #: shorter | warmer | firmer | formal (see reply.REFINEMENTS)
+    how: str
+    #: What the email is about, so a mid-email fragment can be rewritten sensibly.
+    context: Optional[str] = None
+
+
+@router.post("/api/reply/refine")
+async def refine_reply(
+    payload: RefineBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Rewrite part of a draft the user is already looking at — shorter, warmer,
+    firmer, more formal — keeping their voice.
+
+    This is the edit people make after reading a draft that's nearly right. Without
+    it they retype it themselves, which throws away the voice matching entirely.
+
+    Persists nothing: the caller holds the text, and the user still has to approve
+    and send. A refusal comes back as 503 with a sentence to show, never as the
+    input handed back unchanged — a button that silently does nothing is worse
+    than one that says why it can't.
+    """
+    from backend.services.reply import refine_draft, RefusedToRefine
+
+    samples, tone, _sig = style_for(db, user_id)
+    try:
+        return {
+            "text": refine_draft(
+                payload.text,
+                payload.how,
+                style_samples=samples,
+                tone=tone,
+                context=(payload.context or ""),
+            )
+        }
+    except RefusedToRefine as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 @router.post("/api/alerts/{alert_id}/draft-reply")
 async def draft_reply_alert(
     alert_id: str,

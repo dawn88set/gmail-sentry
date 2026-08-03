@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Send, Loader2, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
+import { DraftRefiner } from '@/components/DraftRefiner';
 import {
   getNudge,
   draftNudge,
@@ -51,6 +52,7 @@ export function NudgeComposer({
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [armed, setArmed] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -207,11 +209,19 @@ export function NudgeComposer({
               {nudge.voice_matched ? 'Follow-up · in your voice' : 'Follow-up · basic draft'}
             </div>
             <textarea
+              ref={bodyRef}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={5}
               className="w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-[14px] leading-relaxed text-foreground outline-none focus:border-accent"
               aria-label="Follow-up message"
+            />
+            <DraftRefiner
+              value={body}
+              onChange={setBody}
+              textareaRef={bodyRef}
+              context={followUp.subject || ''}
+              disabled={sending || drafting}
             />
           </div>
 

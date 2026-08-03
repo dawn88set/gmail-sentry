@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   X,
@@ -16,6 +16,7 @@ import {
 import { Avatar, parseSender } from '@/components/Avatar';
 import { ActionTile } from '@/components/ios/ActionTile';
 import { useToast } from '@/components/Toast';
+import { DraftRefiner } from '@/components/DraftRefiner';
 import {
   doneAlert,
   snoozeAlert,
@@ -60,6 +61,8 @@ export function AlertSheet({
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [draft, setDraft] = useState<{ url: string; voice: boolean } | null>(null);
   const [replyText, setReplyText] = useState('');
+  // The refiner reads the caret/selection to rewrite just the highlighted part.
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   const [intent, setIntent] = useState('');
 
   const run = async (key: string, fn: () => Promise<unknown>, close = true) => {
@@ -222,11 +225,19 @@ export function AlertSheet({
               </div>
 
               <textarea
+                ref={replyRef}
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
                 rows={5}
                 className="w-full resize-y rounded-xl border border-border bg-card px-3 py-2 text-[14px] leading-relaxed text-foreground outline-none focus:ring-2 focus:ring-accent/40"
                 placeholder="Write your reply…"
+              />
+              <DraftRefiner
+                value={replyText}
+                onChange={setReplyText}
+                textareaRef={replyRef}
+                context={alert.subject || ''}
+                disabled={busy !== null}
               />
               <div className="mt-3 flex gap-2">
                 <button

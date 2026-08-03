@@ -103,6 +103,104 @@ def style_for(db, user_id: str) -> Tuple[List[str], str, str]:
     return voice_samples(db, user_id), "", ""
 
 
+#: What the user can ask for, and the instruction each one becomes. Deliberately
+#: a closed set: an open text box invites rewriting a draft into something the
+#: user never said, and the whole point of drafting in someone's voice is that
+#: the words stay theirs.
+REFINEMENTS = {
+    "shorter": "Cut it down. Same meaning, same voice, fewer words. Remove padding, "
+               "not substance. Do not drop any commitment, question, date or number.",
+    "warmer": "Make it warmer and friendlier without becoming gushing or informal. "
+              "Same facts, same commitments, softer edges.",
+    "firmer": "Make it more direct and businesslike. Clearer ask, less hedging. "
+              "Never rude, never a threat. Same facts.",
+    "formal": "Make it more formal and professional. Fuller sentences, no slang, "
+              "no contractions where they read casual. Same facts.",
+}
+
+
+class RefusedToRefine(Exception):
+    """The rewrite couldn't be done honestly — surfaced to the user, never
+    swallowed into "here's your text back, unchanged"."""
+
+
+def refine_draft(
+    text: str,
+    how: str,
+    *,
+    style_samples: Optional[List[str]] = None,
+    tone: str = "",
+    context: str = "",
+) -> str:
+    """Rewrite a passage of a draft the user is already looking at.
+
+    This is the edit that happens AFTER a draft exists — the user reads it,
+    finds it nearly right, and wants it shorter or warmer rather than to write
+    it again themselves. It's the moment people otherwise abandon the draft and
+    type their own, which throws away the voice matching entirely.
+
+    Operates on `text`, which may be a selection rather than the whole draft, so
+    the prompt must not add greetings or sign-offs to a fragment.
+
+    RAISES rather than falling back. `draft_reply` can honestly degrade to a
+    holding note because something is better than nothing on a blank page; a
+    refine has no such excuse. Returning the input unchanged would look like the
+    button did nothing, and returning a template would replace the user's words
+    with a machine's.
+    """
+    body = (text or "").strip()
+    if not body:
+        raise RefusedToRefine("There's nothing selected to rewrite.")
+    instruction = REFINEMENTS.get((how or "").strip().lower())
+    if not instruction:
+        raise RefusedToRefine(f"Don't know how to make it “{how}”.")
+
+    samples = [s.strip() for s in (style_samples or []) if s and s.strip()][:4]
+    voice = ""
+    if tone.strip():
+        voice += f"\n\nThe user's writing voice is: {tone.strip()}. Preserve it."
+    if samples:
+        joined = "\n\n".join(f"— {s}" for s in samples)
+        voice += (
+            "\n\nKeep it in the USER'S OWN VOICE. Examples of how they write:\n" + joined
+        )
+
+    try:
+        from claritty_sdk.llm import get_llm_client
+
+        client = get_llm_client(MODEL)
+        result = client.chat(
+            [{"role": "user", "content": (
+                f"{instruction}\n\n"
+                "Rewrite ONLY the passage below. It may be an excerpt from the middle of an "
+                "email, so do not add a greeting, a sign-off, or a subject line unless the "
+                "passage already has one. Do not add facts, commitments, dates or numbers "
+                "that are not already there. Output only the rewritten passage."
+                + (f"\n\nFor context, the email is about: {context}" if context.strip() else "")
+                + f"\n\nPassage:\n{body}" + voice
+            )}],
+            temperature=0.3,
+            max_tokens=700,
+            system=(
+                "You are an editor. You rewrite a passage exactly as instructed while keeping "
+                "the author's voice and every fact, commitment and number intact. You never "
+                "invent content and never add scaffolding the passage didn't have."
+            ),
+        )
+        out = (getattr(result, "content", "") or "").strip()
+        if out:
+            return out
+        raise RefusedToRefine("The rewrite came back empty. Try again.")
+    except RefusedToRefine:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.info("refine_draft unavailable: %s: %s", type(e).__name__, e)
+        raise RefusedToRefine(
+            "Rewriting needs the AI connection, which isn't available right now. "
+            "Your draft is untouched."
+        ) from e
+
+
 def draft_reply(
     sender: str,
     subject: str,
