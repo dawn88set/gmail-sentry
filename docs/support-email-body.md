@@ -52,6 +52,19 @@ The practical impact is severe: Gmail Sentry
 (`7e925d43-7188-4d48-8a55-9eb203f59378`) first went live 2026-07-20 and has not
 been updatable since. Roughly 50 deploys, all failed.
 
+**A third path is broken too, and this one has an exact cause.** Trying to
+install the app into my own workspace:
+
+```
+POST /api/marketplace/install  {"templateId":"6819e987-…"}
+→ 400  DatabaseError
+   pg 42703: column AppPurchase.paymentProvider does not exist
+```
+
+That is a migration missing on your production database, not anything to do
+with my app — the endpoint fails before it looks at what is being installed. It
+means self-install is unavailable as a workaround for the build problem.
+
 Two related bugs worth their own tickets:
 
 1. **The CLI reports success for a failed deploy, and failure for a running
