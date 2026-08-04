@@ -44,6 +44,75 @@ from backend.services.onboarding import _BULK_LOCALPARTS
 
 logger = logging.getLogger(__name__)
 
+# Mail providers, not organisations. A sender at one of these is their own
+# account — grouping them would produce "Gmail.Com" with forty unrelated people
+# in it, which is worse than no grouping at all.
+GENERIC_DOMAINS = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "aol.com",
+    "msn.com", "gmx.com", "mail.com", "yandex.com", "zoho.com",
+}
+
+def _clean(text: str) -> str:
+    return " ".join((text or "").split()).strip()
+
+
+# Company-suffix tokens that get glued onto a domain. Splitting them back off
+# turns "harborfreightco" into "Harborfreight Co" and "packritesupply" into
+# "Packrite Supply" — a customer list that reads like a business rather than
+# like a list of hostnames. Deliberately short and unambiguous: these are all
+# words a company appends to its name, so a false split is unlikely and cosmetic
+# where it happens. We do NOT try to split arbitrary run-together words, because
+# guessing "brightpath" into "bright path" is as likely to be wrong as right.
+_SUFFIXES = (
+    "supply", "solutions", "partners", "software", "systems", "capital",
+    "digital", "studio", "agency", "media", "group", "works", "labs", "tech",
+    "shop", "store", "consulting", "holdings", "ventures", "logistics",
+)
+_LEGAL = ("inc", "llc", "ltd", "plc", "gmbh", "corp", "co")
+
+
+def _readable(root: str) -> str:
+    """A domain root as a company name a person would recognise."""
+    root = root.replace("-", " ").replace("_", " ")
+    if " " not in root:
+        low = root.lower()
+        # Longest suffix first: "solutions" before "so"-like short ones, and a
+        # minimum stem so "labs.com" doesn't become "" + "labs".
+        for suf in sorted(_SUFFIXES + _LEGAL, key=len, reverse=True):
+            if low.endswith(suf) and len(low) - len(suf) >= 4:
+                root = f"{root[: len(low) - len(suf)]} {root[len(low) - len(suf):]}"
+                break
+    # Title-case, but leave legal forms in their conventional shape.
+    parts = []
+    for w in root.split():
+        parts.append(w.upper() if w.lower() in ("inc", "llc", "ltd", "plc") else w.title())
+    return " ".join(parts)
+
+
+def company_of(cp: models.Counterparty) -> str:
+    """The best available name for a counterparty's organisation.
+
+    CRM company when the CRM actually answered, else a readable form of the
+    domain, else the person themselves. Personal-mail domains fall back to the
+    person, since "Clients/Gmail.Com" would be worse than useless.
+
+    Lives here rather than in filing.py because folder names and account names
+    must be the same string — a folder called "Northwind" beside an account
+    called "Northwind Ltd" reads as two different customers.
+    """
+    if (cp.crm_status or "") == "ok" and _clean(cp.crm_company or ""):
+        return _clean(cp.crm_company)[:60]
+
+    domain = (cp.domain or "").lower()
+    if domain and domain not in GENERIC_DOMAINS:
+        return _clean(_readable(domain.split(".")[0]))[:60]
+
+    if _clean(cp.display_name or ""):
+        return _clean(cp.display_name)[:60]
+    return _clean((cp.email or "").split("@")[0].replace(".", " ").title())[:60]
+
+
 #: Relationship classes. `unknown` is honest and common — most correspondents
 #: never accumulate enough signal to classify, and guessing would be worse.
 CUSTOMER = "customer"

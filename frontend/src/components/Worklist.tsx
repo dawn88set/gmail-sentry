@@ -151,7 +151,15 @@ function WorkRow({ item, onOpen }: { item: WorkItem; onOpen: () => void }) {
             {verb.label}
           </span>
           <span>·</span>
-          <span className="truncate">{item.who}</span>
+          {/* Person AND company. A name alone is unplaceable once you have more
+              than a handful of contacts, and the company is what connects this
+              row to the account it belongs to. */}
+          <span className="truncate">
+            {item.who}
+            {item.company && item.company !== item.who && (
+              <span className="text-foreground/70"> · {item.company}</span>
+            )}
+          </span>
           {item.due_label && (
             <>
               <span>·</span>

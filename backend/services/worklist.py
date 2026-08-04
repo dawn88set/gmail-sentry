@@ -35,7 +35,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from backend import models
-from backend.services import activity, followups
+from backend.services import activity, counterparty, followups
 from backend.services.ledger import utcnow
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,19 @@ def _short(sender: str) -> str:
     return activity.short_sender(sender)
 
 
+def _email_only(sender: str) -> str:
+    """Bare address from a From header — `Dana Levi <dana@x.co>` → `dana@x.co`.
+
+    Alerts store the raw header while follow-ups store the address, so a lookup
+    keyed on one has to normalise the other or every alert row silently loses
+    its company.
+    """
+    raw = (sender or "").strip()
+    if "<" in raw and ">" in raw:
+        raw = raw[raw.rfind("<") + 1 : raw.rfind(">")]
+    return raw.strip().strip('"').lower()
+
+
 def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
     """The ranked list, plus what's already been cleared today.
 
@@ -97,6 +110,19 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
     """
     now = utcnow()
     items: List[Dict[str, Any]] = []
+
+    # Which company each correspondent belongs to. "Sam Ortiz" means nothing to
+    # an owner with two hundred contacts; "Sam Ortiz · Northwind Ltd" is the
+    # account they can picture, and it ties this list to the Accounts screen so
+    # the two read as one product rather than two lists of the same mail. One
+    # query, reused for every row.
+    company_by_email = {
+        (c.email or "").lower(): counterparty.company_of(c)
+        for c in db.query(models.Counterparty)
+        .filter(models.Counterparty.user_id == user_id)
+        .all()
+        if c.email
+    }
 
     # 1. Fresh mail waiting on an answer.
     alerts = (
@@ -130,6 +156,7 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
             "kind": REPLY,
             "who": _short(a.sender or ""),
             "email": a.sender or "",
+            "company": company_by_email.get(_email_only(a.sender or ""), ""),
             "headline": (loop.ask_summary if loop and loop.ask_summary else (a.subject or "(no subject)")),
             "subject": a.subject or "",
             "urgent": a.tier == "urgent",
@@ -154,6 +181,7 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
             "kind": CHASE if chasing else OWE,
             "who": f.counterparty_name or f.counterparty_email or "someone",
             "email": f.counterparty_email or "",
+            "company": company_by_email.get((f.counterparty_email or "").lower(), ""),
             "headline": f.ask_summary or f.subject or "(no subject)",
             "subject": f.subject or "",
             "urgent": False,

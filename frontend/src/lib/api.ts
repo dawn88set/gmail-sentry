@@ -857,6 +857,9 @@ export interface WorkItem {
   kind: WorkKind;
   who: string;
   email: string;
+  /** The company behind the person — "" when we don't know them yet. Ties a
+   *  worklist row to its account without a second request. */
+  company?: string;
   /** What to DO — the extracted ask when we have one, else the subject. */
   headline: string;
   subject: string;

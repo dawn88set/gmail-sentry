@@ -27,22 +27,17 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.services import counterparty as cp_service
+# The naming rule lives on counterparty because it is a property of one, and
+# because `worklist` needs it too — importing accounts there would be a cycle,
+# since accounts is built FROM the worklist.
+from backend.services.counterparty import GENERIC_DOMAINS, _clean, company_of
 from backend.services import followups as followups_service
 from backend.services import worklist as worklist_service
 
-# Mail providers, not organisations. A sender at one of these is their own
-# account — grouping them would produce "Gmail.Com" with forty unrelated people
-# in it, which is worse than no grouping at all.
-GENERIC_DOMAINS = {
-    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
-    "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "aol.com",
-    "msn.com", "gmx.com", "mail.com", "yandex.com", "zoho.com",
-}
-
 # Strongest wins when one account holds several relationships: a company with a
-# client and a prospect contact is a client. Ordered most→least committed.
+# client contact and a prospect contact is a client. Most→least committed.
 _REL_RANK = [
-    cp_service.CUSTOMER if hasattr(cp_service, "CUSTOMER") else "customer",
+    cp_service.CUSTOMER,
     "client",
     cp_service.PROSPECT,
     cp_service.VENDOR,
@@ -50,6 +45,8 @@ _REL_RANK = [
     cp_service.UNKNOWN,
 ]
 
+#: How a relationship is said on screen. Matches the People screen's wording so
+#: a contact is never a "Client" there and a "customer" here.
 REL_LABEL = {
     "customer": "Client",
     "client": "Client",
@@ -59,66 +56,6 @@ REL_LABEL = {
     "bulk": "Automated",
     "unknown": "Unclassified",
 }
-
-
-def _clean(text: str) -> str:
-    return " ".join((text or "").split()).strip()
-
-
-# Company-suffix tokens that get glued onto a domain. Splitting them back off
-# turns "harborfreightco" into "Harborfreight Co" and "packritesupply" into
-# "Packrite Supply" — a customer list that reads like a business rather than
-# like a list of hostnames. Deliberately short and unambiguous: these are all
-# words a company appends to its name, so a false split is unlikely and cosmetic
-# where it happens. We do NOT try to split arbitrary run-together words, because
-# guessing "brightpath" into "bright path" is as likely to be wrong as right.
-_SUFFIXES = (
-    "supply", "solutions", "partners", "software", "systems", "capital",
-    "digital", "studio", "agency", "media", "group", "works", "labs", "tech",
-    "shop", "store", "consulting", "holdings", "ventures", "logistics",
-)
-_LEGAL = ("inc", "llc", "ltd", "plc", "gmbh", "corp", "co")
-
-
-def _readable(root: str) -> str:
-    """A domain root as a company name a person would recognise."""
-    root = root.replace("-", " ").replace("_", " ")
-    if " " not in root:
-        low = root.lower()
-        # Longest suffix first: "solutions" before "so"-like short ones, and a
-        # minimum stem so "labs.com" doesn't become "" + "labs".
-        for suf in sorted(_SUFFIXES + _LEGAL, key=len, reverse=True):
-            if low.endswith(suf) and len(low) - len(suf) >= 4:
-                root = f"{root[: len(low) - len(suf)]} {root[len(low) - len(suf):]}"
-                break
-    # Title-case, but leave legal forms in their conventional shape.
-    parts = []
-    for w in root.split():
-        parts.append(w.upper() if w.lower() in ("inc", "llc", "ltd", "plc") else w.title())
-    return " ".join(parts)
-
-
-def company_of(cp: models.Counterparty) -> str:
-    """The best available name for a counterparty's organisation.
-
-    CRM company when the CRM actually answered, else a readable form of the
-    domain, else the person themselves. Personal-mail domains fall back to the
-    person, since "Clients/Gmail.Com" would be worse than useless.
-
-    Lives here rather than in filing.py because folder names and account names
-    must be the same string — a folder called "Northwind" beside an account
-    called "Northwind Ltd" reads as two different customers.
-    """
-    if (cp.crm_status or "") == "ok" and _clean(cp.crm_company or ""):
-        return _clean(cp.crm_company)[:60]
-
-    domain = (cp.domain or "").lower()
-    if domain and domain not in GENERIC_DOMAINS:
-        return _clean(_readable(domain.split(".")[0]))[:60]
-
-    if _clean(cp.display_name or ""):
-        return _clean(cp.display_name)[:60]
-    return _clean((cp.email or "").split("@")[0].replace(".", " ").title())[:60]
 
 
 def account_key(cp: models.Counterparty) -> str:

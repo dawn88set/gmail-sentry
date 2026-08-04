@@ -143,3 +143,49 @@ def test_it_is_scoped_to_one_user():
     _alert(db)
     _alert(db, user_id="u2", gmail_message_id="m2", subject="not yours")
     assert worklist.build(db, "u1")["total"] == 1
+
+
+def test_rows_name_the_company_not_just_the_person():
+    """"Sam Ortiz" means nothing to an owner with two hundred contacts.
+
+    The company is what they can picture, and it is what ties this list to the
+    Accounts screen — without it the two read as two separate lists of the same
+    mail.
+    """
+    db = _session()
+    db.add(models.Counterparty(
+        user_id="u1", email="dana@northwind.co", domain="northwind.co",
+        display_name="Dana Levi", relationship="customer", importance=80,
+    ))
+    db.commit()
+    _loop(db, counterparty_email="dana@northwind.co")
+
+    row = worklist.build(db, "u1")["items"][0]
+
+    assert row["company"] == "Northwind"
+
+
+def test_an_alert_row_resolves_its_company_from_a_raw_from_header():
+    """Alerts store `Dana Levi <dana@x.co>` while loops store the bare address.
+
+    Keying the lookup on one without normalising the other would silently blank
+    the company on exactly the rows that arrive first.
+    """
+    db = _session()
+    db.add(models.Counterparty(
+        user_id="u1", email="dana@northwind.co", domain="northwind.co",
+        display_name="Dana Levi", relationship="customer", importance=80,
+    ))
+    db.commit()
+    _alert(db, sender="Dana Levi <dana@northwind.co>")
+
+    row = worklist.build(db, "u1")["items"][0]
+
+    assert row["company"] == "Northwind"
+
+
+def test_an_unknown_sender_has_no_company_rather_than_a_guess():
+    db = _session()
+    _loop(db, counterparty_email="stranger@nowhere.example")
+
+    assert worklist.build(db, "u1")["items"][0]["company"] == ""
