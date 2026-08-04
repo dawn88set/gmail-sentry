@@ -112,6 +112,34 @@ attempt increments `resubmissionCount` as a side effect. That field appears to
 be write-once, which permanently welds a template created from GitHub to a
 validation path its owner may no longer want.
 
+**The cleanest control: the same bytes, twice, different outcomes.** On
+2026-08-04 I scaffolded one untouched `create-claritty-app` seed and deployed
+that identical directory twice, roughly 30 minutes apart, with CLI 0.7.1:
+
+```
+14:32Z  Seed Control 0804     pristine seed              ✅ ACTIVE, deployedAt set
+~14:5xZ Gmail Sentry CLI      our app, fresh template    ❌ Build failed
+~15:0xZ Probe FE 0804         seed backend + our FE      ❌ deploy failed
+~15:1xZ Probe BE 0804         our backend + seed FE      ❌ Build failed
+~15:2xZ Seed Control B 0804   THE SAME pristine seed     ❌ deploy failed
+```
+
+The first and last rows are the same source tree. One built, one did not. No
+property of the app being deployed can explain that, which rules out app size,
+dependencies, the manifest, and our source in one shot.
+
+For completeness, everything verifiable on this end passes, on 2026-08-04:
+
+* `docker build --platform linux/amd64 --no-cache` succeeds (727 MB image)
+* the container boots and answers `/health` **200 in 2 seconds**
+* all 11 Alembic migrations apply cleanly to a fresh Postgres, including with
+  `options=-csearch_path%3Dtenant_x` in the URL
+* `npm ci` is clean; the frontend builds in 9 s under a 1 GB memory cap
+* the upload bundle is 2.0 MB and contains Dockerfile, backend, frontend,
+  `intelligence.yaml` and `app-config.json`
+* `claritty doctor` passes every check, including your platform dry-run
+* our `Dockerfile` is byte-identical to the current seed's
+
 **The ask:** the CodeBuild log for any failing build of
 `claritty-app-7e925d43-dft`. Failures die ~60–90s into "Building image", while
 successful builds take ~3 minutes — so they're failing early rather than timing
