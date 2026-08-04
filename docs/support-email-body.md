@@ -82,6 +82,36 @@ what code it is running. If `deployedAt` can move while the old image keeps
 serving, that is a more serious bug than the build failures, and it would be
 invisible to every developer on the platform.
 
+**Two independent failures, and the second is the one that matters.**
+
+The submission record for `6819e987` carries a `failureReason` that is never
+shown in the CLI or the UI:
+
+```
+Validation failed after 1 attempts:
+GitHub access failed: GitHub App not connected.
+Please connect your GitHub account to continue.
+```
+
+That is real and actionable — but it is *not* what breaks the builds, and the
+control that shows it is clean. `claritty deploy` uses the direct-upload path
+(`POST /api/apps/templates/direct`), which never touches GitHub. I deployed the
+identical source to a brand-new template with `githubRepoUrl: None`
+(`a6aff507-aa49-4752-b1ff-41cd2ec99805`), so no GitHub check could run at all:
+
+```
+Scanning + building + deploying… (failed)
+✗ Build failed. Please check that your app builds successfully locally.
+```
+
+So the image build fails for direct uploads with no GitHub involvement
+whatsoever. Please treat the two separately — and note that
+`githubRepoUrl` cannot be cleared to route around it: `PATCH` with `null` is
+accepted (HTTP 200) but silently ignored, `""` is rejected (HTTP 400), and each
+attempt increments `resubmissionCount` as a side effect. That field appears to
+be write-once, which permanently welds a template created from GitHub to a
+validation path its owner may no longer want.
+
 **The ask:** the CodeBuild log for any failing build of
 `claritty-app-7e925d43-dft`. Failures die ~60–90s into "Building image", while
 successful builds take ~3 minutes — so they're failing early rather than timing
