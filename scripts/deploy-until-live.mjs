@@ -45,11 +45,22 @@ const token = () =>
   JSON.parse(readFileSync(path.join(homedir(), '.claritty/credentials.json'), 'utf8'))[API]
     .session.accessToken;
 
+// Distinguishes "the call failed" from "the call said no". Without that, an
+// expired session reads exactly like a build that hasn't finished — the loop
+// would sit there for ten hours reporting "no verdict" and never say why.
 const api = (method, url, body) => {
-  const args = ['-s', '-X', method, '-H', `Authorization: Bearer ${token()}`];
+  const args = ['-s', '-w', '\n%{http_code}', '-X', method, '-H', `Authorization: Bearer ${token()}`];
   if (body) args.push('-H', 'Content-Type: application/json', '-d', JSON.stringify(body));
   args.push(`${API}${url}`);
-  try { return JSON.parse(execFileSync('curl', args, { encoding: 'utf8' })); } catch { return null; }
+  let raw;
+  try { raw = execFileSync('curl', args, { encoding: 'utf8' }); }
+  catch (e) { return { ok: false, why: `curl: ${e.message}` }; }
+  const nl = raw.lastIndexOf('\n');
+  const code = Number(raw.slice(nl + 1));
+  if (code === 401 || code === 403) return { ok: false, why: `HTTP ${code} — run \`claritty login\`` };
+  if (code >= 400) return { ok: false, why: `HTTP ${code}` };
+  try { return { ok: true, body: JSON.parse(raw.slice(0, nl)) }; }
+  catch { return { ok: false, why: 'non-JSON response' }; }
 };
 
 const templateId = JSON.parse(readFileSync(path.join(ROOT, '.claritty.json'), 'utf8'))
@@ -59,13 +70,14 @@ if (!templateId) {
   process.exit(1);
 }
 
-const appRow = () => {
-  const d = api('GET', '/api/apps')?.data;
-  const rows = Array.isArray(d) ? d : d?.apps || [];
-  return rows.find((a) => a?.templateId === templateId) || null;
-};
-
-const app = appRow();
+const listed = api('GET', '/api/apps');
+if (!listed.ok) {
+  console.error(`  can't reach the platform: ${listed.why}`);
+  process.exit(1);
+}
+const rowsRaw = listed.body?.data;
+const rows = Array.isArray(rowsRaw) ? rowsRaw : rowsRaw?.apps || [];
+const app = rows.find((a) => a?.templateId === templateId) || null;
 if (!app) {
   console.error(`  no installed app found for template ${templateId}.`);
   process.exit(1);
@@ -75,11 +87,40 @@ console.log(`  live build ${app.deployedAt}`);
 console.log(`  retrying every ${WAIT_MIN} min, up to ${ATTEMPTS} times\n`);
 
 const state = () => {
-  const a = api('GET', `/api/apps/${app.id}`)?.data || {};
-  return { err: a.draftErrorAt || null, draft: a.draftDeployedAt || null, live: a.deployedAt || null };
+  const r = api('GET', `/api/apps/${app.id}`);
+  if (!r.ok) return { down: r.why };
+  const a = r.body?.data || {};
+  return {
+    err: a.draftErrorAt || null,
+    draft: a.draftDeployedAt || null,
+    live: a.deployedAt || null,
+    // The platform's own triage of the failure. Today it self-classifies as
+    // infra — type UNKNOWN, userActionable false, "Deployment was interrupted -
+    // please retry" — which is the whole justification for this loop. If that
+    // ever changes into a real code error, retrying is the wrong move and the
+    // loop stops instead of hammering a fault only we can fix.
+    infra: (a.errorAnalysis?.userActionable ?? false) === false,
+    why: a.errorAnalysis?.technicalDetails || a.draftError || a.error || '',
+  };
 };
 
+/*
+ * There is deliberately no HTTP serving probe here. The app origin
+ * (`<id>.apps.claritty.ai`) answers 403 {"error":"Forbidden"} to every path —
+ * `/`, `/api/*`, with a bearer token or without — because it is only reachable
+ * through the platform's own proxy with a signed session. So curl returns 403
+ * for old code and new code alike and can prove nothing.
+ *
+ * A moved `deployedAt` is therefore the strongest signal available from here,
+ * and it is NOT the same as "the new build is serving" — the platform has
+ * reported a deploy as active twice running when only the first landed. The
+ * only real confirmation is opening the app in a signed-in browser and looking
+ * for something that exists solely in this code (the Mail tab, the worklist on
+ * Today). The script says so rather than overclaiming.
+ */
+
 let base = state();
+if (base.down) { console.error(`  can't read app state: ${base.down}`); process.exit(1); }
 
 for (let n = 1; n <= ATTEMPTS; n++) {
   console.log(`  ${stamp()}  attempt ${n}/${ATTEMPTS} …`);
@@ -87,15 +128,26 @@ for (let n = 1; n <= ATTEMPTS; n++) {
 
   // Wait for a terminal signal from the API, not from the CLI.
   let outcome = 'timeout';
+  let down = null;
   for (let i = 0; i < 30; i++) {
     sleep(15000);
     const s = state();
+    if (s.down) { down = s.down; continue; }
     if (s.draft && s.draft !== base.draft) { outcome = 'built'; base = s; break; }
     if (s.err && s.err !== base.err) { outcome = 'failed'; base = s; break; }
   }
 
+  if (outcome === 'failed' && !base.infra) {
+    // No longer "please retry" — the platform is now blaming something we own.
+    console.error(`\n  ✗ STOPPING — this failure looks actionable, not infra:\n    ${base.why}`);
+    console.error('    Retrying would just hammer a fault that needs a code fix.');
+    process.exit(2);
+  }
+
   if (outcome !== 'built') {
-    console.log(`  ${stamp()}  ${outcome === 'failed' ? 'build failed' : 'no verdict'} — waiting ${WAIT_MIN} min`);
+    const note = outcome === 'failed' ? 'build failed (platform-side, retryable)'
+      : down ? `couldn't read state — ${down}` : 'no verdict';
+    console.log(`  ${stamp()}  ${note} — waiting ${WAIT_MIN} min`);
     if (n === ATTEMPTS) break;
     sleep(WAIT_MIN * 60_000);
     continue;
@@ -108,9 +160,12 @@ for (let n = 1; n <= ATTEMPTS; n++) {
   for (let i = 0; i < 40; i++) {
     sleep(15000);
     const s = state();
+    if (s.down) continue;
     if (s.live && s.live !== app.deployedAt) {
-      console.log(`\n  ✓ LIVE — deployedAt ${s.live}`);
+      console.log(`\n  ✓ PUBLISHED — deployedAt ${app.deployedAt} → ${s.live}`);
       console.log(`    https://app.claritty.ai/apps/${app.id}`);
+      console.log('    NOT yet proof it is serving — open the app and look for the');
+      console.log('    Mail tab and the worklist on Today before calling it done.');
       process.exit(0);
     }
     if (s.err && s.err !== base.err) { console.log(`  ${stamp()}  publish failed — back to retrying`); base = s; break; }
