@@ -34,7 +34,9 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 const API = 'https://api.claritty.ai';
-const ROOT = path.resolve(import.meta.dirname, '..');
+// APP_DIR lets this drive a copy of the app that carries a different identity
+// (a second app instance, say) without touching the repo's own binding.
+const ROOT = process.env.APP_DIR || path.resolve(import.meta.dirname, '..');
 const ATTEMPTS = Number(process.env.ATTEMPTS || 60);
 const WAIT_MIN = Number(process.env.WAIT_MIN || 10);
 
@@ -133,6 +135,10 @@ for (let n = 1; n <= ATTEMPTS; n++) {
     sleep(15000);
     const s = state();
     if (s.down) { down = s.down; continue; }
+    // A first-time app has no draft to build — a successful deploy moves
+    // deployedAt straight away, and there is nothing left to publish. Without
+    // this the loop would sit through its whole timeout after actually winning.
+    if (s.live && s.live !== app.deployedAt) { outcome = 'live'; base = s; break; }
     if (s.draft && s.draft !== base.draft) { outcome = 'built'; base = s; break; }
     if (s.err && s.err !== base.err) { outcome = 'failed'; base = s; break; }
   }
@@ -142,6 +148,14 @@ for (let n = 1; n <= ATTEMPTS; n++) {
     console.error(`\n  ✗ STOPPING — this failure looks actionable, not infra:\n    ${base.why}`);
     console.error('    Retrying would just hammer a fault that needs a code fix.');
     process.exit(2);
+  }
+
+  if (outcome === 'live') {
+    console.log(`\n  ✓ DEPLOYED — deployedAt ${base.live}`);
+    console.log(`    https://app.claritty.ai/apps/${app.id}`);
+    console.log('    NOT yet proof it is serving — open it and look for the Mail');
+    console.log('    tab and the worklist on Today before calling it done.');
+    process.exit(0);
   }
 
   if (outcome !== 'built') {
