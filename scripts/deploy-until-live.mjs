@@ -96,6 +96,12 @@ const state = () => {
     err: a.draftErrorAt || null,
     draft: a.draftDeployedAt || null,
     live: a.deployedAt || null,
+    // A deploy the platform records as done is not a deploy that runs. On
+    // 2026-08-04 app ace13c1b went ACTIVE / "Ready" / progress 100 with
+    // isHealthy true and containerId null — nothing was started, the app pane
+    // rendered blank, and hitting the origin never brought one up. So a moved
+    // deployedAt is necessary but not sufficient: insist on a container.
+    container: a.containerId || null,
     // The platform's own triage of the failure. Today it self-classifies as
     // infra — type UNKNOWN, userActionable false, "Deployment was interrupted -
     // please retry" — which is the whole justification for this loop. If that
@@ -138,7 +144,13 @@ for (let n = 1; n <= ATTEMPTS; n++) {
     // A first-time app has no draft to build — a successful deploy moves
     // deployedAt straight away, and there is nothing left to publish. Without
     // this the loop would sit through its whole timeout after actually winning.
-    if (s.live && s.live !== app.deployedAt) { outcome = 'live'; base = s; break; }
+    if (s.live && s.live !== app.deployedAt) {
+      // Give the platform a moment to actually start something before judging.
+      let c = s.container;
+      for (let k = 0; k < 8 && !c; k++) { sleep(15000); c = state().container; }
+      if (!c) { outcome = 'ghost'; base = state(); break; }
+      outcome = 'live'; base = s; break;
+    }
     if (s.draft && s.draft !== base.draft) { outcome = 'built'; base = s; break; }
     if (s.err && s.err !== base.err) { outcome = 'failed'; base = s; break; }
   }
@@ -159,7 +171,8 @@ for (let n = 1; n <= ATTEMPTS; n++) {
   }
 
   if (outcome !== 'built') {
-    const note = outcome === 'failed' ? 'build failed (platform-side, retryable)'
+    const note = outcome === 'ghost' ? 'recorded as deployed but NO container started — retrying'
+      : outcome === 'failed' ? 'build failed (platform-side, retryable)'
       : down ? `couldn't read state — ${down}` : 'no verdict';
     console.log(`  ${stamp()}  ${note} — waiting ${WAIT_MIN} min`);
     if (n === ATTEMPTS) break;
