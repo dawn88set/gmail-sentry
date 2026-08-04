@@ -9,6 +9,7 @@ import { IosButton } from '@/components/ios/IosButton';
 import { SkeletonRows } from '@/components/ios/Skeleton';
 import { ConnectButton } from '@/components/ConnectButtons';
 import { requestConnectIntegration } from '@/lib/integrations';
+import { useIntegrationStatus } from '@/hooks/useIntegrationStatus';
 import { getCategoryMessages, clearCategoryAll, toApiError, type CategoryMessage } from '@/lib/api';
 
 const LABEL: Record<string, string> = { promotions: 'Promotions', social: 'Social', spam: 'Spam' };
@@ -65,6 +66,19 @@ export default function CategoryList() {
     void loadPage('', true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cat]);
+
+  // OAuth finishes in the host, not in this iframe, so nothing re-renders on
+  // its own — refetch on the connect edge rather than leaving a connect prompt
+  // over a list that would now load.
+  useIntegrationStatus({
+    onConnect: (id) => {
+      if (id !== 'gmail') return;
+      setMessages([]);
+      setPageToken('');
+      setNotConnected(false);
+      void loadPage('', true);
+    },
+  });
 
   // Infinite scroll: load the next page when the sentinel scrolls into view.
   // Paused while clearing — otherwise the observer keeps loading (ghost rows)

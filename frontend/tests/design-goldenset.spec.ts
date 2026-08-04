@@ -23,12 +23,17 @@ import {
 const BASE = process.env.AUDIT_BASE_URL || 'http://localhost:3200';
 // Golden corpus. Runs without a backend, so these are graded on their
 // empty/error states — the first thing a new user actually sees.
-const PAGES = ['/', '/followups', '/people', '/attention', '/activity', '/mail'];
+const PAGES = ['/', '/followups', '/people', '/attention', '/activity', '/accounts', '/mail'];
 const THEMES = ['light', 'dark'] as const;
 const VIEWPORTS = [
   { name: 'desktop', w: 1280, h: 900 },
   { name: 'mobile', w: 390, h: 844 },
 ] as const;
+
+// One test walks the whole corpus, so its budget has to grow with the corpus:
+// PAGES × THEMES × VIEWPORTS renders, each waiting for networkidle plus a
+// settle. At seven routes that is 28 samples, which overran the 30s default.
+test.setTimeout(180_000);
 
 test('design golden-set — rubric scorecard', async ({ page }) => {
   // Worst (lowest) score seen per criterion across the whole corpus.

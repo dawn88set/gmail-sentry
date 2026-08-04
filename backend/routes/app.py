@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from urllib.parse import quote
 import logging
 import re
+import time
 
 from backend.database import get_db
 from backend.security import require_user
@@ -32,6 +33,8 @@ from backend.services import activity
 from backend.services import mail as mail_service
 from backend.services import worklist as worklist_service
 from backend.services import insights as insights_service
+from backend.services import accounts as accounts_service
+from backend.services import counterparty as counterparty_service
 from backend.services import ledger
 from backend.services import followups
 from backend.services import filing
@@ -1001,6 +1004,20 @@ async def get_widget_data(
         # destroys trust in both.
         loops = followups.counts(db, user_id)
 
+        # The account slipping furthest, by name. "3 going quiet" is a number;
+        # "Northwind, silent 12d" is a decision — and a company name is what the
+        # owner recognises at a glance on a home screen.
+        top_account = None
+        if size in ("medium", "large"):
+            ranked_accounts = accounts_service.build(db, user_id)
+            at_risk = [a for a in ranked_accounts if a.chasing > 0]
+            if at_risk:
+                top_account = {
+                    "key": at_risk[0].key,
+                    "name": at_risk[0].name,
+                    "silent_days": at_risk[0].silent_days,
+                }
+
         return {
             "urgent_count": len(urgent),
             "needs_reply_count": len(needs_reply),
@@ -1013,6 +1030,7 @@ async def get_widget_data(
             "owed_count": loops["owed"],
             "waiting_count": loops["waiting"],
             "cold_count": loops["cold"],
+            "top_account": top_account,
             "cleanup": {
                 "promo": (run.promo_count if run else 0) or 0,
                 "social": (run.social_count if run else 0) or 0,
@@ -1032,6 +1050,7 @@ async def get_widget_data(
             "owed_count": 0,
             "waiting_count": 0,
             "cold_count": 0,
+            "top_account": None,
             "cleanup": {"promo": 0, "social": 0, "spam": 0},
             "slack_configured": False,
         }
@@ -1445,6 +1464,111 @@ async def get_insights(
     suspect, including the ones their mail depends on.
     """
     return insights_service.build(db, user_id)
+
+
+@router.get("/api/accounts")
+async def list_accounts_route(
+    limit: int = 100,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The mailbox grouped into the companies behind it, worst first.
+
+    Counts are rolled up from the same worklist rows Today renders, so an
+    account card and the list beneath it can never disagree.
+    """
+    return accounts_service.list_accounts(db, user_id, limit=limit)
+
+
+@router.get("/api/accounts/{key:path}")
+async def get_account_route(
+    key: str,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """One account: its people and its threads.
+
+    404 rather than an empty shell when the key is gone — a domain-keyed account
+    becomes CRM-keyed as soon as a CRM lookup lands, and a stale bookmark should
+    say so instead of rendering a company with nothing in it.
+    """
+    account = accounts_service.get_account(db, user_id, key)
+    if account is None:
+        raise HTTPException(status_code=404, detail="No such account")
+    return account
+
+
+def _onboarding_progress(db: Session, user_id: str) -> dict:
+    st = ledger.get_sync_state(db, user_id)
+    threads = (
+        db.query(func.count(func.distinct(models.ThreadMessage.thread_id)))
+        .filter(models.ThreadMessage.user_id == user_id)
+        .scalar()
+    ) or 0
+    return {
+        "messages_indexed": int(st.messages_indexed or 0),
+        "threads": int(threads),
+        "backfill_done": bool(st.backfill_done),
+        "horizon_days": int(st.horizon_days or 45),
+        "last_error": st.last_error or "",
+    }
+
+
+@router.get("/api/onboarding/progress")
+async def onboarding_progress_route(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """How much of the mailbox has been read so far."""
+    return _onboarding_progress(db, user_id)
+
+
+@router.post("/api/onboarding/backfill")
+async def onboarding_backfill_route(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Read a chunk of history now, instead of over the next two hours.
+
+    A normal scan indexes `sentry.MAX_MESSAGES` and `sync_ledger` walks
+    `BACKFILL_BUCKETS_PER_RUN` six-hour buckets, so a fresh mailbox takes hours
+    to become useful — which is indistinguishable from the app being broken, and
+    was exactly the "I connected Gmail and nothing showed" report.
+
+    So: sweep in a loop under a wall-clock budget and return progress. The client
+    calls this until `backfill_done`, which keeps every request short (no
+    gateway timeout, no background worker on a platform that doesn't offer one)
+    while still filling a mailbox in a minute or two.
+
+    On the call that finishes the walk, recompute the derived layers once so
+    accounts, relationships and open loops exist the moment the bar fills —
+    landing on an empty app after watching a progress bar would be worse than
+    the wait.
+    """
+    budget_s = 20.0
+    started = time.monotonic()
+    swept = 0
+    try:
+        while time.monotonic() - started < budget_s:
+            st = ledger.get_sync_state(db, user_id)
+            if st.backfill_done:
+                break
+            ledger.sync_ledger(db, user_id)
+            swept += 1
+    except IntegrationNotConnected:
+        raise HTTPException(status_code=409, detail="Gmail isn’t connected")
+    except IntegrationError as e:
+        raise HTTPException(status_code=502, detail=f"Couldn’t read Gmail: {e}")
+
+    progress = _onboarding_progress(db, user_id)
+    if progress["backfill_done"]:
+        # Cheap relative to the sweeps above, and it is what turns an index of
+        # messages into people, loops and accounts.
+        counterparty_service.recompute(db, user_id)
+        followups.sync_followups(db, user_id)
+        progress = _onboarding_progress(db, user_id)
+    progress["swept"] = swept
+    return progress
 
 
 class FolderBody(BaseModel):

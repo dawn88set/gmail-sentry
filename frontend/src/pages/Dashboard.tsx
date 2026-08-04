@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { ShieldCheck, RefreshCw, Megaphone, Users, Ban, Bell } from 'lucide-react';
@@ -9,6 +9,7 @@ import { AlertSheet } from '@/components/AlertSheet';
 import { ConnectButton } from '@/components/ConnectButtons';
 import { Worklist } from '@/components/Worklist';
 import { requestConnectIntegration } from '@/lib/integrations';
+import { useIntegrationStatus } from '@/hooks/useIntegrationStatus';
 import { Screen } from '@/components/ios/Screen';
 import { ListSection, ListGroup, ListRow } from '@/components/ios/List';
 import { IosButton } from '@/components/ios/IosButton';
@@ -17,9 +18,10 @@ import {
   getCleanup,
   getConfig,
   getRecentScans,
-  getRequiredIntegrations,
   getOnboardingStatus,
+  getOnboardingProgress,
   getWorklist,
+  runBackfill,
   runScan,
   toApiError,
   type Alert,
@@ -27,8 +29,7 @@ import {
   type CleanupCounts,
   type SentryConfig,
   type ScanRunItem,
-
-  type RequiredIntegration,
+  type OnboardingProgress,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -60,9 +61,13 @@ export default function Dashboard() {
   const [work, setWork] = useState<WorklistData | null>(null);
   const [workLoading, setWorkLoading] = useState(true);
   const [workError, setWorkError] = useState<string | null>(null);
-  const [integrations, setIntegrations] = useState<RequiredIntegration[]>([]);
-  const [appId, setAppId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  // First-run reading state. `null` = not started/needed.
+  const [firstRun, setFirstRun] = useState<OnboardingProgress | null>(null);
+  const [reading, setReading] = useState(false);
+  // A ref, not the state: the connect edge and a manual tap can arrive in the
+  // same tick, and `reading` wouldn't have re-rendered yet to stop the second.
+  const readingRef = useRef(false);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   // Start closed and let the SERVER decide. Opening it optimistically means a
   // fresh browser (or an unreachable API — the status call below is a soft
@@ -106,13 +111,69 @@ export default function Dashboard() {
       .finally(() => setWorkLoading(false));
   }, [show]);
 
+  /**
+   * Read the mailbox now rather than over the next two hours.
+   *
+   * A scan indexes 20 messages and the ledger walks 48 hours per sweep, so a
+   * freshly-connected mailbox stays empty for hours — which is exactly what
+   * "I connected Gmail and nothing showed" was. The server sweeps under a time
+   * budget and returns progress; we call it until it reports done, so each
+   * request stays short and the user watches it fill.
+   */
+  const startFirstRun = useCallback(async () => {
+    if (readingRef.current) return; // never two backfills at once
+    readingRef.current = true;
+    setReading(true);
+    try {
+      let p = await runBackfill();
+      setFirstRun(p);
+      // Bounded: ~45 days at 48h a sweep is well under this, and a cap means a
+      // server that never sets backfill_done can't spin here forever.
+      for (let i = 0; i < 60 && !p.backfill_done; i++) {
+        p = await runBackfill();
+        setFirstRun(p);
+      }
+      await refresh();
+      if (p.backfill_done) {
+        show({ tone: 'success', text: `Read ${p.messages_indexed.toLocaleString()} messages across ${p.threads.toLocaleString()} conversations.` });
+      }
+    } catch (err) {
+      const e = toApiError(err);
+      show({
+        tone: 'error',
+        text:
+          e.status === 409
+            ? 'Connect Gmail to read your mail.'
+            : `Couldn’t read your mail: ${e.message}`,
+      });
+    } finally {
+      readingRef.current = false;
+      setReading(false);
+    }
+  }, [refresh, show]);
+
+  // Connection status that notices OAuth finishing WITHOUT a reload, and kicks
+  // off the first read on the rising edge. Before this, Today fetched status
+  // once on mount and kept offering "Sign in with Google" until the user
+  // refreshed the page by hand.
+  const { integrations, appId, isConnected } = useIntegrationStatus({
+    onConnect: (id) => {
+      if (id !== 'gmail') return;
+      void getOnboardingProgress()
+        .then((p) => {
+          setFirstRun(p);
+          if (!p.backfill_done) void startFirstRun();
+        })
+        .catch(() => undefined);
+    },
+  });
+
   useEffect(() => {
     void refresh();
-    getRequiredIntegrations()
-      .then((s) => {
-        setIntegrations(s.integrations || []);
-        setAppId(s.app_id ?? null);
-      })
+    // Where the first read got to, so a reload mid-backfill resumes the panel
+    // instead of showing an empty dashboard with no explanation.
+    getOnboardingProgress()
+      .then(setFirstRun)
       .catch(() => undefined);
     getOnboardingStatus()
       .then((s) => {
@@ -176,7 +237,11 @@ export default function Dashboard() {
   // is a choice of where to be pinged. Fall back to a literal so the prompt
   // still appears if the status endpoint hasn't answered yet.
   const GMAIL = integrations.find((i) => i.id === 'gmail') ?? { id: 'gmail', name: 'Gmail', connected: false };
-  const gmailMissing = !GMAIL.connected;
+  const gmailMissing = !isConnected('gmail');
+  // Connected, but the mailbox hasn't been read through yet. Without saying so,
+  // a new user sees "All clear" over an empty list and concludes it's broken —
+  // which is precisely what happened.
+  const showFirstRun = !gmailMissing && firstRun !== null && !firstRun.backfill_done;
   // No alert destination set on ANY channel → the app can flag mail but can't
   // reach the user. Surface a one-tap prompt to the Slack/notification setup.
   const hasAlertChannel = !!(
@@ -251,6 +316,52 @@ export default function Dashboard() {
             )}
           </div>
         </ListGroup>
+
+        {/* First read. The one moment the app has to earn trust: connecting and
+            landing on an empty "All clear" is what made this look broken. */}
+        {showFirstRun && (
+          <ListGroup variant="plain-mobile">
+            <div className="p-5">
+              <div className="text-[15px] font-semibold text-foreground">
+                {reading ? 'Reading your mail…' : 'Ready to read your mail'}
+              </div>
+              <div className="mt-1 text-[13px] text-muted-foreground">
+                {reading ? (
+                  <>
+                    {firstRun.messages_indexed.toLocaleString()} messages ·{' '}
+                    {firstRun.threads.toLocaleString()} conversations so far
+                  </>
+                ) : (
+                  <>
+                    Your last {firstRun.horizon_days} days, so it can tell a client from a
+                    newsletter and spot what has gone quiet.
+                  </>
+                )}
+              </div>
+              {reading ? (
+                // Indeterminate on purpose: the sweep walks backwards through
+                // time and the total isn't known until it lands, so a
+                // percentage would be a number we made up.
+                <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full w-1/3 animate-pulse rounded-full bg-accent" />
+                </div>
+              ) : (
+                <IosButton
+                  variant="tinted"
+                  className="mt-3"
+                  onClick={() => void startFirstRun()}
+                >
+                  Read my last {firstRun.horizon_days} days
+                </IosButton>
+              )}
+              {firstRun.last_error && !reading && (
+                <div className="mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+                  Last read stopped: {firstRun.last_error}
+                </div>
+              )}
+            </div>
+          </ListGroup>
+        )}
 
         {/* One ranked plan, not four inventories — see components/Worklist.tsx */}
         <Worklist

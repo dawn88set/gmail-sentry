@@ -206,6 +206,9 @@ export interface WidgetData {
   top_alerts: WidgetAlert[];
   cleanup: { promo: number; social: number; spam: number };
   slack_configured: boolean;
+  /** The account slipping furthest, when there is one. A named company reads as
+   *  a decision where a bare count reads as a statistic. Medium/large only. */
+  top_account?: { key: string; name: string; silent_days: number | null } | null;
 }
 
 // ── Integrations setup (connection status) ──────────────────────────────────
@@ -880,6 +883,94 @@ export interface Worklist {
 
 export const getWorklist = async (limit = 12): Promise<Worklist> =>
   (await api.get('/api/worklist', { params: { limit } })).data;
+
+// ── Accounts: the companies behind the mailbox ──────────────────────────────
+// Every other surface is organised the way mail arrives — a message, a thread,
+// a person. This is the one organised the way the business is actually run.
+// `needs_you` is rolled up from the SAME worklist rows Today renders, so an
+// account card and the list beneath it can never disagree.
+
+export interface Account {
+  key: string;
+  name: string;
+  relationship: string;
+  relationship_label: string;
+  people_count: number;
+  open_threads: number;
+  needs_you: number;
+  you_owe: number;
+  chasing: number;
+  at_risk: boolean;
+  silent_days: number | null;
+  last_contact_at: string | null;
+  your_median_reply_h: number | null;
+  importance: number;
+}
+
+export interface AccountsResponse {
+  accounts: Account[];
+  total: number;
+  at_risk: number;
+  needs_you: number;
+  you_owe: number;
+}
+
+export interface AccountPerson {
+  email: string;
+  display_name: string;
+  relationship: string;
+  relationship_label: string;
+  your_reply_rate: number;
+  thread_count: number;
+  last_seen_at: string | null;
+}
+
+export interface AccountThread {
+  id: string;
+  thread_id: string;
+  subject: string;
+  who: string;
+  email: string;
+  ball: string;
+  state: string;
+  risk: number;
+  last_activity_at: string | null;
+}
+
+export interface AccountDetail extends Account {
+  people: AccountPerson[];
+  threads: AccountThread[];
+}
+
+export const getAccounts = async (limit = 100): Promise<AccountsResponse> =>
+  (await api.get('/api/accounts', { params: { limit } })).data;
+
+/** One account. 404s honestly when the key is gone — a domain-keyed account
+ *  becomes CRM-keyed the moment a CRM lookup lands, so a stale bookmark should
+ *  say so rather than render a company with nothing in it. */
+export const getAccount = async (key: string): Promise<AccountDetail> =>
+  (await api.get(`/api/accounts/${encodeURIComponent(key)}`)).data;
+
+// ── First run: reading the mailbox now, not over the next two hours ─────────
+// A normal scan indexes 20 messages and the ledger walks 48 hours per sweep, so
+// a freshly-connected mailbox takes hours to become useful — indistinguishable
+// from the app being broken. `backfill` sweeps under a server-side time budget
+// and returns progress; call it until `backfill_done`.
+
+export interface OnboardingProgress {
+  messages_indexed: number;
+  threads: number;
+  backfill_done: boolean;
+  horizon_days: number;
+  last_error: string;
+  swept?: number;
+}
+
+export const getOnboardingProgress = async (): Promise<OnboardingProgress> =>
+  (await api.get('/api/onboarding/progress')).data;
+
+export const runBackfill = async (): Promise<OnboardingProgress> =>
+  (await api.post('/api/onboarding/backfill')).data;
 
 // ── Mail: reading and writing ───────────────────────────────────────────────
 // The watchdog half hands you a short list; this is for when a row isn't

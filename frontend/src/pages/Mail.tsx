@@ -9,6 +9,7 @@ import { ListGroup } from '@/components/ios/List';
 import { SkeletonRows } from '@/components/ios/Skeleton';
 import { ConnectButton } from '@/components/ConnectButtons';
 import { requestConnectIntegration } from '@/lib/integrations';
+import { useIntegrationStatus } from '@/hooks/useIntegrationStatus';
 import { Compose } from '@/components/Compose';
 import { getMail, toApiError, type MailBox, type MailRow } from '@/lib/api';
 
@@ -78,6 +79,15 @@ export default function Mail() {
     setRows([]);
     void load('', true);
   }, [load]);
+
+  // Connecting happens in the host, so nothing here navigates when OAuth
+  // finishes — without this the mailbox keeps showing its connect prompt until
+  // the user reloads by hand.
+  useIntegrationStatus({
+    onConnect: (id) => {
+      if (id === 'gmail') void load('', true);
+    },
+  });
 
   const pick = (v: string) => {
     const next = new URLSearchParams(params);

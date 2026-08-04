@@ -53,6 +53,7 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.integrations import gmail_ops as gmail_adapter
+from backend.services import accounts
 from backend.services import activity
 from backend.services import counterparty as cp_service
 from backend.services import ledger
@@ -96,27 +97,14 @@ def _segment(text: str) -> str:
 
 
 def _company_of(cp: models.Counterparty) -> str:
-    """The best available name for a counterparty's organisation.
+    """The folder segment for a counterparty's organisation.
 
-    CRM company name if we have one, else a readable form of their domain, else
-    their display name. Personal-mail domains fall back to the person, since
-    "Clients/Gmail.Com" would be worse than useless.
+    The naming rule itself lives in `accounts.company_of` and is shared, so the
+    folder a conversation is filed under and the account it appears under are
+    always the same string — "Clients/Northwind" beside an account called
+    "Northwind Ltd" reads as two different customers.
     """
-    if (cp.crm_status or "") == "ok" and (cp.crm_company or "").strip():
-        return _segment(cp.crm_company)
-
-    domain = (cp.domain or "").lower()
-    generic = {
-        "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
-        "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "aol.com",
-    }
-    if domain and domain not in generic:
-        root = domain.split(".")[0]
-        return _segment(root.replace("-", " ").title())
-
-    if (cp.display_name or "").strip():
-        return _segment(cp.display_name)
-    return _segment((cp.email or "").split("@")[0].replace(".", " ").title())
+    return _segment(accounts.company_of(cp))
 
 
 def topical_folder_for(subject: str, known: Optional[Dict[str, models.MailFolder]] = None) -> str:

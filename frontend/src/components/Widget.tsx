@@ -140,8 +140,13 @@ export default function Widget({ size = 'medium', className }: WidgetProps) {
 
   // One qualifier line, showing the worst state present — at 170px there's room
   // for exactly one thing, so it should be the thing that costs most to miss.
+  // A named company beats a count: "3 going cold" is a number to act on later,
+  // "Northwind · silent 12d" is a decision to make now.
+  const account = data.top_account ?? null;
   const qualifier =
-    cold > 0
+    account
+      ? `${account.name}${account.silent_days != null ? ` · silent ${account.silent_days}d` : ''}`
+      : cold > 0
       ? `${cold} going cold`
       : alerts > 0
         ? `${alerts} to answer`

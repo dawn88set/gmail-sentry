@@ -1,4 +1,4 @@
-import { Home, Mail, Bell, Activity, SlidersHorizontal } from 'lucide-react';
+import { Home, Building2, Bell, Activity, SlidersHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -23,10 +23,11 @@ export const NAV_ITEMS: NavItem[] = [
   // "Today", not "Inbox": the composed view of everything that needs the user,
   // as distinct from Mail, which is the mailbox itself.
   { name: 'Today', href: '/', icon: Home },
-  // Five is the ceiling, so Mail takes the slot Follow-ups had. Follow-ups is
-  // still one tap away from the worklist footer, and a mailbox is the more
-  // frequent need — you open it to read a thread, not to audit open loops.
-  { name: 'Mail', href: '/mail', icon: Mail },
+  // The differentiator, and the reason Mail gave up this slot: against a
+  // dedicated mail client we are a worse mail client, but no mail client can
+  // say where an account stands. Reading a thread is still one tap away — from
+  // the account it belongs to, which is a better route to it than a mailbox.
+  { name: 'Accounts', href: '/accounts', icon: Building2 },
   { name: 'Alerts', href: '/attention', icon: Bell },
   // What the app did while nobody was looking — the answer to "is this thing
   // actually doing anything?", which nothing in the product could give before.

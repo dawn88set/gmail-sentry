@@ -9,6 +9,8 @@ import People from './pages/People';
 import Activity from './pages/Activity';
 import Mail from './pages/Mail';
 import MailThread from './pages/MailThread';
+import Accounts from './pages/Accounts';
+import AccountDetail from './pages/AccountDetail';
 import FolderDetail from './pages/FolderDetail';
 import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
@@ -38,8 +40,13 @@ function App() {
           <Route path="/followups" element={<Layout><FollowUps /></Layout>} />
           <Route path="/people" element={<Layout><People /></Layout>} />
           <Route path="/attention" element={<Layout><Attention /></Layout>} />
+          {/* The book of business — the mailbox grouped into the companies
+              behind it, which is the question an owner actually has. */}
+          <Route path="/accounts" element={<Layout><Accounts /></Layout>} />
+          <Route path="/accounts/:accountKey" element={<Layout><AccountDetail /></Layout>} />
           {/* The client half — read a whole thread, reply in context, write to
-              someone the app never flagged. */}
+              someone the app never flagged. Keeps its routes after losing its
+              nav slot: every account row links into it. */}
           <Route path="/mail" element={<Layout><Mail /></Layout>} />
           <Route path="/mail/:threadId" element={<Layout><MailThread /></Layout>} />
           {/* What the app did while nobody was looking — activity, folders, insights. */}
