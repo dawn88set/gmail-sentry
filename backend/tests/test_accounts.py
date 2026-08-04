@@ -279,3 +279,49 @@ def test_closed_loops_are_not_counted():
 
     # Nobody is looking at it, so it can't be blocking the first run.
     assert _anon(db) == 0
+
+
+# ── the real-mailbox failure ────────────────────────────────────────────────
+# On synthetic data every sender was `person@company.com` and this looked fine.
+# On a real inbox the Accounts screen listed "Mail", "Eml", "Message", "S" and
+# "Mail5" as companies: bulk mail is sent from subdomains — LinkedIn from
+# mail.linkedin.com, marketing platforms from eml./s./message. — and taking the
+# FIRST label named the account after the mail relay instead of the business.
+
+def test_a_sending_subdomain_names_the_company_not_the_relay():
+    db = _session()
+    _cp(db, "notifications@mail.linkedin.com", domain="mail.linkedin.com")
+    _cp(db, "hello@eml.brightpath.io", domain="eml.brightpath.io")
+    _cp(db, "no-reply@message.acme.com", domain="message.acme.com")
+
+    names = sorted(a.name for a in accounts.build(db, "u1"))
+
+    assert names == ["Acme", "Brightpath", "Linkedin"]
+    assert not any(n in ("Mail", "Eml", "Message", "S") for n in names)
+
+
+def test_several_subdomains_of_one_company_are_one_account():
+    db = _session()
+    _cp(db, "billing@billing.acme.com", domain="billing.acme.com")
+    _cp(db, "support@mail.acme.com", domain="mail.acme.com")
+    _cp(db, "sam@acme.com", domain="acme.com")
+
+    rows = accounts.build(db, "u1")
+
+    # One company, three sending hosts. Keying on the raw hostname produced
+    # three separate "accounts" for the same customer.
+    assert len(rows) == 1
+    assert rows[0].name == "Acme"
+    assert rows[0].key == "d:acme.com"
+    assert len(rows[0].people) == 3
+
+
+def test_a_multi_label_public_suffix_is_not_mistaken_for_the_company():
+    db = _session()
+    _cp(db, "sam@acme.co.uk", domain="acme.co.uk")
+    _cp(db, "jo@shop.northwind.com.au", domain="shop.northwind.com.au")
+
+    names = sorted(a.name for a in accounts.build(db, "u1"))
+
+    # Naively taking the last two labels would call these "Co" and "Com".
+    assert names == ["Acme", "Northwind"]

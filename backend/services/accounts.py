@@ -30,7 +30,12 @@ from backend.services import counterparty as cp_service
 # The naming rule lives on counterparty because it is a property of one, and
 # because `worklist` needs it too — importing accounts there would be a cycle,
 # since accounts is built FROM the worklist.
-from backend.services.counterparty import GENERIC_DOMAINS, _clean, company_of
+from backend.services.counterparty import (
+    GENERIC_DOMAINS,
+    _clean,
+    company_of,
+    registrable_domain,
+)
 from backend.services import followups as followups_service
 from backend.services import worklist as worklist_service
 
@@ -67,9 +72,12 @@ def account_key(cp: models.Counterparty) -> str:
     """
     if (cp.crm_status or "") == "ok" and _clean(cp.crm_company or ""):
         return "crm:" + _clean(cp.crm_company).lower()
-    domain = (cp.domain or "").lower()
-    if domain and domain not in GENERIC_DOMAINS:
-        return "d:" + domain
+    # Registrable domain, so `mail.acme.com` and `billing.acme.com` are ONE
+    # account. Keying on the raw hostname split a single company into a row per
+    # sending subdomain.
+    root = registrable_domain((cp.domain or "").lower())
+    if root and root not in GENERIC_DOMAINS:
+        return "d:" + root
     return "p:" + (cp.email or "").lower()
 
 

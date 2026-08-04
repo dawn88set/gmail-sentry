@@ -57,6 +57,34 @@ def _clean(text: str) -> str:
     return " ".join((text or "").split()).strip()
 
 
+# Multi-label public suffixes, so "acme.co.uk" yields "acme" and not "co".
+# Not exhaustive by design — the full Public Suffix List is a dependency and a
+# monthly update, and these cover the overwhelming majority of business mail.
+_MULTI_TLD = {
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "co.jp", "co.nz", "co.za", "co.il",
+    "co.in", "com.au", "com.br", "com.mx", "com.sg", "com.tr", "com.cn",
+    "co.kr", "com.hk", "com.tw", "co.th", "com.ar",
+}
+
+
+def registrable_domain(domain: str) -> str:
+    """The part of a hostname that identifies the ORGANISATION.
+
+    Bulk mail almost never comes from the bare domain: LinkedIn sends from
+    `mail.linkedin.com`, marketing platforms from `eml.`, `message.`, `s.` or
+    `mail5.` subdomains. Taking the first label — which is what this used to do
+    — turns all of those into an account called "Mail", "Eml" or "S", and puts
+    several unrelated senders under the same meaningless heading. Taking the
+    registrable domain instead recovers the actual company.
+    """
+    labels = [l for l in (domain or "").lower().strip(".").split(".") if l]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    if ".".join(labels[-2:]) in _MULTI_TLD and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
 # Company-suffix tokens that get glued onto a domain. Splitting them back off
 # turns "harborfreightco" into "Harborfreight Co" and "packritesupply" into
 # "Packrite Supply" — a customer list that reads like a business rather than
@@ -104,9 +132,12 @@ def company_of(cp: models.Counterparty) -> str:
     if (cp.crm_status or "") == "ok" and _clean(cp.crm_company or ""):
         return _clean(cp.crm_company)[:60]
 
-    domain = (cp.domain or "").lower()
-    if domain and domain not in GENERIC_DOMAINS:
-        return _clean(_readable(domain.split(".")[0]))[:60]
+    # The registrable domain, NOT the first label: `mail.linkedin.com` is
+    # LinkedIn, and reading it left-to-right produced an account called "Mail"
+    # with several unrelated bulk senders in it.
+    root = registrable_domain((cp.domain or "").lower())
+    if root and root not in GENERIC_DOMAINS:
+        return _clean(_readable(root.split(".")[0]))[:60]
 
     if _clean(cp.display_name or ""):
         return _clean(cp.display_name)[:60]
