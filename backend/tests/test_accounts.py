@@ -109,6 +109,32 @@ def test_colleagues_and_bulk_stay_out_of_the_book_of_business():
     assert [r.name for r in rows] == ["Northwind"]
 
 
+def test_company_names_read_like_companies_not_hostnames():
+    db = _session()
+    _cp(db, "procurement@harborfreightco.com")
+    _cp(db, "ceo@brightpathlabs.io")
+    _cp(db, "billing@packrite-supply.com")
+
+    names = sorted(a.name for a in accounts.build(db, "u1"))
+
+    # This is the headline text on the main screen; "Harborfreightco" reads as a
+    # hostname, which is the opposite of the professional picture this exists to
+    # give someone of their own customers.
+    assert names == ["Brightpath Labs", "Harborfreight Co", "Packrite Supply"]
+
+
+def test_a_short_domain_is_left_alone_rather_than_split_wrongly():
+    db = _session()
+    # "labs.com" must not become " Labs", and "myco" must not become "My Co" —
+    # a confident split on a four-letter stem is a guess, and a mangled customer
+    # name is worse than an unsplit one.
+    _cp(db, "a@labs.com")
+    _cp(db, "b@myco.io")
+    _cp(db, "c@northwind.co")
+
+    assert sorted(a.name for a in accounts.build(db, "u1")) == ["Labs", "Myco", "Northwind"]
+
+
 def test_crm_company_beats_the_domain():
     db = _session()
     _cp(db, "dana@nw-holdings-eu.co", crm_status="ok", crm_company="Northwind Ltd")
@@ -189,3 +215,67 @@ def test_empty_mailbox_is_an_empty_list_not_an_error():
     db = _session()
     out = accounts.list_accounts(db, "u1")
     assert out == {"accounts": [], "total": 0, "at_risk": 0, "needs_you": 0, "you_owe": 0}
+
+
+# ── the first run's real finish line ────────────────────────────────────────
+# Indexing every message is not the same as producing a list anyone can act on.
+# Sender and subject arrive through metered hydration, so a mailbox can be fully
+# indexed and still render "(no subject) · someone" on every row — which is
+# exactly what a business owner cannot use. These pin the measure to the row the
+# user reads rather than to an internal hydration flag.
+
+def _anon(db, user_id="u1"):
+    from backend.routes.app import _anonymous_loops
+    return _anonymous_loops(db, user_id)
+
+
+def test_a_named_loop_is_not_counted_as_anonymous():
+    db = _session()
+    _cp(db, "dana@northwind.co")
+    _loop(db, "dana@northwind.co", subject="Renewal quote for 2027")
+
+    assert _anon(db) == 0
+
+
+def test_a_loop_with_no_name_and_no_address_is_anonymous():
+    db = _session()
+    f = _loop(db, "dana@northwind.co")
+    f.counterparty_name = ""
+    f.counterparty_email = ""
+    db.commit()
+
+    assert _anon(db) == 1
+
+
+def test_a_loop_with_no_subject_and_no_ask_is_anonymous():
+    db = _session()
+    f = _loop(db, "dana@northwind.co")
+    f.subject = ""
+    f.ask_summary = ""
+    db.commit()
+
+    # It has a name, but nothing to say WHAT it is — still untriageable.
+    assert _anon(db) == 1
+
+
+def test_an_ask_alone_is_enough_to_be_readable():
+    db = _session()
+    f = _loop(db, "dana@northwind.co")
+    f.subject = ""
+    f.ask_summary = "send the revised pricing"
+    db.commit()
+
+    assert _anon(db) == 0
+
+
+def test_closed_loops_are_not_counted():
+    db = _session()
+    f = _loop(db, "dana@northwind.co")
+    f.state = followups.DONE
+    f.counterparty_name = ""
+    f.counterparty_email = ""
+    f.subject = ""
+    db.commit()
+
+    # Nobody is looking at it, so it can't be blocking the first run.
+    assert _anon(db) == 0

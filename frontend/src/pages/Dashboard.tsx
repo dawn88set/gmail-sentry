@@ -127,14 +127,15 @@ export default function Dashboard() {
     try {
       let p = await runBackfill();
       setFirstRun(p);
-      // Bounded: ~45 days at 48h a sweep is well under this, and a cap means a
-      // server that never sets backfill_done can't spin here forever.
-      for (let i = 0; i < 60 && !p.backfill_done; i++) {
+      // Runs until the list is READABLE, not merely indexed — `complete` also
+      // requires every open loop to have a name and a subject. Bounded so a
+      // server that never reports complete can't spin here forever.
+      for (let i = 0; i < 60 && !p.complete; i++) {
         p = await runBackfill();
         setFirstRun(p);
       }
       await refresh();
-      if (p.backfill_done) {
+      if (p.complete) {
         show({ tone: 'success', text: `Read ${p.messages_indexed.toLocaleString()} messages across ${p.threads.toLocaleString()} conversations.` });
       }
     } catch (err) {
@@ -241,7 +242,7 @@ export default function Dashboard() {
   // Connected, but the mailbox hasn't been read through yet. Without saying so,
   // a new user sees "All clear" over an empty list and concludes it's broken —
   // which is precisely what happened.
-  const showFirstRun = !gmailMissing && firstRun !== null && !firstRun.backfill_done;
+  const showFirstRun = !gmailMissing && firstRun !== null && !(firstRun.complete ?? firstRun.backfill_done);
   // No alert destination set on ANY channel → the app can flag mail but can't
   // reach the user. Surface a one-tap prompt to the Slack/notification setup.
   const hasAlertChannel = !!(
@@ -329,7 +330,10 @@ export default function Dashboard() {
                 {reading ? (
                   <>
                     {firstRun.messages_indexed.toLocaleString()} messages ·{' '}
-                    {firstRun.threads.toLocaleString()} conversations so far
+                    {firstRun.threads.toLocaleString()} conversations
+                    {firstRun.backfill_done && firstRun.anonymous_loops > 0 && (
+                      <> · naming {firstRun.anonymous_loops} more</>
+                    )}
                   </>
                 ) : (
                   <>

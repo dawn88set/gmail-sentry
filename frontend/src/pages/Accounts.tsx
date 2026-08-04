@@ -52,6 +52,19 @@ function state(a: Account): string {
   return bits.join(' · ');
 }
 
+/** Two lines, because "you owe 1" tells an owner an account needs work but not
+ *  whether it needs work NOW. The ask — "PO 4471 needs your signature" — is the
+ *  thing that decides, so it leads and the counts qualify it. */
+function Subtitle({ a }: { a: Account }) {
+  if (!a.headline) return <>{state(a)}</>;
+  return (
+    <>
+      <span className="block truncate text-foreground/80">{a.headline}</span>
+      <span className="block truncate">{state(a)}</span>
+    </>
+  );
+}
+
 export default function Accounts() {
   const navigate = useNavigate();
   const [data, setData] = useState<AccountsResponse | null>(null);
@@ -146,7 +159,7 @@ export default function Accounts() {
                     )
                   }
                   title={a.name}
-                  subtitle={state(a)}
+                  subtitle={<Subtitle a={a} />}
                   trailing={
                     <Badge tone={TONE[a.relationship] ?? 'neutral'}>{a.relationship_label}</Badge>
                   }

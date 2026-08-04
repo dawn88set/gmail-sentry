@@ -65,6 +65,39 @@ def _clean(text: str) -> str:
     return " ".join((text or "").split()).strip()
 
 
+# Company-suffix tokens that get glued onto a domain. Splitting them back off
+# turns "harborfreightco" into "Harborfreight Co" and "packritesupply" into
+# "Packrite Supply" — a customer list that reads like a business rather than
+# like a list of hostnames. Deliberately short and unambiguous: these are all
+# words a company appends to its name, so a false split is unlikely and cosmetic
+# where it happens. We do NOT try to split arbitrary run-together words, because
+# guessing "brightpath" into "bright path" is as likely to be wrong as right.
+_SUFFIXES = (
+    "supply", "solutions", "partners", "software", "systems", "capital",
+    "digital", "studio", "agency", "media", "group", "works", "labs", "tech",
+    "shop", "store", "consulting", "holdings", "ventures", "logistics",
+)
+_LEGAL = ("inc", "llc", "ltd", "plc", "gmbh", "corp", "co")
+
+
+def _readable(root: str) -> str:
+    """A domain root as a company name a person would recognise."""
+    root = root.replace("-", " ").replace("_", " ")
+    if " " not in root:
+        low = root.lower()
+        # Longest suffix first: "solutions" before "so"-like short ones, and a
+        # minimum stem so "labs.com" doesn't become "" + "labs".
+        for suf in sorted(_SUFFIXES + _LEGAL, key=len, reverse=True):
+            if low.endswith(suf) and len(low) - len(suf) >= 4:
+                root = f"{root[: len(low) - len(suf)]} {root[len(low) - len(suf):]}"
+                break
+    # Title-case, but leave legal forms in their conventional shape.
+    parts = []
+    for w in root.split():
+        parts.append(w.upper() if w.lower() in ("inc", "llc", "ltd", "plc") else w.title())
+    return " ".join(parts)
+
+
 def company_of(cp: models.Counterparty) -> str:
     """The best available name for a counterparty's organisation.
 
@@ -81,8 +114,7 @@ def company_of(cp: models.Counterparty) -> str:
 
     domain = (cp.domain or "").lower()
     if domain and domain not in GENERIC_DOMAINS:
-        root = domain.split(".")[0]
-        return _clean(root.replace("-", " ").title())[:60]
+        return _clean(_readable(domain.split(".")[0]))[:60]
 
     if _clean(cp.display_name or ""):
         return _clean(cp.display_name)[:60]
@@ -119,6 +151,11 @@ class Account:
     you_owe: int = 0
     chasing: int = 0
     open_threads: int = 0
+    #: The single most pressing thing on this account, in the user's own words —
+    #: "PO 4471 needs your signature", not "you owe 1". A count tells an owner an
+    #: account needs work; the ask tells them whether it needs work NOW, which is
+    #: the decision they are actually making while scanning the list.
+    headline: str = ""
     last_contact_at: Optional[datetime] = None
     silent_days: Optional[int] = None
     your_median_reply_h: Optional[int] = None
@@ -202,6 +239,11 @@ def build(db: Session, user_id: str, *, now: Optional[datetime] = None) -> List[
             continue
         acc = by_key[key]
         acc.needs_you += 1
+        # Items arrive already ranked, so the first one seen for an account is
+        # its most pressing — no second sort, and it is the same row the user
+        # would find at the top of Today.
+        if not acc.headline:
+            acc.headline = (item.get("headline") or "").strip()
         if item.get("kind") == worklist_service.CHASE:
             acc.chasing += 1
         else:
@@ -248,6 +290,7 @@ def to_dict(a: Account) -> Dict[str, Any]:
         "relationship_label": REL_LABEL.get(a.relationship, "Unclassified"),
         "people_count": len(a.people),
         "open_threads": a.open_threads,
+        "headline": a.headline,
         "needs_you": a.needs_you,
         "you_owe": a.you_owe,
         "chasing": a.chasing,

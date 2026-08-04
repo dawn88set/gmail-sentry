@@ -14,7 +14,7 @@ HTTP 409 (the UI turns it into a connect prompt). We never fake success.
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_, and_, func
 from typing import Optional, List
 from datetime import datetime, timedelta
 from urllib.parse import quote
@@ -1498,6 +1498,40 @@ async def get_account_route(
     return account
 
 
+def _anonymous_loops(db: Session, user_id: str) -> int:
+    """Open loops the user would see with no name and no subject on them.
+
+    Indexing a message stores only {id, threadId}; sender and subject arrive
+    later via metered hydration, 25 a sweep. So a mailbox can be fully indexed
+    and still render a worklist of "(no subject) · someone", which is useless to
+    someone deciding who to answer — the whole point is that a row says WHO and
+    WHAT. Counting them is what lets the first run keep going until the list is
+    actually readable.
+    """
+    def _blank(col):
+        return or_(col.is_(None), col == "")
+
+    # Measured on the ROW the user reads, not on whether some underlying message
+    # happens to be hydrated: the worklist falls back to "someone" when both the
+    # name and the address are missing, and to "(no subject)" when there is
+    # neither an ask nor a subject. Those two fallbacks are the definition of an
+    # untriageable row, so they are what gets counted.
+    return (
+        db.query(func.count(models.FollowUp.id))
+        .filter(
+            models.FollowUp.user_id == user_id,
+            models.FollowUp.state.in_(followups.OPEN_STATES),
+            or_(
+                and_(_blank(models.FollowUp.counterparty_name),
+                     _blank(models.FollowUp.counterparty_email)),
+                and_(_blank(models.FollowUp.ask_summary),
+                     _blank(models.FollowUp.subject)),
+            ),
+        )
+        .scalar()
+    ) or 0
+
+
 def _onboarding_progress(db: Session, user_id: str) -> dict:
     st = ledger.get_sync_state(db, user_id)
     threads = (
@@ -1511,6 +1545,7 @@ def _onboarding_progress(db: Session, user_id: str) -> dict:
         "backfill_done": bool(st.backfill_done),
         "horizon_days": int(st.horizon_days or 45),
         "last_error": st.last_error or "",
+        "anonymous_loops": _anonymous_loops(db, user_id),
     }
 
 
@@ -1551,10 +1586,22 @@ async def onboarding_backfill_route(
     try:
         while time.monotonic() - started < budget_s:
             st = ledger.get_sync_state(db, user_id)
-            if st.backfill_done:
+            done = bool(st.backfill_done)
+            # Indexing every message is not the finish line. Sender and subject
+            # arrive through metered hydration, so stopping the moment the walk
+            # completes leaves the user staring at rows that say "(no subject) ·
+            # someone" — a list you cannot triage. Keep sweeping (each sweep
+            # hydrates) until every open loop can name itself.
+            if done and _anonymous_loops(db, user_id) == 0:
                 break
-            ledger.sync_ledger(db, user_id)
+            # A bigger bite while hydrating: the default 25 is sized for a
+            # steady-state background scan, not for the one run the user is
+            # actually watching.
+            ledger.sync_ledger(db, user_id, hydrate_budget=60 if done else None)
             swept += 1
+            if done:
+                # Names only reach the worklist through a followups re-sync.
+                followups.sync_followups(db, user_id)
     except IntegrationNotConnected:
         raise HTTPException(status_code=409, detail="Gmail isn’t connected")
     except IntegrationError as e:
@@ -1568,6 +1615,8 @@ async def onboarding_backfill_route(
         followups.sync_followups(db, user_id)
         progress = _onboarding_progress(db, user_id)
     progress["swept"] = swept
+    # The client keeps calling while either is outstanding.
+    progress["complete"] = bool(progress["backfill_done"]) and progress["anonymous_loops"] == 0
     return progress
 
 

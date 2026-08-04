@@ -897,6 +897,8 @@ export interface Account {
   relationship_label: string;
   people_count: number;
   open_threads: number;
+  /** The single most pressing ask on this account, in the user's own words. */
+  headline: string;
   needs_you: number;
   you_owe: number;
   chasing: number;
@@ -963,6 +965,11 @@ export interface OnboardingProgress {
   backfill_done: boolean;
   horizon_days: number;
   last_error: string;
+  /** Open loops that would render as "(no subject) · someone" — indexed but not
+   *  yet hydrated. A list you can't triage isn't a finished first run. */
+  anonymous_loops: number;
+  /** Indexed AND readable. This, not backfill_done, is the finish line. */
+  complete?: boolean;
   swept?: number;
 }
 
