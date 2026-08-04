@@ -43,6 +43,45 @@ health check — and the error text points developers at the one thing that is
 demonstrably fine. It also auto-retried once and failed the same way
 (`draftErrorAt` moved twice, 15:14:45 then 15:16:35).
 
+**Your own API already classifies this as your problem.** The developer-facing
+message says to check that the app builds locally, but `GET /api/apps/:id`
+carries a different verdict on the very same failure:
+
+```json
+"error": "Deployment was interrupted - please retry",
+"errorAnalysis": {
+  "type": "UNKNOWN", "severity": "medium",
+  "userActionable": false,
+  "userMessage": "Something went wrong on our end. Please try again in a moment."
+}
+```
+
+`userActionable: false` and "on our end" is the correct diagnosis. Please show
+*that* text to developers instead — the current wording sent me through about
+fifty deploys, a byte-level bisect of `app-config.json`, and a pristine-seed
+control, all to rule out an app that your own analyzer had already cleared.
+
+**Recorded-successful builds may not be serving.** `claritty doctor` passes
+every check on this app, including your platform dry-run
+(`✓ platform dry-run: manifest valid (runnable + fired)`). Yet the app renders
+a two-item `Inbox | Rules` navigation, which exists only in commit `5cb0420`
+(2026-07-03). The two builds your API records as successful —
+`deployedAt 2026-08-02T16:42:58` and `draftDeployedAt 2026-08-02T17:29:03` —
+were both built from commit `2294185`, whose navigation has five items
+(`Today | Follow-ups | Alerts | Activity | Rules`). So the running container is
+roughly a month older than the build the API reports.
+
+I can't fully close this one from outside, and I'd rather flag it than overstate
+it: the Draft pane may simply be falling back to the installed build because the
+newest draft failed, which would explain the screen without implying the 2 Aug
+build never served. I can't distinguish the two, because the app origin
+`7e925d43-….apps.claritty.ai` answers `403 {"error":"Forbidden"}` to every path —
+`/`, `/api/*`, with a bearer token and without, from curl and from a signed-in
+browser alike. There is no way for a developer to ask the deployed container
+what code it is running. If `deployedAt` can move while the old image keeps
+serving, that is a more serious bug than the build failures, and it would be
+invisible to every developer on the platform.
+
 **The ask:** the CodeBuild log for any failing build of
 `claritty-app-7e925d43-dft`. Failures die ~60–90s into "Building image", while
 successful builds take ~3 minutes — so they're failing early rather than timing
