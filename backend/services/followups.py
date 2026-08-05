@@ -209,6 +209,14 @@ def sync_followups(db: Session, user_id: str, *, now: Optional[datetime] = None)
         .filter(models.Counterparty.user_id == user_id)
         .all()
     }
+    # Loaded once rather than per thread — this runs on every scan, and a query
+    # inside the loop would be one round trip per open loop.
+    reads = {
+        r.thread_id: r
+        for r in db.query(models.ThreadRead)
+        .filter(models.ThreadRead.user_id == user_id)
+        .all()
+    }
 
     stats = {"opened": 0, "closed": 0, "went_cold": 0, "reopened": 0}
 
@@ -255,6 +263,20 @@ def sync_followups(db: Session, user_id: str, *, now: Optional[datetime] = None)
         fu.last_outbound_at = last_out
         fu.last_activity_at = last_activity
         fu.importance = int(cp.importance) if cp is not None else 0
+
+        # What the thread actually says, when it's been read. `extract_ask` is a
+        # regex over a ~100-character snippet and picks the first sentence that
+        # looks like a request; a real read produces "a 12% discount on 40
+        # seats". Prefer it, and take a deadline only when the mail stated one
+        # in words we could quote.
+        tr = reads.get(thread_id)
+        if tr is not None and (tr.their_ask or "").strip():
+            fu.ask_summary = tr.their_ask
+            fu.ask_confidence = max(int(fu.ask_confidence or 0), int(tr.confidence or 0))
+        if tr is not None and tr.commitment_due and not fu.due_at:
+            fu.due_at = tr.commitment_due
+            fu.due_source = "promised"
+
         fu.stale_after_hours = stale_after_hours_for(cp, due_at=fu.due_at, now=ref)
 
         new_ball = ball["ball"]
@@ -371,6 +393,17 @@ def record_outbound(
         fu.state_changed_at = ts
         fu.last_outbound_at = ts
         fu.last_activity_at = ts
+
+        # Writing on a thread you owed something on is how a promise gets kept.
+        # Recorded at the moment it happens: "did they deliver" cannot be
+        # recovered from state afterwards, which is why the activity log exists
+        # at all.
+        try:
+            from backend.services import comprehension as _comprehension
+
+            _comprehension.mark_met(db, user_id, thread_id, now=ts)
+        except Exception:  # noqa: BLE001 — never fail a send that already landed
+            pass
         fu.snoozed_until = None
         fu.closed_at = None
         fu.closed_reason = ""

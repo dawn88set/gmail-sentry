@@ -41,6 +41,7 @@ from backend.services import activity
 from backend.services import ledger
 from backend.services import counterparty
 from backend.services import followups
+from backend.services import comprehension
 from backend.services import filing
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
 from backend.integrations import gmail_ops as gmail_adapter
@@ -462,6 +463,27 @@ def run_scan(
             followups.apply_asks(db, user_id, _asks)
     except Exception as e:  # noqa: BLE001 — follow-ups must never fail a scan
         logger.info(f"follow-up sync skipped: {type(e).__name__}: {e}")
+
+    # 3.65) READ the threads that need action.
+    #
+    #       Everything above this line knows who wrote and when. This is the
+    #       only step that knows what any of it SAYS — the real ask, what the
+    #       user promised, who the thread is genuinely waiting on. Budgeted to
+    #       MAX_READS_PER_SCAN so a backlog drains over several runs instead of
+    #       one spike, and ordered worst-first so the mail most likely to cost
+    #       something is understood first.
+    try:
+        pending = [
+            f.thread_id
+            for f in followups.list_followups(db, user_id, state="open", limit=40)
+            if f.thread_id
+        ]
+        read_count = comprehension.read_pending(db, user_id, pending)
+        if read_count:
+            # Names and asks only reach the worklist through a re-sync.
+            followups.sync_followups(db, user_id)
+    except Exception as e:  # noqa: BLE001 — reading is an enhancement, never a gate
+        logger.info(f"thread reading skipped: {type(e).__name__}: {e}")
 
     # 3.7) File whole conversations into folders — both directions, so the
     #      user's own replies land beside the mail they answered instead of

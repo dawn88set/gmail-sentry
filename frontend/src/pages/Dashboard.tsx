@@ -21,6 +21,7 @@ import {
   getOnboardingStatus,
   getOnboardingProgress,
   getAccounts,
+  getCommitments,
   getWorklist,
   runBackfill,
   runScan,
@@ -31,6 +32,7 @@ import {
   type SentryConfig,
   type ScanRunItem,
   type OnboardingProgress,
+  type Commitment,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -66,6 +68,7 @@ export default function Dashboard() {
   // First-run reading state. `null` = not started/needed.
   const [firstRun, setFirstRun] = useState<OnboardingProgress | null>(null);
   const [reading, setReading] = useState(false);
+  const [promises, setPromises] = useState<Commitment[]>([]);
   // A ref, not the state: the connect edge and a manual tap can arrive in the
   // same tick, and `reading` wouldn't have re-rendered yet to stop the second.
   const readingRef = useRef(false);
@@ -110,6 +113,11 @@ export default function Dashboard() {
       .then((w) => { setWork(w); setWorkError(null); })
       .catch((err) => setWorkError(toApiError(err).message))
       .finally(() => setWorkLoading(false));
+    // What you said you'd do. Soft-fails: a missing list must never blank the
+    // dashboard, and on a mailbox that hasn't been read yet it's simply empty.
+    getCommitments(5)
+      .then((c) => setPromises(c.commitments || []))
+      .catch(() => undefined);
   }, [show]);
 
   /**
@@ -398,6 +406,42 @@ export default function Dashboard() {
               )}
             </div>
           </ListGroup>
+        )}
+
+        {/* What you SAID you'd do, above what arrived. A late reply is a
+            delay; a broken promise is a reputation, and it's the one thing no
+            mail client tracks. Every row carries the sentence you wrote, so
+            it's checkable rather than something to take on trust. */}
+        {promises.length > 0 && (
+          <ListSection title="You promised">
+            <ListGroup>
+              {promises.map((p) => (
+                <ListRow
+                  key={p.thread_id}
+                  onClick={() => navigate(`/mail/${encodeURIComponent(p.thread_id)}`)}
+                  chevron
+                  title={p.what}
+                  subtitle={
+                    <>
+                      <span className="block truncate">
+                        {p.to || 'someone'}
+                        {p.overdue_days > 0 && (
+                          <span className="font-semibold text-warning">
+                            {' '}· {p.overdue_days}d past your date
+                          </span>
+                        )}
+                      </span>
+                      {p.quote && (
+                        <span className="block truncate text-muted-foreground/80">
+                          you wrote: “{p.quote}”
+                        </span>
+                      )}
+                    </>
+                  }
+                />
+              ))}
+            </ListGroup>
+          </ListSection>
         )}
 
         {/* One ranked plan, not four inventories — see components/Worklist.tsx */}

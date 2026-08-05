@@ -12,6 +12,7 @@ filters by it):
 - ThreadMessage — the thread ledger: every observed message, in and out
 - ThreadSyncState — the ledger's per-user sweep cursor
 - ActivityEvent — the record of what Sentry actually did, so it isn't invisible
+- ThreadRead    — what a thread SAYS: the ask, the promise, the blocker, quoted
 
 Kept from the seed (used by the SDK runtime + integrations layer):
 - UserIntegration, WorkflowExecution
@@ -776,6 +777,80 @@ class ThreadFolder(Base):
 
     def __repr__(self):
         return f"<ThreadFolder {self.thread_id} → {self.folder_name} ({self.status})>"
+
+
+class ThreadRead(Base):
+    """What a thread actually SAYS — the app's only source of comprehension.
+
+    Everything else in this schema records *who* and *when*: a message arrived,
+    a loop opened, someone went quiet. None of it knows what was asked or
+    promised, because until this table the app had never read an email — every
+    judgement was made from a ~100-character snippet.
+
+    Each field arrives with the quote it came from, and `comprehension.read`
+    discards any field whose quote is not present verbatim in the fetched
+    messages. So a row here cannot contain a claim the mail doesn't support:
+    fabrication is prevented structurally rather than by asking a model to be
+    careful.
+
+    One row per thread. `read_through_message_id` is the staleness marker — a
+    thread whose newest message hasn't changed is never re-read, which is what
+    keeps this affordable.
+    """
+    __tablename__ = "thread_reads"
+    __table_args__ = (
+        UniqueConstraint("user_id", "thread_id", name="uq_thread_reads_user_thread"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    thread_id = Column(String, nullable=False, index=True)
+
+    #: What the other side wants, in their terms — "a 12% discount on 40 seats".
+    their_ask = Column(String(280), default="")
+    their_ask_quote = Column(Text, default="")
+    their_ask_at = Column(DateTime)
+
+    #: What the USER promised. The differentiated half: no mail client tracks
+    #: what you said you'd do, and it's the thing people are judged on.
+    your_commitment = Column(String(280), default="")
+    commitment_quote = Column(Text, default="")
+    commitment_at = Column(DateTime)
+    commitment_due = Column(DateTime, index=True)   # only when the mail stated one
+    commitment_met_at = Column(DateTime)            # set when the user delivers
+
+    #: you | them | nobody — who the thread is actually waiting on, from the
+    #: content rather than from whose message happened to be last.
+    blocked_on = Column(String, default="")
+    #: Figures STATED in the mail, each with its quote. Never summed or inferred.
+    amounts = Column(JSON, default=list)
+    summary = Column(String(280), default="")
+    confidence = Column(Integer, default=0)  # for ranking; never shown as a %
+
+    read_through_message_id = Column(String, default="")
+    messages_read = Column(Integer, default=0)
+    model = Column(String, default="")
+    error = Column(Text, default="")
+
+    read_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "thread_id": self.thread_id,
+            "their_ask": self.their_ask or "",
+            "their_ask_quote": self.their_ask_quote or "",
+            "their_ask_at": self.their_ask_at.isoformat() if self.their_ask_at else None,
+            "your_commitment": self.your_commitment or "",
+            "commitment_quote": self.commitment_quote or "",
+            "commitment_at": self.commitment_at.isoformat() if self.commitment_at else None,
+            "commitment_due": self.commitment_due.isoformat() if self.commitment_due else None,
+            "commitment_met_at": self.commitment_met_at.isoformat() if self.commitment_met_at else None,
+            "blocked_on": self.blocked_on or "",
+            "amounts": self.amounts or [],
+            "summary": self.summary or "",
+            "read_at": self.read_at.isoformat() if self.read_at else None,
+        }
 
 
 class ActivityEvent(Base):

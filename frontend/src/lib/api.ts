@@ -993,6 +993,33 @@ export interface AskAnswer {
 export const ask = async (question: string, context?: string): Promise<AskAnswer> =>
   (await api.post('/api/ask', { question, context })).data;
 
+// ── Commitments: what YOU said you'd do ────────────────────────────────────
+// Not "what needs a reply" — what you promised. Each row carries the sentence
+// you actually wrote, so it can be checked rather than trusted. Exists only
+// because the app reads threads now instead of counting them.
+
+export interface Commitment {
+  thread_id: string;
+  /** The promise, one line. */
+  what: string;
+  /** The sentence you wrote, verified verbatim against the message. */
+  quote: string;
+  to: string;
+  subject: string;
+  promised_at: string | null;
+  due_at: string | null;
+  overdue_days: number;
+}
+
+export interface CommitmentsResponse {
+  commitments: Commitment[];
+  total: number;
+  overdue: number;
+}
+
+export const getCommitments = async (limit = 20): Promise<CommitmentsResponse> =>
+  (await api.get('/api/commitments', { params: { limit } })).data;
+
 export const getAccounts = async (limit = 100): Promise<AccountsResponse> =>
   (await api.get('/api/accounts', { params: { limit } })).data;
 

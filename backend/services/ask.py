@@ -57,11 +57,12 @@ BRIEF = "brief"             # "how did last week go" → a report you could past
 PREP = "prep"               # "prep me for my call with Dana" → a dossier
 RULE = "rule"               # "always flag anything from my lawyer"  → proposal
 FILE = "file"               # "file supplier mail into Ops"          → proposal
+PROMISED = "promised"       # "what did I promise" / "what am I late on"
 SCHEDULE = "schedule"       # "check my mail every hour"             → proposal
 NOTIFY = "notify"           # "only ping me about urgent"            → proposal
 UNKNOWN = "unknown"
 
-_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, RULE, FILE, SCHEDULE, NOTIFY)
+_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, PROMISED, RULE, FILE, SCHEDULE, NOTIFY)
 
 #: Cadences the app can actually honour. Five minutes is the floor because the
 #: platform's own trigger fires on that interval and the app only runs when it
@@ -106,6 +107,7 @@ _ROUTER_SYSTEM = (
     "  quiet — who has gone quiet / what is at risk / who hasn't replied\n"
     "  brief — how did last week/month go / summarise / a report of what happened\n"
     "  prep  — prepare me for a call/meeting with someone (subject = who)\n"
+    "  promised — what did I promise / commit to / what am I late on\n"
     "  rule  — asking to ALWAYS flag/alert on something (subject = what to flag)\n"
     "  file  — asking to file/label/organise mail (subject = what, target = folder)\n"
     "  schedule — how OFTEN to check the mailbox (subject = the phrase, e.g. 'every hour')\n"
@@ -173,6 +175,10 @@ def _interpret_keywords(question: str) -> Dict[str, str]:
         return {"intent": NOTIFY, "subject": original, "target": ""}
     if re.search(r"\b(always|whenever|any time|every time)\b.*\b(flag|alert|urgent|tell me)\b", q):
         return {"intent": RULE, "subject": original, "target": ""}
+    # No trailing \b: "promise"/"promised"/"commitment" all need to match, and
+    # \bpromis\b matches none of them.
+    if re.search(r"\bpromis|\bcommit|\bsaid i'?d\b|\blate on\b|\bbehind on\b|\bowe.*deliver", q):
+        return {"intent": PROMISED, "subject": "", "target": ""}
     if re.search(r"\b(gone quiet|went quiet|at risk|going cold|hasn'?t replied|no reply|slipping)\b", q):
         return {"intent": QUIET, "subject": "", "target": ""}
     m = re.search(r"\b(?:prep|prepare|brief) me (?:for|on|about)?\s*(?:my |the )?(?:call|meeting|chat)?\s*(?:with\s+)?(.+)$", q)
@@ -565,6 +571,41 @@ def _propose_file(db: Session, user_id: str, subject: str, target: str) -> Dict[
     }
 
 
+def _answer_promised(db: Session, user_id: str) -> Dict[str, Any]:
+    """What the user said they'd do and hasn't done.
+
+    Every line carries the sentence they actually wrote, so this is checkable
+    rather than something to be taken on trust — which matters more here than
+    anywhere else in the app, because acting on it means telling a customer
+    something.
+    """
+    from backend.services import comprehension as comp
+
+    items = comp.commitments(db, user_id, limit=8)
+    if not items:
+        return {
+            "title": "Nothing outstanding",
+            "lines": [_block(
+                "I haven't found a promise you've not kept. I only see the threads I've read.",
+                muted=True,
+            )],
+        }
+
+    late = [c for c in items if c["overdue_days"] > 0]
+    stats = [_stat(len(items), "promises open")]
+    if late:
+        stats.append(_stat(len(late), "past their date", tone="warn"))
+
+    lines = []
+    for c in items[:6]:
+        who = c["to"] or "someone"
+        when = f" · {c['overdue_days']}d late" if c["overdue_days"] else ""
+        lines.append(_block(f"{c['what']} — {who}{when}", strong=bool(c["overdue_days"])))
+        if c["quote"]:
+            lines.append(_block(f"you wrote: “{c['quote'][:120]}”", muted=True))
+    return {"title": "What you promised", "stats": stats, "lines": lines, "link": "/"}
+
+
 def _said(minutes: int) -> str:
     """A cadence in the words someone would use for it.
 
@@ -693,6 +734,7 @@ def _answer_unknown(question: str) -> Dict[str, Any]:
             _block("“find anything about the renewal”"),
             _block("“always flag anything from my accountant”"),
             _block("“file supplier mail into Ops”"),
+            _block("“what did I promise?”"),
             _block("“check my mail every hour”"),
             _block("“only ping me about urgent”"),
             _block("I answer from the mail I've read — I don't guess.", muted=True),
@@ -731,6 +773,8 @@ def ask(db: Session, user_id: str, question: str, *, context: Optional[str] = No
         out = _answer_brief(db, user_id, subject)
     elif intent == PREP:
         out = _answer_prep(db, user_id, subject)
+    elif intent == PROMISED:
+        out = _answer_promised(db, user_id)
     elif intent == RULE:
         out = _propose_rule(db, user_id, subject)
     elif intent == FILE:

@@ -352,3 +352,36 @@ def test_notification_preference_by_sentence():
     louder = ask.ask(db, "u1", "tell me about everything")
     assert louder["proposal"]["payload"] == {"notify_tier": "needs_reply"}
     assert _cfg(db).notify_tier == "urgent"  # unchanged until approved
+
+
+def test_asking_what_you_promised_lists_it_with_your_own_words():
+    db = _session()
+    db.add(models.ThreadRead(
+        user_id="u1", thread_id="t1", your_commitment="revised pricing",
+        commitment_quote="I'll get you revised pricing by Friday",
+        commitment_due=utcnow() - timedelta(days=3),
+    ))
+    db.add(models.FollowUp(
+        user_id="u1", thread_id="t1", state=followups.AWAITING_YOU, ball="you",
+        counterparty_email="dana@northwind.co", counterparty_name="Dana Levi",
+        subject="Renewal", created_at=utcnow(), state_changed_at=utcnow(),
+    ))
+    db.commit()
+
+    out = ask.ask(db, "u1", "what did I promise?")
+
+    assert out["intent"] == ask.PROMISED
+    joined = " ".join(l["text"] for l in out["lines"])
+    assert "revised pricing" in joined
+    assert "Dana Levi" in joined
+    assert "3d late" in joined
+    # The sentence they actually wrote, so the claim can be checked.
+    assert "I'll get you revised pricing by Friday" in joined
+
+
+def test_asking_what_you_promised_with_nothing_open_says_what_it_can_see():
+    db = _session()
+    out = ask.ask(db, "u1", "what am I late on?")
+    joined = " ".join(l["text"] for l in out["lines"])
+    # Honest about its own reach rather than implying a clean slate.
+    assert "only see the threads I've read" in joined

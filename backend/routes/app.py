@@ -35,6 +35,7 @@ from backend.services import worklist as worklist_service
 from backend.services import insights as insights_service
 from backend.services import accounts as accounts_service
 from backend.services import ask as ask_service
+from backend.services import comprehension
 from backend.services import counterparty as counterparty_service
 from backend.services import ledger
 from backend.services import followups
@@ -1494,6 +1495,26 @@ async def ask_route(
     why the model only routes and never produces the figures.
     """
     return ask_service.ask(db, user_id, payload.question, context=payload.context)
+
+
+@router.get("/api/commitments")
+async def commitments_route(
+    limit: int = 20,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """What you said you'd do and haven't done yet — overdue first.
+
+    Not "what needs a reply": what you PROMISED. Every row carries the sentence
+    you wrote, so it can be checked rather than taken on trust, and it exists at
+    all only because the app now reads threads instead of counting them.
+    """
+    items = comprehension.commitments(db, user_id, limit=limit)
+    return {
+        "commitments": items,
+        "total": len(items),
+        "overdue": sum(1 for c in items if c["overdue_days"] > 0),
+    }
 
 
 @router.get("/api/accounts")
