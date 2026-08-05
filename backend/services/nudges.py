@@ -136,7 +136,7 @@ def why_not_eligible(
     cp = cp_service.get(db, user_id, fu.counterparty_email or "")
     if cp is not None and cp.muted:
         return "You've muted this contact."
-    if fu.counterparty_email and cp_service.is_bulk_sender(fu.counterparty_email):
+    if fu.counterparty_email and cp_service.is_machine_sender(fu.counterparty_email):
         return "That's an automated address — there's nobody to nudge."
 
     # Backfill guard. Loops that came out of the initial history import are not

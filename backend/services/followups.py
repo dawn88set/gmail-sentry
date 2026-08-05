@@ -231,8 +231,11 @@ def sync_followups(db: Session, user_id: str, *, now: Optional[datetime] = None)
         ident = _thread_identity(db, user_id, thread_id)
         cp = counterparties.get(ident["email"]) if ident["email"] else None
 
-        # Bulk mail is not a relationship you can owe a reply to.
-        if ident["email"] and cp_service.is_bulk_sender(ident["email"]):
+        # A machine is not a relationship you can owe a reply to. NOT
+        # `is_bulk_sender`, which also lists hello@/info@/team@/help@ — for a
+        # small business those ARE the customer, and treating them as bulk here
+        # meant no follow-up was ever tracked with them at all.
+        if ident["email"] and cp_service.is_machine_sender(ident["email"]):
             continue
         if cp is not None and cp.muted:
             continue
@@ -280,6 +283,21 @@ def sync_followups(db: Session, user_id: str, *, now: Optional[datetime] = None)
         fu.stale_after_hours = stale_after_hours_for(cp, due_at=fu.due_at, now=ref)
 
         new_ball = ball["ball"]
+
+        # Who spoke last is not who owes. This is the single most valuable thing
+        # reading the mail buys, and the reason the ledger alone was never
+        # enough:
+        #
+        #   You: "I'll get you revised pricing by Friday."
+        #
+        # You spoke last, so the ledger says the ball is theirs and the app
+        # would tell you to CHASE the customer you owe — which is exactly the
+        # kind of thing that embarrasses someone in front of a client. The read
+        # knows you promised something, so `blocked_on` overrides the ledger's
+        # mechanical answer whenever the two disagree.
+        if tr is not None and tr.blocked_on in ("you", "them"):
+            new_ball = "you" if tr.blocked_on == "you" else "them"
+
         # The ball changing hands is what restarts the clock. Re-deriving the
         # same ball must NOT reset it, or nothing would ever age.
         if new_ball != prev_ball:
@@ -289,6 +307,31 @@ def sync_followups(db: Session, user_id: str, *, now: Optional[datetime] = None)
 
         if fu.state == SNOOZED and fu.snoozed_until and fu.snoozed_until > ref:
             continue  # parked on purpose
+
+        # Nothing outstanding on either side — the conversation is simply over.
+        # "What are your minimums?" / "24 units" / "Perfect, thanks" is not an
+        # open loop, but by ball alone it looks like one forever, and a worklist
+        # padded with finished threads is one people stop reading.
+        #
+        # Requires all three: no ask, no unmet promise, and the read explicitly
+        # saying nobody is blocked. Any one of them alone is too weak to close
+        # something the user might still care about, and they can reopen it by
+        # writing.
+        if (
+            tr is not None
+            and tr.blocked_on == "nobody"
+            and not (tr.their_ask or "").strip()
+            and not ((tr.your_commitment or "").strip() and tr.commitment_met_at is None)
+            # A row created moments ago in this same loop has state None — the
+            # column default only lands at INSERT — so a bare `in OPEN_STATES`
+            # silently skips exactly the threads being seen for the first time.
+            and (fu.state or AWAITING_YOU) in OPEN_STATES
+        ):
+            fu.state = DONE
+            fu.closed_reason = "nothing_outstanding"
+            fu.closed_at = ref
+            stats["closed"] += 1
+            continue
 
         if new_ball == "you":
             # They spoke last. If we'd previously closed this because they never

@@ -141,7 +141,7 @@ def folder_for_thread(
     Counterparty-first: who a conversation is with is a far more stable fact
     than what a single subject line says.
     """
-    if cp is not None and not cp_service.is_bulk_sender(cp.email or ""):
+    if cp is not None and not cp_service.is_machine_sender(cp.email or ""):
         parent = PARENT_FOR.get(cp.relationship or "")
         if parent:
             company = _company_of(cp)
@@ -398,7 +398,7 @@ def _sweep(
 
             if cp is not None and cp.muted:
                 continue
-            if email and cp_service.is_bulk_sender(email):
+            if email and cp_service.is_machine_sender(email):
                 continue
 
             name, kind, confidence = folder_for_thread(cp, subject, known)
@@ -707,7 +707,7 @@ def preview_backlog(db: Session, user_id: str, *, days: int = 30) -> List[Dict[s
         cp = counterparties.get(email or "")
         if cp is not None and cp.muted:
             continue
-        if email and cp_service.is_bulk_sender(email):
+        if email and cp_service.is_machine_sender(email):
             continue
         subject = next((m.subject for m in msgs if m.subject), "")
         name, _kind, _conf = folder_for_thread(cp, subject, known)

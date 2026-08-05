@@ -324,7 +324,7 @@ def importance_score(cp: models.Counterparty, *, two_way_recently: bool) -> int:
     if looks_like_a_person(cp.display_name or "", cp.email or ""):
         score += 5.0
     # Bulk senders are not people you can owe a reply to.
-    if is_bulk_sender(cp.email or ""):
+    if is_machine_sender(cp.email or ""):
         score -= 25.0
     # An open deal or a known customer is a strong external signal — but only
     # ever a bonus, so the app ranks sensibly with no CRM connected at all.
@@ -363,7 +363,7 @@ def infer_relationship(
     """
     if (cp.relationship_source or "inferred") in ("user", "crm"):
         return cp.relationship or UNKNOWN
-    if is_bulk_sender(cp.email or ""):
+    if is_machine_sender(cp.email or ""):
         return BULK
     if cp.is_internal:
         return INTERNAL
@@ -558,7 +558,7 @@ def triage_rules_for(db: Session, user_id: str, *, limit: int = 8) -> List[Dict[
     )
     out: List[Dict[str, str]] = []
     for cp in rows:
-        if is_bulk_sender(cp.email or ""):
+        if is_machine_sender(cp.email or ""):
             continue
         who = cp.display_name or cp.email
         out.append(

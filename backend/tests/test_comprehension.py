@@ -328,3 +328,134 @@ def test_commitments_are_user_scoped():
     db = _session()
     _read(db, "t1")
     assert comprehension.commitments(db, "u2") == []
+
+
+# ── who spoke last is not who owes ──────────────────────────────────────────
+# The single most valuable thing reading the mail buys. The ledger derives the
+# ball mechanically from whose message was last, which is wrong precisely when
+# it matters: you answer with a promise, so you spoke last, so the app tells you
+# to chase the customer YOU owe.
+
+def _thread(db, tid, *, last="out"):
+    """Two messages; `last` decides who spoke last."""
+    _msg(db, tid, direction="in", days=5)
+    if last == "out":
+        _msg(db, tid, direction="out", sender="me@ourfirm.com", days=4)
+    return models.FollowUp
+
+
+def test_a_promise_you_made_means_YOU_owe_even_though_you_spoke_last(bodies, monkeypatch):
+    from backend.services import followups as fu_service
+
+    db = _session()
+    _thread(db, "t1", last="out")
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "a discount", "quote": "can you do better than list"},
+        "your_commitment": {"text": "revised pricing",
+                            "quote": "I'll get you revised pricing by Friday", "due": "Friday"},
+        "blocked_on": "you",
+    })
+    comprehension.read(db, "u1", "t1")
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).filter_by(thread_id="t1").first()
+    # Without the override this is awaiting_them — "chase Dana", about a thread
+    # where you are the one who owes her something.
+    assert fu.ball == "you"
+    assert fu.state == fu_service.AWAITING_YOU
+
+
+def test_answering_their_question_hands_the_ball_back_to_them(bodies, monkeypatch):
+    from backend.services import followups as fu_service
+
+    db = _session()
+    _msg(db, "t1", direction="in", days=4)  # they spoke last by the ledger
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "the delivery date", "quote": "can you do better than list"},
+        "blocked_on": "them",
+    })
+    comprehension.read(db, "u1", "t1")
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).filter_by(thread_id="t1").first()
+    assert fu.ball == "them"
+
+
+def test_a_finished_conversation_leaves_the_worklist(bodies, monkeypatch):
+    from backend.services import followups as fu_service, worklist
+
+    db = _session()
+    _thread(db, "t1", last="out")
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "", "quote": ""},
+        "your_commitment": {"text": "", "quote": "", "due": ""},
+        "blocked_on": "nobody",
+    })
+    comprehension.read(db, "u1", "t1")
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).filter_by(thread_id="t1").first()
+    assert fu.state == fu_service.DONE
+    assert fu.closed_reason == "nothing_outstanding"
+    assert worklist.build(db, "u1")["total"] == 0
+
+
+def test_an_unmet_promise_keeps_a_thread_open_even_when_nobody_is_blocked(bodies, monkeypatch):
+    from backend.services import followups as fu_service
+
+    db = _session()
+    _thread(db, "t1", last="out")
+    # A model saying "nobody" while the user still owes something must NOT close
+    # it — that would quietly drop the promise off the list.
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "", "quote": ""},
+        "your_commitment": {"text": "the deck",
+                            "quote": "I'll get you revised pricing by Friday", "due": ""},
+        "blocked_on": "nobody",
+    })
+    comprehension.read(db, "u1", "t1")
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).filter_by(thread_id="t1").first()
+    assert fu.state in fu_service.OPEN_STATES
+
+
+def test_a_customer_writing_from_hello_at_is_tracked_like_any_other(bodies, monkeypatch):
+    """hello@ / info@ / team@ / help@ are small businesses' MAIN addresses.
+
+    They sit in `_BULK_LOCALPARTS`, which was being used in seven places to
+    decide whether a relationship exists at all — so a real customer writing
+    from hello@ had no follow-up tracked, was never nudged, and was classified
+    as bulk. A newsletter lingering for a week is a far smaller error than a
+    paying customer being invisible.
+    """
+    from backend.services import followups as fu_service
+
+    db = _session()
+    m = _msg(db, "t1", sender="Mia Fern <hello@fernvalley.shop>")
+    m.counterparty_email = "hello@fernvalley.shop"
+    db.commit()
+
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "wholesale terms", "quote": "can you do better than list"},
+        "blocked_on": "you",
+    })
+    comprehension.read(db, "u1", "t1")
+    fu_service.sync_followups(db, "u1")
+
+    fu = db.query(models.FollowUp).filter_by(thread_id="t1").first()
+    assert fu is not None, "a real customer at hello@ must get a follow-up"
+    assert fu.ask_summary == "wholesale terms"
+
+
+def test_a_no_reply_address_is_still_never_tracked(bodies, monkeypatch):
+    from backend.services import followups as fu_service
+
+    db = _session()
+    m = _msg(db, "t1", sender="Updates <no-reply@news.example>")
+    m.counterparty_email = "no-reply@news.example"
+    db.commit()
+
+    fu_service.sync_followups(db, "u1")
+
+    assert db.query(models.FollowUp).filter_by(thread_id="t1").first() is None
