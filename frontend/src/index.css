@@ -241,6 +241,57 @@
     }
   }
 
+  /* The Ask prompt: a band of light travelling across the words, brightening
+     each one to full foreground as it passes and settling back to the
+     placeholder tone behind it. Says "this is the AI surface" without a badge
+     saying so, and the movement is what makes people notice a box they'd
+     otherwise read past.
+
+     `color` stays a REAL, AA-compliant colour: it is the genuine fallback
+     wherever background-clip:text isn't supported, and -webkit-text-fill-color
+     is what actually hands the glyphs to the gradient. The gradient itself only
+     ever runs between muted-foreground and foreground, so every frame is at
+     least as legible as the plain placeholder was. */
+  .ai-shimmer {
+    color: hsl(var(--muted-foreground));
+    background-image: linear-gradient(
+      100deg,
+      hsl(var(--muted-foreground)) 0%,
+      hsl(var(--muted-foreground)) 32%,
+      hsl(var(--foreground)) 46%,
+      hsl(var(--foreground)) 54%,
+      hsl(var(--muted-foreground)) 68%,
+      hsl(var(--muted-foreground)) 100%
+    );
+    background-size: 250% 100%;
+    /* MUST tile. With no-repeat, any glyph the travelling gradient hasn't
+       reached has no background at all — and since the fill is transparent,
+       those letters disappear entirely rather than sitting at the placeholder
+       tone. Both ends of the gradient are muted-foreground, so tiling is
+       seamless. */
+    background-repeat: repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: aiShimmer 3.4s ease-in-out infinite;
+  }
+  @keyframes aiShimmer {
+    from {
+      background-position: 150% 0;
+    }
+    to {
+      background-position: -150% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* No travelling light — just the placeholder tone, fully legible. */
+    .ai-shimmer {
+      animation: none;
+      background-image: none;
+      -webkit-text-fill-color: currentColor;
+    }
+  }
+
   /* Smooth scroll */
   .scroll-smooth {
     scroll-behavior: smooth;

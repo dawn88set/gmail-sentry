@@ -152,7 +152,12 @@ export function AskBar({
         >
           <Sparkles className="h-4 w-4 flex-shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate text-[13.5px] text-muted-foreground">
-            Ask anything — <span className="text-foreground/80">{PROMPTS[promptIdx]}</span>
+            Ask anything —{' '}
+            {/* Re-keyed on the prompt so each new one restarts the sweep from
+                the left rather than inheriting the previous one's phase. */}
+            <span key={promptIdx} className="ai-shimmer">
+              {PROMPTS[promptIdx]}
+            </span>
           </span>
           <kbd className="hidden flex-shrink-0 rounded border border-border/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground lg:inline">
             ⌘K
