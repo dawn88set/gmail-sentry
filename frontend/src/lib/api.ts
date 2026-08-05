@@ -951,6 +951,38 @@ export interface AccountDetail extends Account {
   threads: AccountThread[];
 }
 
+// ── Ask: plain language over everything the app knows ──────────────────────
+// The model only ROUTES the question; every figure in the answer comes from a
+// real query (see backend/services/ask.py). Anything that would change
+// something arrives as a `proposal` and does nothing until it's approved.
+
+export interface AskLine {
+  text: string;
+  strong?: boolean;
+  muted?: boolean;
+}
+
+export interface AskProposal {
+  kind: 'rule' | 'label_rule';
+  /** Button text — already phrased as the action ("File into Ops"). */
+  label: string;
+  payload: Record<string, unknown>;
+}
+
+export interface AskAnswer {
+  intent: string;
+  title: string;
+  lines: AskLine[];
+  /** Where to go for the full view, when there is one. */
+  link?: string;
+  proposal?: AskProposal;
+}
+
+/** `context` is the route asked from, so "what's going on here?" on an account
+ *  page resolves to that account rather than the whole mailbox. */
+export const ask = async (question: string, context?: string): Promise<AskAnswer> =>
+  (await api.post('/api/ask', { question, context })).data;
+
 export const getAccounts = async (limit = 100): Promise<AccountsResponse> =>
   (await api.get('/api/accounts', { params: { limit } })).data;
 

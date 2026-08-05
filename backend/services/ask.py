@@ -1,0 +1,462 @@
+"""
+Ask — one plain-language way into everything the app already knows.
+
+The app holds a great deal that is only reachable by knowing which screen to
+open: who has gone quiet, what an account owes, how fast you answer a given
+customer, what was filed last week. A business owner does not think in screens.
+They think "where are we with Northwind?" and "who's waiting on me?" — and every
+answer to those is already in this database.
+
+So this is a router, not a chatbot. The model's only job is to turn a sentence
+into a structured intent; every number in the reply then comes from a real query.
+That ordering matters: a model asked to *summarise* mail will happily invent a
+figure, and one invented number makes the true ones worthless. Here it can pick
+the wrong intent — visibly, and the user just rephrases — but it cannot make up
+a fact.
+
+Anything that CHANGES something comes back as a `proposal` instead of being
+done: the rule it would create, the mail it would affect, and a count. The app's
+whole lifecycle is draft → approve → act, and an assistant that quietly
+reorganised a real mailbox on a misread instruction would be the one thing users
+never forgive.
+
+Degrades honestly with no LLM configured (local dev): keyword routing handles the
+common shapes, and anything it can't place says so rather than guessing.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
+
+from backend import models
+from backend.services import accounts as accounts_service
+from backend.services import counterparty as cp_service
+from backend.services import followups as followups_service
+from backend.services import insights as insights_service
+from backend.services import worklist as worklist_service
+
+logger = logging.getLogger(__name__)
+
+MODEL = "claude-sonnet-4-6"
+
+#: What a question can resolve to. Small on purpose — every one of these is a
+#: real query with a real answer, and a router with twenty intents picks wrong
+#: far more often than one with five.
+NOW = "now"                 # "what needs me", "what's going on"
+WHO = "who"                 # "where are we with Northwind", "what about Dana"
+FIND = "find"               # "emails about the renewal", "anything from invoices"
+QUIET = "quiet"             # "who has gone quiet", "what's at risk"
+RULE = "rule"               # "always flag anything from my lawyer"  → proposal
+FILE = "file"               # "file supplier mail into Ops"          → proposal
+UNKNOWN = "unknown"
+
+_INTENTS = (NOW, WHO, FIND, QUIET, RULE, FILE)
+
+
+# ── interpreting the question ───────────────────────────────────────────────
+
+_ROUTER_SYSTEM = (
+    "You route a question about someone's email into ONE intent. You never answer "
+    "the question and never invent facts — a separate system does the lookup.\n"
+    "Intents:\n"
+    "  now   — what needs me / what should I do / what's going on right now\n"
+    "  who   — about a specific person or company (subject = their name or email)\n"
+    "  find  — searching for mail on a topic (subject = the search words)\n"
+    "  quiet — who has gone quiet / what is at risk / who hasn't replied\n"
+    "  rule  — asking to ALWAYS flag/alert on something (subject = what to flag)\n"
+    "  file  — asking to file/label/organise mail (subject = what, target = folder)\n"
+    'Reply with ONLY JSON: {"intent": "...", "subject": "...", "target": "..."}. '
+    'Use "" for anything not present.'
+)
+
+
+def _interpret_llm(question: str) -> Optional[Dict[str, str]]:
+    try:
+        from claritty_sdk.llm import get_llm_client
+
+        client = get_llm_client(MODEL)
+        result = client.chat(
+            [{"role": "user", "content": question.strip()[:600]}],
+            temperature=0,
+            max_tokens=120,
+            system=_ROUTER_SYSTEM,
+        )
+        raw = (getattr(result, "content", "") or "").strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        if start == -1 or end == -1:
+            return None
+        data = json.loads(raw[start : end + 1])
+        intent = str(data.get("intent") or "").strip().lower()
+        if intent not in _INTENTS:
+            return None
+        return {
+            "intent": intent,
+            "subject": str(data.get("subject") or "").strip()[:120],
+            "target": str(data.get("target") or "").strip()[:60],
+        }
+    except Exception as e:  # noqa: BLE001 — routing is best-effort by design
+        logger.info("ask: LLM routing unavailable (%s: %s)", type(e).__name__, e)
+        return None
+
+
+def _interpret_keywords(question: str) -> Dict[str, str]:
+    """Deterministic fallback. Runs with no LLM at all (local dev, proxy down).
+
+    Handles the shapes people actually type; anything else becomes `unknown`,
+    which answers with what it CAN do rather than guessing wrong.
+    """
+    original = " ".join((question or "").split())
+    q = original.lower()
+
+    # Matched case-insensitively but sliced out of the ORIGINAL, so a folder
+    # keeps the capitalisation the user typed — creating "ops" when they asked
+    # for "Ops" makes a mess of a real mailbox's label list.
+    m = re.search(r"\b(?:file|label|organi[sz]e)\b(.+?)\b(?:in|into|under)\b(.+)$", q)
+    if m:
+        return {
+            "intent": FILE,
+            "subject": original[m.start(1):m.end(1)].strip(" .,"),
+            "target": original[m.start(2):m.end(2)].strip(" .,"),
+        }
+    if re.search(r"\b(always|whenever|any time|every time)\b.*\b(flag|alert|urgent|tell me)\b", q):
+        return {"intent": RULE, "subject": original, "target": ""}
+    if re.search(r"\b(gone quiet|went quiet|at risk|going cold|hasn'?t replied|no reply)\b", q):
+        return {"intent": QUIET, "subject": "", "target": ""}
+    m = re.search(r"\b(?:where are we with|what about|how about|status of|catch me up on)\s+(.+)$", q)
+    if m:
+        return {"intent": WHO, "subject": original[m.start(1):m.end(1)].strip(" ?.,"), "target": ""}
+    m = re.search(r"\b(?:find|search|show me|anything)\b.*?\b(?:about|from|on|re)\s+(.+)$", q)
+    if m:
+        return {"intent": FIND, "subject": original[m.start(1):m.end(1)].strip(" ?.,"), "target": ""}
+    if re.search(r"\b(what needs me|what should i|what'?s going on|today|right now|my day)\b", q):
+        return {"intent": NOW, "subject": "", "target": ""}
+    return {"intent": UNKNOWN, "subject": original, "target": ""}
+
+
+def interpret(question: str) -> Dict[str, str]:
+    return _interpret_llm(question) or _interpret_keywords(question)
+
+
+# ── answering, from real rows only ──────────────────────────────────────────
+
+def _block(text: str, *, strong: bool = False, muted: bool = False) -> Dict[str, Any]:
+    return {"text": text, "strong": strong, "muted": muted}
+
+
+#: Words that carry no search signal. "file invoice mail into Ops" means mail
+#: ABOUT invoices — matching the literal phrase "invoice mail" finds nothing,
+#: which then reports "nothing matches" for a rule that would in fact catch
+#: dozens of messages. That understates a change's blast radius, which is worse
+#: than being too broad.
+_FILLER = {
+    "mail", "email", "emails", "message", "messages", "anything", "everything",
+    "stuff", "things", "thing", "all", "any", "the", "a", "an", "from", "about",
+    "with", "for", "my", "our", "me", "to", "of", "and", "or", "in", "on", "into",
+}
+
+
+def _terms(text: str) -> List[str]:
+    """The words worth searching for, longest first."""
+    words = re.findall(r"[a-z0-9@.\-']{2,}", (text or "").lower())
+    kept = [w for w in words if w not in _FILLER]
+    return sorted(kept, key=len, reverse=True)[:4] or words[:1]
+
+
+def _match_any(column, terms: List[str]):
+    """A filter matching ANY term — someone naming two things means either."""
+    return or_(*[func.lower(column).like(f"%{t}%") for t in terms]) if terms else None
+
+
+def _thread_filter(user_id: str, terms: List[str]):
+    subj = _match_any(models.ThreadMessage.subject, terms)
+    send = _match_any(models.ThreadMessage.sender, terms)
+    if subj is None:
+        return models.ThreadMessage.user_id == user_id
+    return or_(subj, send)
+
+
+def _answer_now(db: Session, user_id: str) -> Dict[str, Any]:
+    work = worklist_service.build(db, user_id, limit=6)
+    accs = accounts_service.build(db, user_id)
+    at_risk = [a for a in accs if a.chasing > 0]
+
+    lines = [_block(
+        f"{work['total']} thing{'' if work['total'] == 1 else 's'} need you"
+        + (f" · {work['overdue']} overdue" if work["overdue"] else ""),
+        strong=True,
+    )]
+    for i in work["items"][:5]:
+        who = i["who"] + (f" · {i['company']}" if i.get("company") and i["company"] != i["who"] else "")
+        lines.append(_block(f"{i['headline']} — {who} · {i['due_label'] or i['age_label']}"))
+    if at_risk:
+        lines.append(_block(
+            "Going quiet: " + ", ".join(f"{a.name} ({a.silent_days}d)" for a in at_risk[:4]),
+            muted=True,
+        ))
+    if work["total"] == 0:
+        lines.append(_block("Nobody is waiting on a reply, and no thread has gone quiet.", muted=True))
+    return {"title": "Right now", "lines": lines, "link": "/"}
+
+
+def _find_counterparties(db: Session, user_id: str, subject: str) -> List[models.Counterparty]:
+    """Match a person or company by name, address or domain.
+
+    Deliberately generous — someone typing "northwind" should find
+    ops@northwind.co without knowing the address.
+    """
+    term = (subject or "").strip().lower()
+    if not term:
+        return []
+    like = f"%{term}%"
+    return (
+        db.query(models.Counterparty)
+        .filter(
+            models.Counterparty.user_id == user_id,
+            or_(
+                func.lower(models.Counterparty.display_name).like(like),
+                func.lower(models.Counterparty.email).like(like),
+                func.lower(models.Counterparty.domain).like(like),
+                func.lower(models.Counterparty.crm_company).like(like),
+            ),
+        )
+        .order_by(models.Counterparty.importance.desc())
+        .limit(25)
+        .all()
+    )
+
+
+def _answer_who(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
+    people = _find_counterparties(db, user_id, subject)
+    if not people:
+        return {
+            "title": f"Nothing about “{subject}”",
+            "lines": [_block("No contact or company matches that in the mail I've read.", muted=True)],
+        }
+
+    # Prefer the ACCOUNT the match belongs to — the question "where are we with
+    # Northwind" is about the company, not whichever address matched first.
+    keys = {accounts_service.account_key(c) for c in people}
+    acc = next((a for a in accounts_service.build(db, user_id) if a.key in keys), None)
+
+    if acc is None:
+        c = people[0]
+        return {
+            "title": c.display_name or c.email,
+            "lines": [
+                _block(f"{c.email} · {accounts_service.REL_LABEL.get(c.relationship or '', 'Unclassified')}"),
+                _block(f"{c.thread_count or 0} threads · you answer {c.your_reply_rate or 0}%", muted=True),
+            ],
+        }
+
+    lines = [_block(
+        f"{accounts_service.REL_LABEL.get(acc.relationship, 'Unclassified')}"
+        f" · {len(acc.people)} {'person' if len(acc.people) == 1 else 'people'}"
+        + (f" · last contact {acc.silent_days}d ago" if acc.silent_days is not None else ""),
+        strong=True,
+    )]
+    if acc.headline:
+        lines.append(_block(acc.headline))
+    state = []
+    if acc.you_owe:
+        state.append(f"you owe {acc.you_owe}")
+    if acc.chasing:
+        state.append(f"{acc.chasing} gone quiet")
+    if acc.open_threads:
+        state.append(f"{acc.open_threads} open")
+    lines.append(_block(" · ".join(state) if state else "Nothing outstanding", muted=True))
+    if acc.your_median_reply_h:
+        lines.append(_block(f"You reply to them in about {acc.your_median_reply_h}h", muted=True))
+    for c in sorted(acc.people, key=lambda x: -(x.importance or 0))[:4]:
+        lines.append(_block(f"{c.display_name or c.email} — answers {c.your_reply_rate or 0}%", muted=True))
+    return {"title": acc.name, "lines": lines, "link": f"/accounts/{acc.key}"}
+
+
+def _answer_find(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
+    """Search the ledger, not Gmail.
+
+    Every message the app has read is already indexed locally, so this costs no
+    broker call and works when Gmail is rate-limited. It searches what we
+    actually hold — subject and sender — and says so rather than implying it
+    searched message bodies.
+    """
+    term = (subject or "").strip()
+    if not term:
+        return {"title": "Search", "lines": [_block("Tell me what to look for.", muted=True)]}
+    terms = _terms(term)
+    rows = (
+        db.query(models.ThreadMessage)
+        .filter(
+            models.ThreadMessage.user_id == user_id,
+            _thread_filter(user_id, terms),
+        )
+        .order_by(models.ThreadMessage.ts_hi.desc())
+        .limit(40)
+        .all()
+    )
+    seen: Dict[str, models.ThreadMessage] = {}
+    for r in rows:
+        seen.setdefault(r.thread_id, r)
+    hits = list(seen.values())[:8]
+    if not hits:
+        return {
+            "title": f"Nothing matching “{term}”",
+            "lines": [_block("I search the subjects and senders I've indexed, not message bodies.", muted=True)],
+        }
+    lines = [_block(f"{len(seen)} conversation{'' if len(seen) == 1 else 's'} mentioning “{term}”", strong=True)]
+    for r in hits:
+        who = cp_service._local_part(r.counterparty_email or "") or (r.sender or "")
+        lines.append(_block(f"{r.subject or '(no subject)'} — {who}"))
+    return {"title": "Found", "lines": lines}
+
+
+def _answer_quiet(db: Session, user_id: str) -> Dict[str, Any]:
+    risk = insights_service.at_risk(db, user_id, limit=8)
+    threads = risk.get("threads", [])
+    if not threads:
+        return {"title": "Nothing has gone quiet", "lines": [
+            _block("Every open thread has moved recently.", muted=True)]}
+    lines = [_block(f"{len(threads)} going quiet", strong=True)]
+    for t in threads:
+        lines.append(_block(f"{t['who']} — {t['subject'] or '(no subject)'} · silent {t['silent_days']}d"))
+    return {"title": "At risk", "lines": lines, "link": "/accounts"}
+
+
+# ── proposals: what it WOULD change ─────────────────────────────────────────
+
+def _propose_rule(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
+    """A triage rule, described in the user's own words and NOT created.
+
+    The count of affected mail is a real query, so the user is approving a
+    change whose blast radius they can see.
+    """
+    text = (subject or "").strip()
+    if not text:
+        return {"title": "What should I flag?", "lines": [
+            _block("Tell me what matters — “anything from my accountant”, say.", muted=True)]}
+    affected = (
+        db.query(func.count(models.ThreadMessage.id))
+        .filter(
+            models.ThreadMessage.user_id == user_id,
+            _thread_filter(user_id, _terms(text)),
+        )
+        .scalar()
+    ) or 0
+    return {
+        "title": "Flag this from now on",
+        "lines": [
+            _block(text, strong=True),
+            _block(
+                f"Matches {affected} message{'' if affected == 1 else 's'} in what I've read"
+                if affected else "Nothing in the last 45 days matches yet — it will apply to new mail.",
+                muted=True,
+            ),
+        ],
+        "proposal": {
+            "kind": "rule",
+            "label": "Create rule",
+            # `nl` because the user's sentence IS the rule — the triage model
+            # judges each message against it, which handles nuance a keyword
+            # match would miss.
+            "payload": {"name": text[:60], "kind": "nl", "value": text, "tier": "urgent"},
+        },
+    }
+
+
+def _propose_file(db: Session, user_id: str, subject: str, target: str) -> Dict[str, Any]:
+    what = (subject or "").strip()
+    folder = (target or "").strip()
+    if not (what and folder):
+        return {"title": "File what, where?", "lines": [
+            _block("Try “file anything from suppliers into Ops”.", muted=True)]}
+    affected = (
+        db.query(func.count(func.distinct(models.ThreadMessage.thread_id)))
+        .filter(
+            models.ThreadMessage.user_id == user_id,
+            _thread_filter(user_id, _terms(what)),
+        )
+        .scalar()
+    ) or 0
+    return {
+        "title": f"File into {folder}",
+        "lines": [
+            _block(f"Mail matching “{what}”", strong=True),
+            _block(
+                f"Would apply to {affected} existing conversation{'' if affected == 1 else 's'}"
+                if affected else "Nothing existing matches — it will apply to new mail.",
+                muted=True,
+            ),
+        ],
+        "proposal": {
+            "kind": "label_rule",
+            "label": f"File into {folder}",
+            "payload": {
+                "name": f"{what[:40]} → {folder}"[:60],
+                # `sender` matches the address OR the display name, which is what
+                # someone means by "from suppliers"; subject matching would miss
+                # every message whose subject doesn't repeat the word.
+                "match_type": "sender",
+                "match_value": what[:80],
+                "target_label": folder[:60],
+                "archive_after": False,
+            },
+        },
+    }
+
+
+def _answer_unknown(question: str) -> Dict[str, Any]:
+    return {
+        "title": "I can answer things like",
+        "lines": [
+            _block("“what needs me today?”"),
+            _block("“where are we with Northwind?”"),
+            _block("“who has gone quiet?”"),
+            _block("“find anything about the renewal”"),
+            _block("“always flag anything from my accountant”"),
+            _block("“file supplier mail into Ops”"),
+            _block("I answer from the mail I've read — I don't guess.", muted=True),
+        ],
+    }
+
+
+def ask(db: Session, user_id: str, question: str, *, context: Optional[str] = None) -> Dict[str, Any]:
+    """Answer one question. Every figure below comes from a query, never a model.
+
+    `context` is the screen the user asked from, so "what's going on here?" on an
+    account page means that account rather than the whole mailbox.
+    """
+    q = (question or "").strip()
+    if not q:
+        return {"intent": UNKNOWN, **_answer_unknown(q)}
+
+    routed = interpret(q)
+    intent, subject, target = routed["intent"], routed.get("subject", ""), routed.get("target", "")
+
+    # "what's happening here" on an account page is about THAT account.
+    if intent in (NOW, UNKNOWN) and context and context.startswith("/accounts/"):
+        key = context.split("/accounts/", 1)[1]
+        if key:
+            intent, subject = WHO, key.split(":", 1)[-1]
+
+    if intent == NOW:
+        out = _answer_now(db, user_id)
+    elif intent == WHO:
+        out = _answer_who(db, user_id, subject)
+    elif intent == FIND:
+        out = _answer_find(db, user_id, subject)
+    elif intent == QUIET:
+        out = _answer_quiet(db, user_id)
+    elif intent == RULE:
+        out = _propose_rule(db, user_id, subject)
+    elif intent == FILE:
+        out = _propose_file(db, user_id, subject, target)
+    else:
+        out = _answer_unknown(q)
+
+    return {"intent": intent, **out}

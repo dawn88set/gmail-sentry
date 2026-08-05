@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { TabBar } from '@/components/ios/TabBar';
 import { SentryMark } from '@/components/SentryMark';
 import { useEmbedded } from '@/lib/embedded';
+import { AskBar } from '@/components/AskBar';
 import { NAV_ITEMS } from '@/lib/nav';
 import { cn } from '@/lib/utils';
 
@@ -57,6 +58,11 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       <main className="min-h-screen">{children}</main>
+
+      {/* Ask, on every screen. Not a nav destination on purpose: the questions
+          people have occur WHILE they're looking at something, and it passes
+          the current route as context. */}
+      <AskBar />
 
       {/* Mobile bottom tab bar — suppressed when embedded (the header covers it). */}
       {!embedded && <TabBar />}

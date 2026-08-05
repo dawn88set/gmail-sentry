@@ -34,6 +34,7 @@ from backend.services import mail as mail_service
 from backend.services import worklist as worklist_service
 from backend.services import insights as insights_service
 from backend.services import accounts as accounts_service
+from backend.services import ask as ask_service
 from backend.services import counterparty as counterparty_service
 from backend.services import ledger
 from backend.services import followups
@@ -1471,6 +1472,28 @@ async def get_insights(
     suspect, including the ones their mail depends on.
     """
     return insights_service.build(db, user_id)
+
+
+class AskBody(BaseModel):
+    question: str
+    #: The route the user asked from, so "what's going on here?" on an account
+    #: page means that account rather than the whole mailbox.
+    context: Optional[str] = None
+
+
+@router.post("/api/ask")
+async def ask_route(
+    payload: AskBody,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """One plain-language way into everything the app knows.
+
+    Reads answer immediately; anything that would CHANGE something comes back as
+    a `proposal` the user approves, never applied here. See services/ask.py on
+    why the model only routes and never produces the figures.
+    """
+    return ask_service.ask(db, user_id, payload.question, context=payload.context)
 
 
 @router.get("/api/accounts")
