@@ -7,6 +7,7 @@ import {
   ask,
   createRule,
   createLabelRule,
+  updateConfig,
   toApiError,
   type AskAnswer,
 } from '@/lib/api';
@@ -126,9 +127,13 @@ export function AskBar({
     setBusy(true);
     try {
       if (p.kind === 'rule') await createRule(p.payload as never);
+      else if (p.kind === 'config') await updateConfig(p.payload as never);
       else await createLabelRule(p.payload as never);
       setApplied(true);
-      show({ tone: 'success', text: 'Done — it applies from the next scan.' });
+      show({
+        tone: 'success',
+        text: p.kind === 'config' ? 'Saved.' : 'Done — it applies from the next scan.',
+      });
     } catch (err) {
       show({ tone: 'error', text: `Couldn’t create that: ${toApiError(err).message}` });
     } finally {

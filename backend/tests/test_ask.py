@@ -265,3 +265,90 @@ def test_every_answer_that_shows_figures_labels_them():
             # A bare number with no label is a number nobody can act on.
             assert st["label"].strip(), q
             assert st["value"].strip(), q
+
+
+# ── scheduling and notification, by sentence ────────────────────────────────
+# The only scheduling this app genuinely owns is how often it reads the mailbox.
+# The daily report's time lives in Claritty's trigger settings, so nothing here
+# should ever propose changing that — a control the app cannot honour is worse
+# than no control.
+
+def _cfg(db):
+    from backend.services.sentry import get_config
+    return get_config(db, "u1")
+
+
+def test_cadence_phrases_people_actually_use():
+    cases = {
+        "check my mail every hour": 60,
+        "scan my inbox every 30 minutes": 30,
+        "read my mail twice a day": 720,
+        "check my mail every 2 hours": 120,
+        "check my inbox daily": 1440,
+    }
+    for q, mins in cases.items():
+        assert ask._interpret_keywords(q)["intent"] == ask.SCHEDULE, q
+        assert ask._parse_every(q) == mins, q
+
+
+def test_a_cadence_change_is_proposed_not_applied():
+    db = _session()
+    before = _cfg(db).scan_interval_minutes
+
+    out = ask.ask(db, "u1", "check my mail every hour")
+
+    assert out["proposal"]["payload"] == {"scan_interval_minutes": 60}
+    # Still unchanged until the user taps.
+    assert _cfg(db).scan_interval_minutes == before
+
+
+def test_an_impossible_cadence_explains_the_floor():
+    db = _session()
+    out = ask.ask(db, "u1", "check my mail every minute")
+
+    # Five minutes is the floor — the platform's trigger fires on that interval
+    # — and five is already the default, so there is nothing to change. The
+    # caveat still has to be said: "already set" alone teaches nothing about
+    # why it can't go faster.
+    assert "proposal" not in out
+    joined = " ".join(l["text"] for l in out["lines"])
+    assert "nearest I can actually do" in joined
+    assert "as fast as it goes" in joined
+
+
+def test_a_slower_cadence_than_the_floor_is_a_real_proposal():
+    db = _session()
+    out = ask.ask(db, "u1", "check my mail every 20 minutes")
+
+    # 20 isn't offered; 15 is the nearest, and that IS a change worth making.
+    assert out["proposal"]["payload"] == {"scan_interval_minutes": 15}
+    assert "nearest I can actually do" in " ".join(l["text"] for l in out["lines"])
+
+
+def test_asking_for_the_cadence_already_set_proposes_nothing():
+    db = _session()
+    out = ask.ask(db, "u1", "check my mail every 5 minutes")
+
+    assert "proposal" not in out
+    assert "Already set" in out["title"]
+
+
+def test_a_cadence_question_with_no_period_reports_the_current_one():
+    db = _session()
+    cfg = _cfg(db); cfg.scan_interval_minutes = 60; db.commit()
+
+    out = ask._propose_schedule(db, "u1", "how often do you check my mail")
+
+    assert "every hour" in " ".join(l["text"] for l in out["lines"])
+    assert "proposal" not in out
+
+
+def test_notification_preference_by_sentence():
+    db = _session()
+
+    quieter = ask.ask(db, "u1", "only ping me about urgent")
+    assert "Already set" in quieter["title"]  # urgent is the default
+
+    louder = ask.ask(db, "u1", "tell me about everything")
+    assert louder["proposal"]["payload"] == {"notify_tier": "needs_reply"}
+    assert _cfg(db).notify_tier == "urgent"  # unchanged until approved

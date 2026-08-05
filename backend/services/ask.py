@@ -57,9 +57,41 @@ BRIEF = "brief"             # "how did last week go" → a report you could past
 PREP = "prep"               # "prep me for my call with Dana" → a dossier
 RULE = "rule"               # "always flag anything from my lawyer"  → proposal
 FILE = "file"               # "file supplier mail into Ops"          → proposal
+SCHEDULE = "schedule"       # "check my mail every hour"             → proposal
+NOTIFY = "notify"           # "only ping me about urgent"            → proposal
 UNKNOWN = "unknown"
 
-_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, RULE, FILE)
+_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, RULE, FILE, SCHEDULE, NOTIFY)
+
+#: Cadences the app can actually honour. Five minutes is the floor because the
+#: platform's own trigger fires on that interval and the app only runs when it
+#: does — offering "every minute" would be a promise it cannot keep.
+_CADENCES = (5, 15, 30, 60, 180, 720, 1440)
+
+
+def _nearest_cadence(minutes: int) -> int:
+    return min(_CADENCES, key=lambda c: (abs(c - minutes), c))
+
+
+def _parse_every(text: str) -> Optional[int]:
+    """Minutes from "every 30 minutes" / "hourly" / "twice a day" / "every 2h"."""
+    q = (text or "").lower()
+    if re.search(r"\b(hourly|every hour|once an hour)\b", q):
+        return 60
+    if re.search(r"\btwice a day\b", q):
+        return 720
+    if re.search(r"\b(daily|once a day|every day)\b", q):
+        return 1440
+    m = re.search(r"\bevery\s+(?:(\d+)\s*)?(minute|min|hour|hr|h|day)s?\b", q)
+    if m:
+        n = int(m.group(1) or 1)
+        unit = m.group(2)
+        if unit.startswith(("minute", "min")):
+            return n
+        if unit.startswith(("hour", "hr", "h")):
+            return n * 60
+        return n * 1440
+    return None
 
 
 # ── interpreting the question ───────────────────────────────────────────────
@@ -76,6 +108,8 @@ _ROUTER_SYSTEM = (
     "  prep  — prepare me for a call/meeting with someone (subject = who)\n"
     "  rule  — asking to ALWAYS flag/alert on something (subject = what to flag)\n"
     "  file  — asking to file/label/organise mail (subject = what, target = folder)\n"
+    "  schedule — how OFTEN to check the mailbox (subject = the phrase, e.g. 'every hour')\n"
+    "  notify — which mail should ping them (subject = 'urgent' or 'all')\n"
     'Reply with ONLY JSON: {"intent": "...", "subject": "...", "target": "..."}. '
     'Use "" for anything not present.'
 )
@@ -129,6 +163,14 @@ def _interpret_keywords(question: str) -> Dict[str, str]:
             "subject": original[m.start(1):m.end(1)].strip(" .,"),
             "target": original[m.start(2):m.end(2)].strip(" .,"),
         }
+    if re.search(r"\b(check|scan|read|sync|look at)\b.*\b(every|hourly|twice a day|daily)\b", q) or (
+        re.search(r"\b(every|hourly|twice a day)\b", q) and re.search(r"\b(mail|inbox|mailbox)\b", q)
+    ):
+        return {"intent": SCHEDULE, "subject": original, "target": ""}
+    if re.search(r"\b(only|just)\b.*\b(urgent|important)\b.*\b(ping|notify|alert|tell)\b", q) or re.search(
+        r"\b(ping|notify|alert|tell)\s+me\b.*\b(only|just)?\s*(about\s+)?(urgent|everything|all)\b", q
+    ):
+        return {"intent": NOTIFY, "subject": original, "target": ""}
     if re.search(r"\b(always|whenever|any time|every time)\b.*\b(flag|alert|urgent|tell me)\b", q):
         return {"intent": RULE, "subject": original, "target": ""}
     if re.search(r"\b(gone quiet|went quiet|at risk|going cold|hasn'?t replied|no reply|slipping)\b", q):
@@ -523,6 +565,124 @@ def _propose_file(db: Session, user_id: str, subject: str, target: str) -> Dict[
     }
 
 
+def _said(minutes: int) -> str:
+    """A cadence in the words someone would use for it.
+
+    "every 12 hours" is technically right and nobody says it; if they asked for
+    "twice a day" they should be agreeing to "twice a day".
+    """
+    if minutes == 1:
+        return "every minute"
+    if minutes < 60:
+        return f"every {minutes} minutes"
+    if minutes == 60:
+        return "every hour"
+    if minutes == 720:
+        return "twice a day"
+    if minutes < 1440:
+        return f"every {minutes // 60} hours"
+    if minutes == 1440:
+        return "once a day"
+    return f"every {minutes // 1440} days"
+
+
+def _propose_schedule(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
+    """Change how often the mailbox is read.
+
+    The one piece of scheduling this app genuinely owns. The daily report's time
+    lives in Claritty's trigger settings, so asking for that gets told where it
+    is rather than a proposal the app couldn't honour.
+    """
+    from backend.services.sentry import get_config
+
+    cfg = get_config(db, user_id)
+    current = int(getattr(cfg, "scan_interval_minutes", 5) or 5)
+
+    wanted = _parse_every(subject)
+    if wanted is None:
+        return {
+            "title": "How often should I check?",
+            "lines": [
+                _block(f"Right now: {_said(current)}.", strong=True),
+                _block("Try “check my mail every hour” or “twice a day”.", muted=True),
+            ],
+        }
+
+    picked = _nearest_cadence(wanted)
+
+    # Any caveat about what was asked for versus what can be done belongs on
+    # BOTH answers. Someone who asks for "every minute" and is told only
+    # "already set" learns nothing about why it can't go faster.
+    notes: List[Dict[str, Any]] = []
+    if picked != wanted:
+        notes.append(_block(
+            f"You asked for {_said(wanted)}; {_said(picked)} is the nearest I can actually do.",
+            muted=True,
+        ))
+    if picked == 5:
+        notes.append(_block(
+            "Five minutes is as fast as it goes — the platform's scan fires on that interval.",
+            muted=True,
+        ))
+    notes.append(_block("You can still tap Scan any time for an immediate check.", muted=True))
+
+    if picked == current:
+        return {
+            "title": "Already set",
+            "lines": [_block(f"I'm already checking {_said(current)}.", strong=True)] + notes,
+        }
+
+    lines = [_block(f"{_said(current)}  →  {_said(picked)}", strong=True)] + notes
+
+    return {
+        "title": "Change how often I check",
+        "lines": lines,
+        "proposal": {
+            "kind": "config",
+            "label": f"Check {_said(picked)}",
+            "payload": {"scan_interval_minutes": picked},
+        },
+    }
+
+
+def _propose_notify(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
+    """Which mail is worth interrupting someone for."""
+    from backend.services.sentry import get_config
+
+    cfg = get_config(db, user_id)
+    current = (cfg.notify_tier or "urgent").strip()
+    q = (subject or "").lower()
+
+    if re.search(r"\b(everything|all|both|more)\b", q):
+        wanted, said = "needs_reply", "urgent mail and anything needing a reply"
+    elif re.search(r"\b(urgent|important|only|less|quieter)\b", q):
+        wanted, said = "urgent", "urgent mail only"
+    else:
+        return {
+            "title": "What should ping you?",
+            "lines": [
+                _block(
+                    "Currently: "
+                    + ("urgent mail only" if current == "urgent" else "urgent mail and anything needing a reply"),
+                    strong=True,
+                ),
+                _block("Try “only ping me about urgent” or “tell me about everything”.", muted=True),
+            ],
+        }
+
+    if wanted == current:
+        return {"title": "Already set", "lines": [_block(f"I already ping you about {said}.", strong=True)]}
+
+    return {
+        "title": "Change what pings you",
+        "lines": [
+            _block(f"Ping me about {said}", strong=True),
+            _block("Everything else still appears in the app — this only changes what interrupts you.", muted=True),
+        ],
+        "proposal": {"kind": "config", "label": f"Ping me about {said}", "payload": {"notify_tier": wanted}},
+    }
+
+
 def _answer_unknown(question: str) -> Dict[str, Any]:
     return {
         "title": "I can answer things like",
@@ -533,6 +693,8 @@ def _answer_unknown(question: str) -> Dict[str, Any]:
             _block("“find anything about the renewal”"),
             _block("“always flag anything from my accountant”"),
             _block("“file supplier mail into Ops”"),
+            _block("“check my mail every hour”"),
+            _block("“only ping me about urgent”"),
             _block("I answer from the mail I've read — I don't guess.", muted=True),
         ],
     }
@@ -573,6 +735,10 @@ def ask(db: Session, user_id: str, question: str, *, context: Optional[str] = No
         out = _propose_rule(db, user_id, subject)
     elif intent == FILE:
         out = _propose_file(db, user_id, subject, target)
+    elif intent == SCHEDULE:
+        out = _propose_schedule(db, user_id, subject)
+    elif intent == NOTIFY:
+        out = _propose_notify(db, user_id, subject)
     else:
         out = _answer_unknown(q)
 

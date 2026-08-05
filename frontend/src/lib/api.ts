@@ -963,7 +963,7 @@ export interface AskLine {
 }
 
 export interface AskProposal {
-  kind: 'rule' | 'label_rule';
+  kind: 'rule' | 'label_rule' | 'config';
   /** Button text — already phrased as the action ("File into Ops"). */
   label: string;
   payload: Record<string, unknown>;
