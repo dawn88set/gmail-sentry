@@ -969,9 +969,19 @@ export interface AskProposal {
   payload: Record<string, unknown>;
 }
 
+export interface AskStat {
+  value: string;
+  label: string;
+  /** 'warn' only when the number is bad news — colouring everything makes
+   *  nothing stand out. */
+  tone?: string;
+}
+
 export interface AskAnswer {
   intent: string;
   title: string;
+  /** Headline figures, rendered as a report. Always counted rows. */
+  stats?: AskStat[];
   lines: AskLine[];
   /** Where to go for the full view, when there is one. */
   link?: string;

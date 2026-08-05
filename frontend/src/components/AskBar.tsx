@@ -29,12 +29,34 @@ import { cn } from '@/lib/utils';
 
 const EXAMPLES = [
   'what needs me today?',
+  'how did last week go?',
+  'prep me for my call with…',
   'where are we with…',
   'who has gone quiet?',
   'file supplier mail into Ops',
 ];
 
-export function AskBar() {
+//: Cycled in the closed input. Each one teaches a capability people would never
+//: guess from a generic "Ask anything" — the placeholder is the only
+//: documentation a command surface ever gets read.
+const PROMPTS = [
+  'what needs me today?',
+  'how did last week go?',
+  'prep me for my call with Dana',
+  'where are we with Northwind?',
+  'who has gone quiet?',
+  'find the PackRite invoice',
+  'always flag anything from my accountant',
+  'file supplier mail into Ops',
+];
+
+export function AskBar({
+  variant = 'floating',
+  className,
+}: {
+  variant?: 'floating' | 'inline';
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
@@ -47,6 +69,15 @@ export function AskBar() {
   // The tab bar is suppressed when embedded, so reserving space above it would
   // leave the button floating in a gap inside the platform panel.
   const embedded = useEmbedded();
+  const [promptIdx, setPromptIdx] = useState(0);
+
+  // Rotate the placeholder while the bar is closed. Stops once it's open so the
+  // text can't change under someone mid-thought.
+  useEffect(() => {
+    if (open) return;
+    const iv = window.setInterval(() => setPromptIdx((i) => (i + 1) % PROMPTS.length), 3600);
+    return () => window.clearInterval(iv);
+  }, [open]);
 
   // ⌘K / Ctrl-K from anywhere, Escape to close. Registered once at the app root.
   useEffect(() => {
@@ -107,19 +138,40 @@ export function AskBar() {
 
   return (
     <>
-      {/* The trigger. Fixed, above the tab bar on mobile, out of the way of
-          content — present on every screen without occupying a nav slot. */}
-      <button
-        onClick={() => setOpen(true)}
-        aria-label="Ask Sentry"
-        className={cn(
-          'fixed right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-[14px] font-semibold text-accent-foreground shadow-lg transition-transform active:scale-95',
-          embedded ? 'bottom-6' : 'bottom-20 lg:bottom-6',
-        )}
-      >
-        <Sparkles className="h-4 w-4" />
-        Ask
-      </button>
+      {variant === 'inline' ? (
+        // A real input at tab level. It doesn't submit in place — focusing it
+        // opens the same overlay, so there is one answer surface rather than
+        // two that drift apart.
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="Ask Sentry"
+          className={cn(
+            'group flex min-w-0 flex-1 items-center gap-2.5 rounded-full border border-border/60 bg-muted/40 px-4 py-2 text-left transition-colors hover:bg-muted/70',
+            className,
+          )}
+        >
+          <Sparkles className="h-4 w-4 flex-shrink-0 text-accent" />
+          <span className="min-w-0 flex-1 truncate text-[13.5px] text-muted-foreground">
+            Ask anything — <span className="text-foreground/80">{PROMPTS[promptIdx]}</span>
+          </span>
+          <kbd className="hidden flex-shrink-0 rounded border border-border/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground lg:inline">
+            ⌘K
+          </kbd>
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="Ask Sentry"
+          className={cn(
+            'fixed right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-[14px] font-semibold text-accent-foreground shadow-lg transition-transform active:scale-95',
+            embedded ? 'bottom-6' : 'bottom-20 lg:bottom-6',
+            className,
+          )}
+        >
+          <Sparkles className="h-4 w-4" />
+          Ask
+        </button>
+      )}
 
       <AnimatePresence>
         {open && (
@@ -127,7 +179,11 @@ export function AskBar() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-start justify-center bg-background/80 p-4 pt-[12vh] backdrop-blur-sm"
+            // Above every other overlay. Ask is a global command surface that
+            // can be summoned from anywhere — including with a sheet or the
+            // setup wizard already open — and two overlays at the same level
+            // render on top of each other illegibly.
+            className="fixed inset-0 z-[60] flex items-start justify-center bg-background/80 p-4 pt-[12vh] backdrop-blur-sm"
             onClick={() => setOpen(false)}
           >
             <motion.div
@@ -189,7 +245,29 @@ export function AskBar() {
                 {answer && (
                   <div>
                     <div className="text-[15px] font-semibold text-foreground">{answer.title}</div>
-                    <div className="mt-1.5 space-y-1">
+
+                    {/* The figures, as a report. Every one is a counted row —
+                        see backend/services/ask.py on why a model never
+                        produces these. */}
+                    {!!answer.stats?.length && (
+                      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-3">
+                        {answer.stats.map((st) => (
+                          <div key={st.label}>
+                            <div
+                              className={cn(
+                                'text-2xl font-semibold leading-none tracking-tight tabular-nums',
+                                st.tone === 'warn' ? 'text-warning' : 'text-foreground',
+                              )}
+                            >
+                              {st.value}
+                            </div>
+                            <div className="mt-1 text-[12px] text-muted-foreground">{st.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-3 space-y-1">
                       {answer.lines.map((l, i) => (
                         <div
                           key={i}

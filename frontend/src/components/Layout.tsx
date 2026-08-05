@@ -30,12 +30,14 @@ export default function Layout({ children }: LayoutProps) {
           embedded ? 'block' : 'hidden lg:block',
         )}
       >
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
-          <Link to="/" className="flex items-center gap-2.5">
+        <div className="mx-auto flex h-16 max-w-5xl items-center gap-4 px-6">
+          <Link to="/" className="flex flex-shrink-0 items-center gap-2.5">
             <SentryMark className="h-8 w-8" />
-            <span className="text-[15px] font-semibold tracking-tight text-foreground">Gmail Sentry</span>
+            <span className="hidden text-[15px] font-semibold tracking-tight text-foreground xl:inline">
+              Gmail Sentry
+            </span>
           </Link>
-          <nav className="flex items-center gap-1 rounded-full border border-border/60 bg-muted/50 p-1">
+          <nav className="flex flex-shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/50 p-1">
             {NAV_ITEMS.map((it) => {
               const active = pathname === it.href;
               const Icon = it.icon;
@@ -44,7 +46,7 @@ export default function Layout({ children }: LayoutProps) {
                   key={it.name}
                   to={it.href}
                   className={cn(
-                    'flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                    'flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
                     active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
@@ -54,15 +56,18 @@ export default function Layout({ children }: LayoutProps) {
               );
             })}
           </nav>
+          {/* Ask sits AT tab level, not below or beside the content: it's a way
+              into the app, the same as a tab is, and a thing at that level is a
+              thing people try. */}
+          <AskBar variant="inline" />
         </div>
       </header>
 
       <main className="min-h-screen">{children}</main>
 
-      {/* Ask, on every screen. Not a nav destination on purpose: the questions
-          people have occur WHILE they're looking at something, and it passes
-          the current route as context. */}
-      <AskBar />
+      {/* On mobile the header is hidden, so Ask keeps a floating trigger there —
+          the same component, just a different way in. */}
+      {!embedded && <AskBar variant="floating" className="lg:hidden" />}
 
       {/* Mobile bottom tab bar — suppressed when embedded (the header covers it). */}
       {!embedded && <TabBar />}

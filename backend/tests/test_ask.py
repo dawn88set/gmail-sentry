@@ -199,3 +199,69 @@ def test_answers_are_user_scoped():
     _cp(db, "dana@northwind.co", "Dana Levi")
 
     assert "Nothing about" in ask.ask(db, "u2", "where are we with northwind")["title"]
+
+
+# ── the report and the dossier ──────────────────────────────────────────────
+# The two questions a business owner asks that no screen answered: "how did last
+# week go?" (something to paste into a status update) and "prep me for my call
+# with X" (what's outstanding, before you speak to them).
+
+def test_a_brief_reports_what_happened_not_what_is_outstanding():
+    db = _session()
+    db.add(models.ActivityEvent(user_id="u1", kind="thread_filed", title="filed", count=6,
+                                at=utcnow() - timedelta(days=2)))
+    db.add(models.ActivityEvent(user_id="u1", kind="reply_sent", title="sent",
+                                at=utcnow() - timedelta(days=1)))
+    db.commit()
+
+    out = ask.ask(db, "u1", "how did last week go?")
+
+    labels = {s["label"]: s["value"] for s in out["stats"]}
+    # Sourced from the activity log, so this and the Activity feed can never
+    # disagree — and it counts what was DONE, not what happens to be open.
+    assert labels["filed"] == "6"
+    assert labels["replies sent"] == "1"
+    assert any("not estimated" in l["text"] for l in out["lines"])
+
+
+def test_a_brief_over_a_month_uses_a_month_window():
+    db = _session()
+    db.add(models.ActivityEvent(user_id="u1", kind="thread_filed", title="filed", count=3,
+                                at=utcnow() - timedelta(days=20)))
+    db.commit()
+
+    week = ask.ask(db, "u1", "how did last week go?")
+    month = ask.ask(db, "u1", "summarise last month")
+
+    assert {s["label"]: s["value"] for s in week["stats"]}["filed"] == "0"
+    assert {s["label"]: s["value"] for s in month["stats"]}["filed"] == "3"
+
+
+def test_prep_gathers_what_is_open_with_that_person():
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _loop(db, "dana@northwind.co", "Dana Levi", "Renewal quote for 2027")
+
+    out = ask.ask(db, "u1", "prep me for my call with Dana")
+
+    assert "Dana" in out["title"] or "Northwind" in out["title"]
+    assert {s["label"] for s in out["stats"]} >= {"open with them"}
+    assert any("Renewal quote" in l["text"] for l in out["lines"])
+
+
+def test_prep_on_someone_unknown_says_so():
+    db = _session()
+    out = ask.ask(db, "u1", "prep me for my call with Nobody")
+    assert "Nothing on" in out["title"]
+
+
+def test_every_answer_that_shows_figures_labels_them():
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _loop(db, "dana@northwind.co", "Dana Levi", "PO 4471")
+
+    for q in ("what needs me today?", "how did last week go?", "prep me for my call with Dana"):
+        for st in ask.ask(db, "u1", q).get("stats", []):
+            # A bare number with no label is a number nobody can act on.
+            assert st["label"].strip(), q
+            assert st["value"].strip(), q

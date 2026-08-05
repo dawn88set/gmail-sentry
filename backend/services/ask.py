@@ -53,11 +53,13 @@ NOW = "now"                 # "what needs me", "what's going on"
 WHO = "who"                 # "where are we with Northwind", "what about Dana"
 FIND = "find"               # "emails about the renewal", "anything from invoices"
 QUIET = "quiet"             # "who has gone quiet", "what's at risk"
+BRIEF = "brief"             # "how did last week go" → a report you could paste
+PREP = "prep"               # "prep me for my call with Dana" → a dossier
 RULE = "rule"               # "always flag anything from my lawyer"  → proposal
 FILE = "file"               # "file supplier mail into Ops"          → proposal
 UNKNOWN = "unknown"
 
-_INTENTS = (NOW, WHO, FIND, QUIET, RULE, FILE)
+_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, RULE, FILE)
 
 
 # ── interpreting the question ───────────────────────────────────────────────
@@ -70,6 +72,8 @@ _ROUTER_SYSTEM = (
     "  who   — about a specific person or company (subject = their name or email)\n"
     "  find  — searching for mail on a topic (subject = the search words)\n"
     "  quiet — who has gone quiet / what is at risk / who hasn't replied\n"
+    "  brief — how did last week/month go / summarise / a report of what happened\n"
+    "  prep  — prepare me for a call/meeting with someone (subject = who)\n"
     "  rule  — asking to ALWAYS flag/alert on something (subject = what to flag)\n"
     "  file  — asking to file/label/organise mail (subject = what, target = folder)\n"
     'Reply with ONLY JSON: {"intent": "...", "subject": "...", "target": "..."}. '
@@ -127,8 +131,13 @@ def _interpret_keywords(question: str) -> Dict[str, str]:
         }
     if re.search(r"\b(always|whenever|any time|every time)\b.*\b(flag|alert|urgent|tell me)\b", q):
         return {"intent": RULE, "subject": original, "target": ""}
-    if re.search(r"\b(gone quiet|went quiet|at risk|going cold|hasn'?t replied|no reply)\b", q):
+    if re.search(r"\b(gone quiet|went quiet|at risk|going cold|hasn'?t replied|no reply|slipping)\b", q):
         return {"intent": QUIET, "subject": "", "target": ""}
+    m = re.search(r"\b(?:prep|prepare|brief) me (?:for|on|about)?\s*(?:my |the )?(?:call|meeting|chat)?\s*(?:with\s+)?(.+)$", q)
+    if m:
+        return {"intent": PREP, "subject": original[m.start(1):m.end(1)].strip(" ?.,"), "target": ""}
+    if re.search(r"\b(how did .* go|last week|this week|last month|summar|report|recap|how'?s it going)\b", q):
+        return {"intent": BRIEF, "subject": original, "target": ""}
     m = re.search(r"\b(?:where are we with|what about|how about|status of|catch me up on)\s+(.+)$", q)
     if m:
         return {"intent": WHO, "subject": original[m.start(1):m.end(1)].strip(" ?.,"), "target": ""}
@@ -187,11 +196,15 @@ def _answer_now(db: Session, user_id: str) -> Dict[str, Any]:
     accs = accounts_service.build(db, user_id)
     at_risk = [a for a in accs if a.chasing > 0]
 
-    lines = [_block(
-        f"{work['total']} thing{'' if work['total'] == 1 else 's'} need you"
-        + (f" · {work['overdue']} overdue" if work["overdue"] else ""),
-        strong=True,
-    )]
+    stats = [_stat(work["total"], "need you")]
+    if work["overdue"]:
+        stats.append(_stat(work["overdue"], "overdue", tone="warn"))
+    if work.get("ready_to_send"):
+        stats.append(_stat(work["ready_to_send"], "ready to send"))
+    if at_risk:
+        stats.append(_stat(len(at_risk), "going quiet", tone="warn"))
+
+    lines = []
     for i in work["items"][:5]:
         who = i["who"] + (f" · {i['company']}" if i.get("company") and i["company"] != i["who"] else "")
         lines.append(_block(f"{i['headline']} — {who} · {i['due_label'] or i['age_label']}"))
@@ -202,7 +215,7 @@ def _answer_now(db: Session, user_id: str) -> Dict[str, Any]:
         ))
     if work["total"] == 0:
         lines.append(_block("Nobody is waiting on a reply, and no thread has gone quiet.", muted=True))
-    return {"title": "Right now", "lines": lines, "link": "/"}
+    return {"title": "Right now", "stats": stats, "lines": lines, "link": "/"}
 
 
 def _find_counterparties(db: Session, user_id: str, subject: str) -> List[models.Counterparty]:
@@ -322,10 +335,110 @@ def _answer_quiet(db: Session, user_id: str) -> Dict[str, Any]:
     if not threads:
         return {"title": "Nothing has gone quiet", "lines": [
             _block("Every open thread has moved recently.", muted=True)]}
-    lines = [_block(f"{len(threads)} going quiet", strong=True)]
+    lines = []
     for t in threads:
         lines.append(_block(f"{t['who']} — {t['subject'] or '(no subject)'} · silent {t['silent_days']}d"))
-    return {"title": "At risk", "lines": lines, "link": "/accounts"}
+    return {"title": "At risk", "stats": [_stat(len(threads), "going quiet", tone="warn")],
+            "lines": lines, "link": "/accounts"}
+
+
+def _stat(value: Any, label: str, *, tone: str = "") -> Dict[str, Any]:
+    """A headline figure. `tone` is 'warn' only when the number is bad news —
+    colouring everything makes nothing stand out."""
+    return {"value": str(value), "label": label, "tone": tone}
+
+
+def _answer_brief(db: Session, user_id: str, question: str) -> Dict[str, Any]:
+    """What actually happened, as a report someone could paste into a update.
+
+    Sourced from the activity log rather than recomputed from current state, so
+    this and the Activity feed can never disagree — and so it counts what was
+    DONE rather than what happens to be outstanding now.
+    """
+    q = (question or "").lower()
+    days = 30 if "month" in q else 7
+    period = "the last 30 days" if days == 30 else "the last 7 days"
+
+    from backend.services import activity as activity_service
+
+    done = activity_service.summary(db, user_id, days=days)
+    work = worklist_service.build(db, user_id, limit=1)
+    accs = accounts_service.build(db, user_id)
+    at_risk = [a for a in accs if a.chasing > 0]
+
+    stats = [
+        _stat(done.get("filed", 0), "filed"),
+        _stat(done.get("flagged", 0), "flagged"),
+        _stat(done.get("sent", 0), "replies sent"),
+        _stat(work["total"], "still open"),
+    ]
+    if at_risk:
+        stats.append(_stat(len(at_risk), "going quiet", tone="warn"))
+
+    lines = []
+    if done.get("went_quiet"):
+        lines.append(_block(f"{done['went_quiet']} thread{'' if done['went_quiet'] == 1 else 's'} went quiet in {period}."))
+    for a in at_risk[:3]:
+        lines.append(_block(f"{a.name} — {a.headline or 'no reply'} · silent {a.silent_days}d"))
+    if not any(done.values()) and work["total"] == 0:
+        lines.append(_block(f"Nothing recorded in {period} yet.", muted=True))
+    lines.append(_block(f"Counted from what actually happened in {period}, not estimated.", muted=True))
+
+    return {"title": f"How {period.replace('the ', '')} went", "stats": stats, "lines": lines, "link": "/activity"}
+
+
+def _answer_prep(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
+    """Everything about one counterparty, before you speak to them.
+
+    The question behind "prep me for my call with Dana" is: what's outstanding,
+    what did they last ask, and how have we been treating each other. All three
+    are already stored; nobody had a way to see them together.
+    """
+    people = _find_counterparties(db, user_id, subject)
+    if not people:
+        return {
+            "title": f"Nothing on “{subject}”",
+            "lines": [_block("No contact matches that in the mail I've read.", muted=True)],
+        }
+
+    keys = {accounts_service.account_key(c) for c in people}
+    acc = next((a for a in accounts_service.build(db, user_id) if a.key in keys), None)
+    emails = {(c.email or "").lower() for c in people}
+
+    loops = [
+        f for f in followups_service.list_followups(db, user_id, state="open", limit=100)
+        if (f.counterparty_email or "").lower() in emails
+    ]
+    best = max(people, key=lambda c: c.importance or 0)
+
+    stats = [_stat(len(loops), "open with them")]
+    if acc:
+        if acc.you_owe:
+            stats.append(_stat(acc.you_owe, "you owe", tone="warn"))
+        if acc.silent_days is not None:
+            stats.append(_stat(f"{acc.silent_days}d", "since contact"))
+    if best.your_reply_rate:
+        stats.append(_stat(f"{best.your_reply_rate}%", "you answer"))
+
+    lines = []
+    if acc:
+        lines.append(_block(
+            f"{accounts_service.REL_LABEL.get(acc.relationship, 'Unclassified')} · {acc.name}", strong=True))
+    for f in loops[:5]:
+        side = "waiting on you" if (f.ball or "") == "you" else "waiting on them"
+        lines.append(_block(f"{f.ask_summary or f.subject or '(no subject)'} — {side}"))
+    if not loops:
+        lines.append(_block("Nothing open with them right now.", muted=True))
+    if best.your_median_reply_h:
+        lines.append(_block(
+            f"You usually reply to them in about {best.your_median_reply_h}h"
+            + (f"; they take about {best.their_median_reply_h}h" if best.their_median_reply_h else ""),
+            muted=True,
+        ))
+
+    title = (best.display_name or best.email) if not acc else acc.name
+    return {"title": f"Before you talk to {title}", "stats": stats, "lines": lines,
+            "link": f"/accounts/{acc.key}" if acc else None}
 
 
 # ── proposals: what it WOULD change ─────────────────────────────────────────
@@ -452,6 +565,10 @@ def ask(db: Session, user_id: str, question: str, *, context: Optional[str] = No
         out = _answer_find(db, user_id, subject)
     elif intent == QUIET:
         out = _answer_quiet(db, user_id)
+    elif intent == BRIEF:
+        out = _answer_brief(db, user_id, subject)
+    elif intent == PREP:
+        out = _answer_prep(db, user_id, subject)
     elif intent == RULE:
         out = _propose_rule(db, user_id, subject)
     elif intent == FILE:
