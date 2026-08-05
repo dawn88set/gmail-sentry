@@ -225,6 +225,13 @@ class SentryConfig(Base):
     # needs_reply alert so the notification can carry it and the user can approve
     # in one tap. The app never auto-SENDS — approval is always explicit.
     auto_draft = Column(Boolean, nullable=False, default=True)
+    # How often the user wants their mail checked, in minutes. The PLATFORM owns
+    # the schedule and fires `sentry-scan` on its own interval; this gates the
+    # scheduled path so the app can be quieter than that trigger without the
+    # user having to find Claritty's trigger settings. It can only slow scanning
+    # down, never speed it past the trigger — so the UI offers the trigger's own
+    # cadence as the fastest option and says so.
+    scan_interval_minutes = Column(Integer, nullable=False, default=5)
 
     # Smart thread filing. OFF by default and forward-only from the moment it's
     # switched on: `filing_started_at` marks that point, so turning it on can
@@ -254,6 +261,7 @@ class SentryConfig(Base):
             "teams_chat_id": self.teams_chat_id or "",
             "whatsapp_to": self.whatsapp_to or "",
             "auto_draft": bool(self.auto_draft),
+            "scan_interval_minutes": int(self.scan_interval_minutes or 5),
             "filing_enabled": bool(self.filing_enabled),
             "onboarded": bool(self.onboarded),
             "intent": self.intent or "",

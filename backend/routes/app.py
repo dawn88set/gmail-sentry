@@ -615,6 +615,7 @@ class ConfigUpdate(BaseModel):
     teams_chat_id: Optional[str] = None
     whatsapp_to: Optional[str] = None
     auto_draft: Optional[bool] = None
+    scan_interval_minutes: Optional[int] = None
     channel_tiers: Optional[dict] = None
 
 
@@ -658,6 +659,12 @@ async def update_settings(
         cfg.whatsapp_to = payload.whatsapp_to.strip()
     if payload.auto_draft is not None:
         cfg.auto_draft = bool(payload.auto_draft)
+    if payload.scan_interval_minutes is not None:
+        # Clamped rather than rejected: the choices come from a fixed picker, and
+        # a hand-rolled request asking for 0 should slow to the floor, not 500.
+        # 5 is the platform trigger's own cadence — nothing can be faster, since
+        # the app only runs when the trigger fires.
+        cfg.scan_interval_minutes = max(5, min(1440, int(payload.scan_interval_minutes)))
     if payload.channel_tiers is not None:
         # Keep only known channels + valid tiers; "" / other → drop (falls back to
         # the global notify_tier for that channel).
@@ -1613,6 +1620,14 @@ async def onboarding_backfill_route(
         # messages into people, loops and accounts.
         counterparty_service.recompute(db, user_id)
         followups.sync_followups(db, user_id)
+        # And triage straight away rather than waiting for the next scheduled
+        # tick. Finishing a progress bar and landing on "All clear · scanned
+        # never" is the same empty screen the first run exists to prevent —
+        # `respect_interval=False` because the user is watching this happen.
+        try:
+            run_scan(db, user_id)
+        except (IntegrationNotConnected, IntegrationError) as e:
+            logger.info("first-run scan skipped: %s", e)
         progress = _onboarding_progress(db, user_id)
     progress["swept"] = swept
     # The client keeps calling while either is outstanding.

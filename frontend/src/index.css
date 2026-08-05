@@ -217,6 +217,30 @@
     }
   }
 
+  /* The first read's progress bar. Indeterminate on purpose — the sweep walks
+     backwards through time and the total isn't known until it lands, so a
+     percentage would be a number we invented. A segment travelling left to
+     right says "working" without claiming to know how far along it is. */
+  .animate-sweep {
+    animation: firstRunSweep 1.6s ease-in-out infinite;
+  }
+  @keyframes firstRunSweep {
+    0% {
+      transform: translateX(-110%);
+    }
+    100% {
+      transform: translateX(410%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Still visibly busy, without motion across the screen. */
+    .animate-sweep {
+      animation: none;
+      width: 100%;
+      opacity: 0.5;
+    }
+  }
+
   /* Smooth scroll */
   .scroll-smooth {
     scroll-behavior: smooth;

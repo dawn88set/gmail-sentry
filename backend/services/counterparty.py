@@ -186,6 +186,35 @@ def is_bulk_sender(email: str) -> bool:
     return any(lp.startswith(f"{b}-") or lp.startswith(f"{b}+") for b in _BULK_LOCALPARTS)
 
 
+#: Addresses that no business relationship can exist with, because nobody reads
+#: replies to them. Deliberately NARROWER than `_BULK_LOCALPARTS`, which also
+#: contains hello@, info@, team@ and help@ — for a small business those are the
+#: real contact addresses of real customers, and excluding them from the book of
+#: business would hide the very people it exists to show. A newsletter appearing
+#: for a week until the classifier catches it is a far smaller error than a
+#: paying customer never appearing at all.
+_MACHINE_LOCALPARTS = {
+    "no-reply", "noreply", "do-not-reply", "donotreply", "mailer",
+    "mailer-daemon", "postmaster", "bounces", "bounce", "notifications",
+    "notification", "newsletter", "newsletters", "news", "digest", "updates",
+    "update", "marketing", "alerts", "alert", "community", "social",
+}
+
+
+def is_machine_sender(email: str) -> bool:
+    """A sender you cannot hold a conversation with.
+
+    Used to keep the Accounts screen a book of business: the first thing a real
+    inbox produced was a customer list made of LinkedIn and three marketing
+    platforms, because classification needs weeks of behaviour and everything is
+    `unknown` until then. This reads the address itself, so it works on day one.
+    """
+    lp = _local_part(email)
+    if lp in _MACHINE_LOCALPARTS:
+        return True
+    return any(lp.startswith(f"{b}-") or lp.startswith(f"{b}+") for b in _MACHINE_LOCALPARTS)
+
+
 def looks_like_a_person(display_name: str, email: str) -> bool:
     """A weak, cheap signal: humans tend to have a two-part display name."""
     name = (display_name or "").strip()

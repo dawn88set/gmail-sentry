@@ -290,9 +290,12 @@ def test_closed_loops_are_not_counted():
 
 def test_a_sending_subdomain_names_the_company_not_the_relay():
     db = _session()
-    _cp(db, "notifications@mail.linkedin.com", domain="mail.linkedin.com")
-    _cp(db, "hello@eml.brightpath.io", domain="eml.brightpath.io")
-    _cp(db, "no-reply@message.acme.com", domain="message.acme.com")
+    # Real people, sending from a subdomain — plenty of companies route staff
+    # mail through `mail.` or a regional host. The naming has to survive that
+    # independently of whether the sender is a machine.
+    _cp(db, "dana@mail.linkedin.com", domain="mail.linkedin.com")
+    _cp(db, "jo@eml.brightpath.io", domain="eml.brightpath.io")
+    _cp(db, "sam@message.acme.com", domain="message.acme.com")
 
     names = sorted(a.name for a in accounts.build(db, "u1"))
 
@@ -325,3 +328,31 @@ def test_a_multi_label_public_suffix_is_not_mistaken_for_the_company():
 
     # Naively taking the last two labels would call these "Co" and "Com".
     assert names == ["Acme", "Northwind"]
+
+
+def test_machine_senders_stay_out_of_the_book_of_business():
+    db = _session()
+    _cp(db, "dana@northwind.co", relationship="unknown")
+    _cp(db, "notifications@mail.linkedin.com", domain="mail.linkedin.com", relationship="unknown")
+    _cp(db, "no-reply@eml.mailer.io", domain="eml.mailer.io", relationship="unknown")
+    _cp(db, "newsletter@thedaily.news", domain="thedaily.news", relationship="unknown")
+
+    # Everything is `unknown` on a freshly-read mailbox, so the stored
+    # relationship cannot do this filtering on day one.
+    assert [a.name for a in accounts.build(db, "u1")] == ["Northwind"]
+
+
+def test_role_addresses_are_customers_not_noise():
+    db = _session()
+    # For a small business these ARE the customer. Filtering them out — which
+    # the broader bulk list would have done — hides the people the screen
+    # exists to show, and that is a far worse error than a newsletter lingering
+    # for a week until the classifier catches it.
+    _cp(db, "hello@fernvalley.shop", domain="fernvalley.shop")
+    _cp(db, "info@harborfreight.com", domain="harborfreight.com")
+    _cp(db, "billing@packrite.com", domain="packrite.com")
+    _cp(db, "support@brightpath.io", domain="brightpath.io")
+
+    names = sorted(a.name for a in accounts.build(db, "u1"))
+
+    assert names == ["Brightpath", "Fernvalley", "Harborfreight", "Packrite"]

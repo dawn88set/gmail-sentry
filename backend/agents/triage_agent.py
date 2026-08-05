@@ -43,7 +43,7 @@ and notified). Do not invent numbers.
 
         db = SessionLocal()
         try:
-            r = run_scan(db, uid)
+            r = run_scan(db, uid, respect_interval=True)
             return {
                 "summary": (
                     f"Scanned {r['scanned']} email(s): flagged {r['flagged']}, "

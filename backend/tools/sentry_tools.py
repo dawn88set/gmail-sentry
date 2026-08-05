@@ -23,7 +23,7 @@ def run_inbox_scan(input: Dict[str, Any], ctx: ToolCtx) -> Dict[str, Any]:
         return {"ok": False, "error": "no_user"}
     db = SessionLocal()
     try:
-        summary = run_scan(db, uid)
+        summary = run_scan(db, uid, respect_interval=True)
         summary["ok"] = True
         return summary
     except IntegrationNotConnected:

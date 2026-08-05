@@ -137,6 +137,10 @@ export interface SentryConfig {
   teams_chat_id: string;
   whatsapp_to: string;
   auto_draft: boolean;
+  /** How often the inbox is read, in minutes. 5 is the floor — the platform's
+   *  scan trigger fires on that cadence and the app only runs when it does, so
+   *  this can slow scanning down but never speed it up. */
+  scan_interval_minutes?: number;
 }
 
 export interface CleanupCounts {

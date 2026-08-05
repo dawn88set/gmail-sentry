@@ -120,8 +120,15 @@ def _member_rows(db: Session, user_id: str) -> List[models.Counterparty]:
 
     Colleagues and bulk senders are excluded: an account list led by newsletters
     and your own teammates buries the customers it exists to surface.
+
+    The stored `relationship` is not enough on its own. Classification needs
+    weeks of behaviour, so on a mailbox that has just been read EVERYTHING is
+    `unknown` — and the first thing a real inbox produced was a book of business
+    consisting of LinkedIn and three marketing platforms. `is_machine_sender` reads
+    the address itself (no-reply@, notifications@, bounces+…), so it works from
+    the first message and keeps that noise out until the classifier catches up.
     """
-    return (
+    rows = (
         db.query(models.Counterparty)
         .filter(
             models.Counterparty.user_id == user_id,
@@ -131,6 +138,7 @@ def _member_rows(db: Session, user_id: str) -> List[models.Counterparty]:
         )
         .all()
     )
+    return [c for c in rows if not cp_service.is_machine_sender(c.email or "")]
 
 
 def _risk(a: Account) -> tuple:

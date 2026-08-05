@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -174,12 +174,49 @@ def _refresh_cleanup_counts(db: Session, user_id: str, run: models.ScanRun) -> N
             logger.info(f"cleanup count {q} skipped: {e}")
 
 
-def run_scan(db: Session, user_id: str, *, max_messages: int = MAX_MESSAGES) -> Dict[str, Any]:
+def due_for_scan(db: Session, user_id: str, *, now: Optional[datetime] = None) -> bool:
+    """Has the user's chosen interval elapsed since the last scan?
+
+    The platform fires `sentry-scan` on ITS schedule; this is how the owner's own
+    "check my mail every N minutes" preference is honoured without them having to
+    find Claritty's trigger settings. Only ever slows scanning down.
+    """
+    cfg = get_config(db, user_id)
+    minutes = max(1, int(getattr(cfg, "scan_interval_minutes", 5) or 5))
+    last = (
+        db.query(models.ScanRun.started_at)
+        .filter(models.ScanRun.user_id == user_id)
+        .order_by(models.ScanRun.started_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    if last is None:
+        return True
+    return (now or datetime.utcnow()) - last >= timedelta(minutes=minutes)
+
+
+def run_scan(
+    db: Session,
+    user_id: str,
+    *,
+    max_messages: int = MAX_MESSAGES,
+    respect_interval: bool = False,
+) -> Dict[str, Any]:
     """Run one inbox scan for `user_id`. Returns a summary dict.
 
     Raises IntegrationNotConnected when Gmail isn't connected (caller maps to 409).
     A ScanRun row is always written (with `error` set on the not-connected path).
+
+    `respect_interval` is for the SCHEDULED path only. A user pressing Scan means
+    "now", and honouring a cadence there would make the button look broken.
     """
+    if respect_interval and not due_for_scan(db, user_id):
+        return {
+            "scanned": 0, "indexed": 0, "flagged": 0, "labeled": 0, "notified": 0,
+            "slack_configured": False, "promo_count": 0, "social_count": 0,
+            "spam_count": 0, "skipped": "interval",
+        }
+
     cfg = get_config(db, user_id)
     rules = [
         r.to_dict()

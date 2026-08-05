@@ -323,41 +323,60 @@ export default function Dashboard() {
         {showFirstRun && (
           <ListGroup variant="plain-mobile">
             <div className="p-5">
-              <div className="text-[15px] font-semibold text-foreground">
-                {reading ? 'Reading your mail…' : 'Ready to read your mail'}
+              <div className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
+                {reading && <LiveDot />}
+                {reading ? 'Reading your mail' : 'Ready to read your mail'}
               </div>
-              <div className="mt-1 text-[13px] text-muted-foreground">
-                {reading ? (
-                  <>
-                    {firstRun.messages_indexed.toLocaleString()} messages ·{' '}
-                    {firstRun.threads.toLocaleString()} conversations
-                    {firstRun.backfill_done && firstRun.anonymous_loops > 0 && (
-                      <> · naming {firstRun.anonymous_loops} more</>
-                    )}
-                  </>
-                ) : (
-                  <>
+
+              {reading ? (
+                <>
+                  {/* The counters ARE the progress. A percentage would be
+                      invented — the sweep walks backwards through time and the
+                      total isn't known until it lands — but a number climbing
+                      in front of you is honest and reads as alive. */}
+                  <div className="mt-3 flex items-end gap-6">
+                    <div>
+                      <AnimatedNumber
+                        value={firstRun.messages_indexed}
+                        className="text-3xl font-semibold leading-none tracking-tight text-foreground tabular-nums"
+                      />
+                      <div className="mt-1 text-[12px] text-muted-foreground">messages read</div>
+                    </div>
+                    <div>
+                      <AnimatedNumber
+                        value={firstRun.threads}
+                        className="text-3xl font-semibold leading-none tracking-tight text-foreground tabular-nums"
+                      />
+                      <div className="mt-1 text-[12px] text-muted-foreground">conversations</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full w-1/3 animate-sweep rounded-full bg-accent" />
+                  </div>
+
+                  <div className="mt-2 text-[12.5px] text-muted-foreground">
+                    {firstRun.backfill_done && firstRun.anonymous_loops > 0
+                      ? `Naming ${firstRun.anonymous_loops} more conversation${firstRun.anonymous_loops === 1 ? '' : 's'}…`
+                      : `Going back ${firstRun.horizon_days} days · you can keep using the app`}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-1 text-[13px] text-muted-foreground">
                     Your last {firstRun.horizon_days} days, so it can tell a client from a
                     newsletter and spot what has gone quiet.
-                  </>
-                )}
-              </div>
-              {reading ? (
-                // Indeterminate on purpose: the sweep walks backwards through
-                // time and the total isn't known until it lands, so a
-                // percentage would be a number we made up.
-                <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full w-1/3 animate-pulse rounded-full bg-accent" />
-                </div>
-              ) : (
-                <IosButton
-                  variant="tinted"
-                  className="mt-3"
-                  onClick={() => void startFirstRun()}
-                >
-                  Read my last {firstRun.horizon_days} days
-                </IosButton>
+                  </div>
+                  <IosButton
+                    variant="tinted"
+                    className="mt-3"
+                    onClick={() => void startFirstRun()}
+                  >
+                    Read my last {firstRun.horizon_days} days
+                  </IosButton>
+                </>
               )}
+
               {firstRun.last_error && !reading && (
                 <div className="mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
                   Last read stopped: {firstRun.last_error}

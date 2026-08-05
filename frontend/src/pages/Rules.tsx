@@ -169,6 +169,7 @@ export default function Rules() {
     teams_chat_id: '',
     whatsapp_to: '',
     auto_draft: true,
+    scan_interval_minutes: 5,
   });
   const [testResults, setTestResults] = useState<NotifyResult[] | null>(null);
   const [testing, setTesting] = useState(false);
@@ -762,6 +763,32 @@ export default function Rules() {
                   onChange={(v) => void saveConfig({ auto_draft: v })}
                   aria-label="Draft replies automatically"
                 />
+              }
+            />
+            {/* Every 5 minutes is the floor because the platform's own trigger
+                fires on that cadence and the app only runs when it does — so
+                the copy says "at most", rather than implying a control over
+                something this app doesn't own. */}
+            <ListRow
+              title="Check my mail"
+              subtitle="How often your inbox is read. Less often is quieter and uses fewer of your Gmail requests; you can always tap Scan for an immediate check."
+              trailing={
+                <select
+                  className="rounded-lg bg-transparent py-1 text-[15px] text-muted-foreground outline-none"
+                  value={String(config.scan_interval_minutes ?? 5)}
+                  onChange={(e) =>
+                    void saveConfig({ scan_interval_minutes: Number(e.target.value) })
+                  }
+                  aria-label="How often to check my mail"
+                >
+                  <option value="5">Every 5 min (fastest)</option>
+                  <option value="15">Every 15 min</option>
+                  <option value="30">Every 30 min</option>
+                  <option value="60">Hourly</option>
+                  <option value="180">Every 3 hours</option>
+                  <option value="720">Twice a day</option>
+                  <option value="1440">Once a day</option>
+                </select>
               }
             />
           </ListGroup>
