@@ -10,6 +10,7 @@ import {
   toApiError,
   type AskAnswer,
 } from '@/lib/api';
+import { useEmbedded } from '@/lib/embedded';
 import { cn } from '@/lib/utils';
 
 /**
@@ -43,6 +44,9 @@ export function AskBar() {
   const { show } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
+  // The tab bar is suppressed when embedded, so reserving space above it would
+  // leave the button floating in a gap inside the platform panel.
+  const embedded = useEmbedded();
 
   // ⌘K / Ctrl-K from anywhere, Escape to close. Registered once at the app root.
   useEffect(() => {
@@ -108,7 +112,10 @@ export function AskBar() {
       <button
         onClick={() => setOpen(true)}
         aria-label="Ask Sentry"
-        className="fixed bottom-20 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-[14px] font-semibold text-accent-foreground shadow-lg transition-transform active:scale-95 lg:bottom-6"
+        className={cn(
+          'fixed right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-[14px] font-semibold text-accent-foreground shadow-lg transition-transform active:scale-95',
+          embedded ? 'bottom-6' : 'bottom-20 lg:bottom-6',
+        )}
       >
         <Sparkles className="h-4 w-4" />
         Ask
