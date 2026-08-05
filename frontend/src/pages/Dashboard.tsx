@@ -20,6 +20,7 @@ import {
   getRecentScans,
   getOnboardingStatus,
   getOnboardingProgress,
+  getAccounts,
   getWorklist,
   runBackfill,
   runScan,
@@ -136,7 +137,17 @@ export default function Dashboard() {
       }
       await refresh();
       if (p.complete) {
-        show({ tone: 'success', text: `Read ${p.messages_indexed.toLocaleString()} messages across ${p.threads.toLocaleString()} conversations.` });
+        // Report the OUTCOME, not the mechanics. "Read 1,240 messages" is our
+        // work; "12 accounts, 3 need you" is theirs — and it's the thing that
+        // tells them the wait bought something.
+        const acc = await getAccounts().catch(() => null);
+        show({
+          tone: 'success',
+          text: acc
+            ? `${acc.total} account${acc.total === 1 ? '' : 's'} · ${acc.needs_you} need you` +
+              (acc.at_risk ? ` · ${acc.at_risk} going quiet` : '')
+            : `Read ${p.threads.toLocaleString()} conversations.`,
+        });
       }
     } catch (err) {
       const e = toApiError(err);
@@ -144,7 +155,7 @@ export default function Dashboard() {
         tone: 'error',
         text:
           e.status === 409
-            ? 'Connect Gmail to read your mail.'
+            ? 'Connect Gmail first — that’s where your accounts come from.'
             : `Couldn’t read your mail: ${e.message}`,
       });
     } finally {
@@ -325,7 +336,10 @@ export default function Dashboard() {
             <div className="p-5">
               <div className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
                 {reading && <LiveDot />}
-                {reading ? 'Reading your mail' : 'Ready to read your mail'}
+                {/* Says what the OWNER gets, not what the app does. "Read your
+                    mail" describes our mechanics; "see where your accounts
+                    stand" is the reason anyone would press it. */}
+                {reading ? 'Working out your accounts' : 'See where your accounts stand'}
               </div>
 
               {reading ? (
@@ -357,22 +371,22 @@ export default function Dashboard() {
 
                   <div className="mt-2 text-[12.5px] text-muted-foreground">
                     {firstRun.backfill_done && firstRun.anonymous_loops > 0
-                      ? `Naming ${firstRun.anonymous_loops} more conversation${firstRun.anonymous_loops === 1 ? '' : 's'}…`
+                      ? `Working out who ${firstRun.anonymous_loops} more conversation${firstRun.anonymous_loops === 1 ? ' is' : 's are'} with…`
                       : `Going back ${firstRun.horizon_days} days · you can keep using the app`}
                   </div>
                 </>
               ) : (
                 <>
                   <div className="mt-1 text-[13px] text-muted-foreground">
-                    Your last {firstRun.horizon_days} days, so it can tell a client from a
-                    newsletter and spot what has gone quiet.
+                    I’ll go through the last {firstRun.horizon_days} days and work out who your
+                    clients are, what you owe them, and which conversations have gone quiet.
                   </div>
                   <IosButton
                     variant="tinted"
                     className="mt-3"
                     onClick={() => void startFirstRun()}
                   >
-                    Read my last {firstRun.horizon_days} days
+                    Build my account picture
                   </IosButton>
                 </>
               )}

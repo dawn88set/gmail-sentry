@@ -292,6 +292,33 @@
     }
   }
 
+  /* The typing caret. A thin bar that blinks at a readable rate — faster and
+     it reads as an error state, slower and it looks frozen. */
+  .ai-caret {
+    display: inline-block;
+    width: 1px;
+    height: 1em;
+    margin-left: 1px;
+    vertical-align: text-bottom;
+    background-color: hsl(var(--muted-foreground));
+    animation: aiCaret 1.1s step-end infinite;
+  }
+  @keyframes aiCaret {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Nothing is being typed, so a caret would be claiming otherwise. */
+    .ai-caret {
+      display: none;
+    }
+  }
+
   /* Smooth scroll */
   .scroll-smooth {
     scroll-behavior: smooth;

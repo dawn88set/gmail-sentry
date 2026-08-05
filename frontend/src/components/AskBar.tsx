@@ -71,14 +71,53 @@ export function AskBar({
   // leave the button floating in a gap inside the platform panel.
   const embedded = useEmbedded();
   const [promptIdx, setPromptIdx] = useState(0);
+  const [typed, setTyped] = useState(PROMPTS[0]);
 
-  // Rotate the placeholder while the bar is closed. Stops once it's open so the
-  // text can't change under someone mid-thought.
+  /**
+   * Type each prompt out a character at a time, hold it, then move to the next.
+   *
+   * The typing IS the invitation — a line of static grey text reads as a label,
+   * while one being written in front of you reads as something you could talk
+   * to. Which is the whole point of putting a question box at the top of the
+   * app rather than a search field.
+   *
+   * Stops the moment the bar is opened, so nothing moves under someone who is
+   * mid-thought, and honours prefers-reduced-motion by simply showing each
+   * prompt whole.
+   */
   useEffect(() => {
     if (open) return;
-    const iv = window.setInterval(() => setPromptIdx((i) => (i + 1) % PROMPTS.length), 3600);
-    return () => window.clearInterval(iv);
-  }, [open]);
+
+    const full = PROMPTS[promptIdx];
+    const next = () => setPromptIdx((i) => (i + 1) % PROMPTS.length);
+
+    const reduced =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) {
+      setTyped(full);
+      const hold = window.setTimeout(next, 4000);
+      return () => window.clearTimeout(hold);
+    }
+
+    setTyped('');
+    let i = 0;
+    let hold = 0;
+    const typing = window.setInterval(() => {
+      i += 1;
+      setTyped(full.slice(0, i));
+      if (i >= full.length) {
+        window.clearInterval(typing);
+        // Long enough to actually read the finished sentence before it goes.
+        hold = window.setTimeout(next, 2600);
+      }
+    }, 42);
+
+    return () => {
+      window.clearInterval(typing);
+      window.clearTimeout(hold);
+    };
+  }, [open, promptIdx]);
 
   // ⌘K / Ctrl-K from anywhere, Escape to close. Registered once at the app root.
   useEffect(() => {
@@ -158,11 +197,15 @@ export function AskBar({
           <Sparkles className="h-4 w-4 flex-shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate text-[13.5px] text-muted-foreground">
             Ask anything —{' '}
-            {/* Re-keyed on the prompt so each new one restarts the sweep from
-                the left rather than inheriting the previous one's phase. */}
+            {/* Typed a character at a time, with the sweep running over what
+                has landed so far. Re-keyed per prompt so each sentence starts
+                the sweep from the left instead of inheriting the last phase. */}
             <span key={promptIdx} className="ai-shimmer">
-              {PROMPTS[promptIdx]}
+              {typed}
             </span>
+            {/* The caret sits OUTSIDE the shimmer: a gradient-clipped block
+                would flicker with the sweep instead of blinking steadily. */}
+            <span className="ai-caret" aria-hidden="true" />
           </span>
           <kbd className="hidden flex-shrink-0 rounded border border-border/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground lg:inline">
             ⌘K
