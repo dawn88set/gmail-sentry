@@ -59,6 +59,34 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * Reject a 200 that isn't actually JSON.
+ *
+ * This app is served from the same origin as its API, so an infrastructure
+ * response — a proxy page while the container restarts mid-deploy, a login
+ * redirect — arrives as HTML with a 200 and a perfectly innocent shape. Without
+ * this, `response.data` is a STRING, every `data.someField` in this file is
+ * `undefined`, and that undefined travels into component state and blows up
+ * somewhere far away, at render, with a message that names neither the endpoint
+ * nor the cause. That is exactly how one missing field blanked the deployed app.
+ *
+ * Failing here instead turns it into an ordinary API error: the caller's catch
+ * runs, toApiError() gives it a message, and the user sees a toast that says
+ * something is wrong rather than a screen that says nothing.
+ */
+api.interceptors.response.use((response) => {
+  const ct = String(response.headers?.['content-type'] || '');
+  if (typeof response.data === 'string' && !ct.includes('application/json')) {
+    return Promise.reject(
+      Object.assign(new Error('The server returned a page instead of data — it may be restarting.'), {
+        response: { status: response.status, data: { detail: 'Unexpected response from the server.' } },
+        isAxiosError: true,
+      }),
+    );
+  }
+  return response;
+});
+
 // ── Error helpers ───────────────────────────────────────────────────────────
 export interface ApiError {
   status?: number;
