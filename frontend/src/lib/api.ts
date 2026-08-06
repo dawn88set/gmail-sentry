@@ -267,7 +267,12 @@ export const getAlerts = async (
 ): Promise<Alert[]> => {
   const q = new URLSearchParams({ status });
   if (tier) q.set('tier', tier);
-  return (await api.get(`/api/alerts?${q.toString()}`)).data.alerts;
+  // `?? []` is not defensive padding — without it a response missing this field
+  // returns undefined, Today calls .filter on it during render, and the WHOLE
+  // app is a blank screen with an exception no user can see. Observed in
+  // production. A list endpoint that can't produce a list should degrade to
+  // empty, never to undefined.
+  return (await api.get(`/api/alerts?${q.toString()}`)).data?.alerts ?? [];
 };
 
 export const dismissAlert = async (id: string): Promise<void> => {
@@ -320,7 +325,7 @@ export const getCategoryMessages = async (
 
 // Triage rules
 export const getRules = async (): Promise<TriageRule[]> =>
-  (await api.get('/api/rules')).data.rules;
+  (await api.get('/api/rules')).data?.rules ?? [];
 
 export const createRule = async (input: {
   name: string;
@@ -338,7 +343,7 @@ export const deleteRule = async (id: string): Promise<void> => {
 
 // Label (filing) rules
 export const getLabelRules = async (): Promise<LabelRule[]> =>
-  (await api.get('/api/label-rules')).data.label_rules;
+  (await api.get('/api/label-rules')).data?.label_rules ?? [];
 
 export const createLabelRule = async (input: {
   name: string;

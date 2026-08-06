@@ -16,6 +16,7 @@ import CategoryList from './pages/CategoryList';
 import WidgetPage from './pages/WidgetPage';
 import Layout from './components/Layout';
 import { ToastProvider } from './components/Toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useClarittyTheme } from './hooks/useClarittyTheme';
 
 function App() {
@@ -26,9 +27,16 @@ function App() {
   // ToastProvider wraps EVERYTHING (incl. the /widget route) so any component —
   // page or widget — can `useToast()` to surface errors. Never swallow a failed
   // action; catch it, run toApiError(), and show() it. See CLAUDE.md.
+  //
+  // ErrorBoundary sits OUTSIDE the router, because React unmounts the entire
+  // tree on an uncaught render error — one undefined value in one component
+  // blanked the deployed app completely, which is the worst thing a user can be
+  // shown: indistinguishable from the app being broken, the network being down,
+  // or something they did, and offering no way forward.
   return (
     <MotionConfig reducedMotion="user">
     <ToastProvider>
+      <ErrorBoundary>
       <Router>
         <Routes>
           {/* Widget route — standalone, no layout (Apple-style widget display). */}
@@ -56,6 +64,7 @@ function App() {
           <Route path="/rules" element={<Layout><Rules /></Layout>} />
         </Routes>
       </Router>
+      </ErrorBoundary>
     </ToastProvider>
     </MotionConfig>
   );
