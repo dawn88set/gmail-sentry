@@ -226,3 +226,87 @@ def test_one_users_report_does_not_suppress_anothers(monkeypatch):
     assert digest.run_digest(db, "u1")["sent"] is True
     assert digest.run_digest(db, "u2")["sent"] is True
     assert len(sent) == 2
+
+
+# ── promises reach the one message that arrives unprompted ──────────────────
+
+
+def _promise(db, user, thread, what, quote, *, days_late=0, to="Dana Levi"):
+    from backend.services.ledger import utcnow as _now
+    db.add(models.ThreadRead(
+        user_id=user, thread_id=thread,
+        your_commitment=what, commitment_quote=quote,
+        commitment_due=_now() - timedelta(days=days_late) if days_late else None,
+        read_at=_now(),
+    ))
+    db.add(models.FollowUp(
+        user_id=user, thread_id=thread, state=followups_state(), ball="you",
+        counterparty_email="dana@northwind.co", counterparty_name=to,
+        subject="Q3", risk=10,
+        created_at=_now() - timedelta(days=3), state_changed_at=_now() - timedelta(days=3),
+        last_inbound_at=_now() - timedelta(days=3), last_activity_at=_now() - timedelta(days=3),
+    ))
+    db.commit()
+
+
+def followups_state():
+    from backend.services import followups as f
+    return f.AWAITING_YOU
+
+
+def test_a_promise_reaches_the_report_with_your_own_words():
+    """A broken promise costs more than a late reply, and nothing else in the
+    day reminds anyone of it. The report is what reaches someone away from their
+    desk — which is exactly when a promise slips past its date."""
+    db = _session()
+    _promise(db, "u1", "t1", "send the revised pricing", "I'll get you revised pricing by Friday")
+
+    text = digest.build_digest_text(db, "u1")
+
+    assert "You promised" in text
+    assert "send the revised pricing" in text
+    assert "I'll get you revised pricing by Friday" in text   # checkable
+
+
+def test_an_overdue_promise_is_marked_and_counted():
+    db = _session()
+    _promise(db, "u1", "t1", "send the revised pricing",
+             "revised pricing by Friday", days_late=3)
+
+    text = digest.build_digest_text(db, "u1")
+
+    assert "past its date" in text
+    assert "3d late" in text
+
+
+def test_a_promise_alone_is_enough_to_send_a_report():
+    """Before this, a day with nothing incoming but an overdue promise sent
+    nothing at all — the quietest days are when a promise is most likely to be
+    the only thing that matters."""
+    db = _session()
+    _promise(db, "u1", "t1", "send the revised pricing", "revised pricing by Friday")
+
+    assert digest.build_digest_text(db, "u1") != ""
+
+
+def test_a_genuinely_empty_day_still_sends_nothing():
+    db = _session()
+    assert digest.build_digest_text(db, "u1") == ""
+
+
+def test_the_report_says_what_mail_is_ASKING_not_its_subject_line():
+    """Same helper as the widget and the worklist. The report is where a bare
+    "Re: Q3" is least useful — there is no screen beside it to explain."""
+    db = _session()
+    a = an_alert(db, "u1", tier="needs_reply", subject="Re: Q3",
+                 sender="Dana Levi <dana@northwind.co>")
+    db.add(models.ThreadRead(
+        user_id="u1", thread_id=a.thread_id,
+        their_ask="a 12% discount on 40 seats", their_ask_quote="12% discount",
+    ))
+    db.commit()
+
+    text = digest.build_digest_text(db, "u1")
+
+    assert "a 12% discount on 40 seats" in text
+    assert "Re: Q3" not in text

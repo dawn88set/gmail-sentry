@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.services.sentry import get_config
-from backend.services import activity, followups
+from backend.services import activity, comprehension, followups, worklist
 from backend.integrations import notify
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,15 @@ def build_digest_text(db: Session, user_id: str) -> str:
         .count()
     )
 
-    if not (urgent or to_reply or owed or cold):
+    # What the user said they would do and hasn't. This goes FIRST, above
+    # incoming mail, for the reason it goes first on Today: a broken promise
+    # costs more than a late reply, and unlike a late reply nothing else in
+    # anyone's day will remind them of it. It also has to be here rather than
+    # only in the app — the report is what reaches someone who is not at their
+    # desk, which is exactly when a promise quietly goes past its date.
+    promised = comprehension.commitments(db, user_id, limit=5)
+
+    if not (urgent or to_reply or owed or cold or promised):
         return ""
 
     headline = f"{len(urgent)} urgent · {len(to_reply)} to reply"
@@ -116,11 +124,28 @@ def build_digest_text(db: Session, user_id: str) -> str:
 
     lines: List[str] = ["🗞 Your inbox report", headline]
 
+    if promised:
+        late = [c for c in promised if c["overdue_days"] > 0]
+        lines.append("")
+        lines.append("🤝 You promised" + (f" — {len(late)} past its date" if late else ""))
+        for c in promised[:4]:
+            when = f" · {c['overdue_days']}d late" if c["overdue_days"] else ""
+            lines.append(f"• {c['what']} — {c['to'] or 'someone'}{when}")
+            # Their own sentence, so the report is checkable rather than
+            # something to be taken on trust.
+            if c["quote"]:
+                lines.append(f"   you wrote: “{c['quote'][:100]}”")
+
+    # One helper, so the report, the widget and the worklist cannot describe the
+    # same mail differently — the report is the surface where a bare "Re: Q3"
+    # is least useful, because there is no screen next to it to explain.
+    headlines = worklist.alert_headlines(db, user_id, list(urgent) + list(to_reply))
+
     if urgent:
         lines.append("")
         lines.append("🔴 Urgent")
         for a in urgent[:5]:
-            lines.append(f"• {a.subject or '(no subject)'} — {_short_sender(a.sender)}")
+            lines.append(f"• {headlines.get(a.id) or a.subject or '(no subject)'} — {_short_sender(a.sender)}")
             if a.deep_link:
                 lines.append(f"   {a.deep_link}")
         if len(urgent) > 5:
@@ -131,7 +156,7 @@ def build_digest_text(db: Session, user_id: str) -> str:
         lines.append("🟡 To reply")
         for a in to_reply[:5]:
             ready = " · draft ready" if (a.reply_draft or "").strip() else ""
-            lines.append(f"• {a.subject or '(no subject)'} — {_short_sender(a.sender)}{ready}")
+            lines.append(f"• {headlines.get(a.id) or a.subject or '(no subject)'} — {_short_sender(a.sender)}{ready}")
             link = notify.app_focus_link(a.id) or a.deep_link or ""
             if link:
                 lines.append(f"   👉 Approve & send: {link}")
