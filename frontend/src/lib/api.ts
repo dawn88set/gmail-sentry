@@ -973,7 +973,9 @@ export interface AskLine {
 }
 
 export interface AskProposal {
-  kind: 'rule' | 'label_rule' | 'config';
+  /** `nudge` is the only one that leaves the building — it sends a drafted
+   *  message. The others change a setting inside the app. */
+  kind: 'rule' | 'label_rule' | 'config' | 'nudge';
   /** Button text — already phrased as the action ("File into Ops"). */
   label: string;
   payload: Record<string, unknown>;

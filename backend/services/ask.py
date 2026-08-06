@@ -60,9 +60,10 @@ FILE = "file"               # "file supplier mail into Ops"          → proposa
 PROMISED = "promised"       # "what did I promise" / "what am I late on"
 SCHEDULE = "schedule"       # "check my mail every hour"             → proposal
 NOTIFY = "notify"           # "only ping me about urgent"            → proposal
+CHASE = "chase"             # "chase Dana about the quote"           → a drafted nudge
 UNKNOWN = "unknown"
 
-_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, PROMISED, RULE, FILE, SCHEDULE, NOTIFY)
+_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, PROMISED, RULE, FILE, SCHEDULE, NOTIFY, CHASE)
 
 #: Cadences the app can actually honour. Five minutes is the floor because the
 #: platform's own trigger fires on that interval and the app only runs when it
@@ -112,6 +113,8 @@ _ROUTER_SYSTEM = (
     "  file  — asking to file/label/organise mail (subject = what, target = folder)\n"
     "  schedule — how OFTEN to check the mailbox (subject = the phrase, e.g. 'every hour')\n"
     "  notify — which mail should ping them (subject = 'urgent' or 'all')\n"
+    "  chase — asking to chase/nudge/follow up with someone (subject = who, "
+    "target = what it's about, if said)\n"
     'Reply with ONLY JSON: {"intent": "...", "subject": "...", "target": "..."}. '
     'Use "" for anything not present.'
 )
@@ -181,6 +184,18 @@ def _interpret_keywords(question: str) -> Dict[str, str]:
         return {"intent": PROMISED, "subject": "", "target": ""}
     if re.search(r"\b(gone quiet|went quiet|at risk|going cold|hasn'?t replied|no reply|slipping)\b", q):
         return {"intent": QUIET, "subject": "", "target": ""}
+    # Before `who`/`prep`: "follow up with Dana" names a person, so a status
+    # report is the wrong answer to a request to ACT.
+    m = re.search(
+        r"\b(?:chase|nudge|follow[- ]?up with|remind|ping|poke)\s+(.+?)"
+        r"(?:\s+\b(?:about|re|regarding|on)\b\s+(.+))?$", q
+    )
+    if m and not re.search(r"\bme\b", m.group(1) or ""):
+        return {
+            "intent": CHASE,
+            "subject": original[m.start(1):m.end(1)].strip(" ?.,"),
+            "target": original[m.start(2):m.end(2)].strip(" ?.,") if m.group(2) else "",
+        }
     m = re.search(r"\b(?:prep|prepare|brief) me (?:for|on|about)?\s*(?:my |the )?(?:call|meeting|chat)?\s*(?:with\s+)?(.+)$", q)
     if m:
         return {"intent": PREP, "subject": original[m.start(1):m.end(1)].strip(" ?.,"), "target": ""}
@@ -724,6 +739,82 @@ def _propose_notify(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
     }
 
 
+def _answer_chase(db: Session, user_id: str, subject: str, target: str) -> Dict[str, Any]:
+    """"Chase Dana about the quote" — the first thing Ask can DO, not just report.
+
+    Everything else here answers a question. This one changes the outside world,
+    so it stops at a draft: `generate_nudge` writes the text and never sends, and
+    the send is a separate approval. An assistant that mailed a client the moment
+    you typed a sentence is not one anybody sane leaves switched on.
+
+    The refusal path matters as much as the happy one. `why_not_eligible` returns
+    prose precisely because every reason has to be shown — "the ball is in your
+    court, reply instead" is a genuinely useful answer to "chase Dana", and far
+    better than a draft that would have made the user look like they weren't
+    reading their own mail.
+    """
+    from backend.services import nudges as nudge_service
+
+    people = _find_counterparties(db, user_id, subject)
+    if not people:
+        return {
+            "title": f"No one matching “{subject}”",
+            "lines": [_block("I can only chase people I've seen in your mail.", muted=True)],
+        }
+
+    emails = {(c.email or "").lower() for c in people}
+    loops = [
+        f for f in followups_service.list_followups(db, user_id, state="open", limit=100)
+        if (f.counterparty_email or "").lower() in emails
+    ]
+    if not loops:
+        who = people[0].display_name or people[0].email or subject
+        return {
+            "title": f"Nothing open with {who}",
+            "lines": [_block("There's no unanswered thread with them to chase.", muted=True)],
+        }
+
+    # When they said what it's about, chase THAT thread. Otherwise the one most
+    # worth chasing — which is what `risk` already ranks.
+    terms = _terms(target)
+    if terms:
+        scored = [
+            (sum(t in f"{f.subject or ''} {f.ask_summary or ''}".lower() for t in terms), f)
+            for f in loops
+        ]
+        scored.sort(key=lambda x: (-x[0], -(x[1].risk or 0)))
+        fu = scored[0][1] if scored[0][0] else max(loops, key=lambda f: f.risk or 0)
+    else:
+        fu = max(loops, key=lambda f: f.risk or 0)
+
+    nudge, refusal = nudge_service.generate_nudge(db, user_id, fu)
+    who = fu.counterparty_name or fu.counterparty_email or subject
+
+    if refusal:
+        return {
+            "title": f"Not chasing {who}",
+            "lines": [
+                _block(refusal, strong=True),
+                _block(fu.ask_summary or fu.subject or "", muted=True),
+            ],
+        }
+
+    db.commit()
+    return {
+        "title": f"Ready to chase {who}",
+        "lines": [
+            _block(fu.ask_summary or fu.subject or "(no subject)", strong=True),
+            _block(nudge.draft or "", muted=False),
+            _block("Nothing is sent until you approve it.", muted=True),
+        ],
+        "proposal": {
+            "kind": "nudge",
+            "label": f"Send this to {who}",
+            "payload": {"nudge_id": nudge.id},
+        },
+    }
+
+
 def _answer_unknown(question: str) -> Dict[str, Any]:
     return {
         "title": "I can answer things like",
@@ -783,6 +874,8 @@ def ask(db: Session, user_id: str, question: str, *, context: Optional[str] = No
         out = _propose_schedule(db, user_id, subject)
     elif intent == NOTIFY:
         out = _propose_notify(db, user_id, subject)
+    elif intent == CHASE:
+        out = _answer_chase(db, user_id, subject, target)
     else:
         out = _answer_unknown(q)
 

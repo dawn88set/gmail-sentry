@@ -385,3 +385,134 @@ def test_asking_what_you_promised_with_nothing_open_says_what_it_can_see():
     joined = " ".join(l["text"] for l in out["lines"])
     # Honest about its own reach rather than implying a clean slate.
     assert "only see the threads I've read" in joined
+
+
+# ── chase: the one thing Ask can DO ─────────────────────────────────────────
+#
+# Every other intent reports. This one puts a message in someone else's inbox,
+# so the whole design is that it stops one step short: a draft, then an explicit
+# approval. These hold that line, and hold the refusal path — "the ball is in
+# your court" is a better answer to "chase Dana" than a draft that makes the
+# user look like they aren't reading their own mail.
+
+
+def _quiet_loop(db, email, name, subject, **kw):
+    """A thread genuinely waiting on THEM — the only kind that can be chased."""
+    return _loop(
+        db, email, name, subject,
+        state=followups.GOING_COLD, ball="them",
+        last_outbound_at=utcnow() - timedelta(days=9),
+        last_inbound_at=utcnow() - timedelta(days=12),
+        state_changed_at=utcnow() - timedelta(days=9),
+        **kw,
+    )
+
+
+def test_chase_is_recognised_as_an_action_not_a_status_question():
+    """"follow up with Dana" names a person, so without an explicit route it
+    would land on `who` and answer with a report instead of doing the thing."""
+    for phrasing in (
+        "chase Dana about the quote",
+        "nudge Dana",
+        "follow up with Dana about the renewal",
+        "ping Dana about pricing",
+    ):
+        assert ask.interpret(phrasing)["intent"] == ask.CHASE, phrasing
+
+
+def test_chase_still_leaves_status_questions_alone():
+    assert ask.interpret("where are we with Dana")["intent"] == ask.WHO
+    assert ask.interpret("prep me for my call with Dana")["intent"] == ask.PREP
+
+
+def test_remind_me_is_not_chasing_someone_else():
+    """"remind me about X" is about the user, not a message to a third party."""
+    assert ask.interpret("remind me about the invoice")["intent"] != ask.CHASE
+
+
+def test_chasing_someone_with_nothing_open_says_so():
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    out = ask.ask(db, "u1", "chase Dana")
+    assert "Nothing open" in out["title"]
+    assert "proposal" not in out
+
+
+def test_chasing_a_stranger_admits_it():
+    db = _session()
+    out = ask.ask(db, "u1", "chase Priya")
+    assert "No one matching" in out["title"]
+    assert "proposal" not in out
+
+
+def test_chasing_a_thread_where_the_ball_is_YOURS_is_refused_with_the_reason():
+    """The defect this prevents: chasing someone who is waiting on YOU. The
+    refusal is prose because it has to be shown — it is the useful answer."""
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _loop(db, "dana@northwind.co", "Dana Levi", "the revised quote")   # ball = you
+
+    out = ask.ask(db, "u1", "chase Dana about the quote")
+
+    assert "Not chasing" in out["title"]
+    assert "proposal" not in out
+    assert db.query(models.Nudge).count() == 0
+    # The reason is SHOWN, whichever eligibility check caught it — a refused
+    # chase with no explanation reads as a broken button.
+    assert any(
+        "waiting on them" in str(l.get("text", "")) or "your court" in str(l.get("text", ""))
+        for l in out["lines"]
+    )
+
+
+def test_a_chaseable_thread_produces_a_draft_and_stops_there():
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _quiet_loop(db, "dana@northwind.co", "Dana Levi", "the revised quote")
+
+    out = ask.ask(db, "u1", "chase Dana about the quote")
+
+    assert out["proposal"]["kind"] == "nudge"
+    assert out["proposal"]["payload"]["nudge_id"]
+    # Drafted, NOT sent.
+    n = db.query(models.Nudge).one()
+    assert n.status != "sent" and n.sent_at is None
+
+
+def test_the_topic_picks_the_thread():
+    """With two open threads, "about the renewal" must chase the renewal one —
+    otherwise the app confidently chases the wrong conversation."""
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _quiet_loop(db, "dana@northwind.co", "Dana Levi", "the revised quote", risk=90)
+    _quiet_loop(db, "dana@northwind.co", "Dana Levi", "the annual renewal", risk=10)
+
+    out = ask.ask(db, "u1", "chase Dana about the renewal")
+
+    nudge = db.query(models.Nudge).filter_by(id=out["proposal"]["payload"]["nudge_id"]).one()
+    fu = db.query(models.FollowUp).filter_by(id=nudge.followup_id).one()
+    assert "renewal" in (fu.subject or "")
+
+
+def test_with_no_topic_it_chases_the_one_most_worth_chasing():
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _quiet_loop(db, "dana@northwind.co", "Dana Levi", "the revised quote", risk=90)
+    _quiet_loop(db, "dana@northwind.co", "Dana Levi", "a minor question", risk=10)
+
+    out = ask.ask(db, "u1", "chase Dana")
+
+    nudge = db.query(models.Nudge).filter_by(id=out["proposal"]["payload"]["nudge_id"]).one()
+    fu = db.query(models.FollowUp).filter_by(id=nudge.followup_id).one()
+    assert "quote" in (fu.subject or "")
+
+
+def test_one_users_contacts_cannot_be_chased_by_another():
+    db = _session()
+    _cp(db, "dana@northwind.co", "Dana Levi")
+    _quiet_loop(db, "dana@northwind.co", "Dana Levi", "the revised quote")
+
+    out = ask.ask(db, "u2", "chase Dana")
+
+    assert "No one matching" in out["title"]
+    assert db.query(models.Nudge).count() == 0

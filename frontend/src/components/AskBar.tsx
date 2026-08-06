@@ -8,6 +8,7 @@ import {
   createRule,
   createLabelRule,
   updateConfig,
+  sendNudge,
   toApiError,
   type AskAnswer,
 } from '@/lib/api';
@@ -167,14 +168,31 @@ export function AskBar({
     try {
       if (p.kind === 'rule') await createRule(p.payload as never);
       else if (p.kind === 'config') await updateConfig(p.payload as never);
+      // The only proposal that leaves the building. Everything else changes a
+      // setting; this one puts a message in someone's inbox, which is why the
+      // draft was written and then stopped rather than sent.
+      else if (p.kind === 'nudge')
+        await sendNudge((p.payload as { nudge_id: string }).nudge_id);
       else await createLabelRule(p.payload as never);
       setApplied(true);
       show({
         tone: 'success',
-        text: p.kind === 'config' ? 'Saved.' : 'Done — it applies from the next scan.',
+        text:
+          p.kind === 'config'
+            ? 'Saved.'
+            : p.kind === 'nudge'
+              ? 'Sent.'
+              : 'Done — it applies from the next scan.',
       });
     } catch (err) {
-      show({ tone: 'error', text: `Couldn’t create that: ${toApiError(err).message}` });
+      const e = toApiError(err);
+      show({
+        tone: 'error',
+        text:
+          e.status === 409
+            ? 'Connect Gmail to send that.'
+            : `Couldn’t ${p.kind === 'nudge' ? 'send that' : 'create that'}: ${e.message}`,
+      });
     } finally {
       setBusy(false);
     }
