@@ -47,10 +47,23 @@ const token = () =>
   JSON.parse(readFileSync(path.join(homedir(), '.claritty/credentials.json'), 'utf8'))[API]
     .session.accessToken;
 
+/**
+ * The stored access token EXPIRES, and the CLI refreshes it transparently while
+ * this script reads the stale copy off disk — so a loop running for hours dies
+ * on a 401 with a perfectly valid login. `claritty whoami` performs that refresh
+ * and writes the new token back, after which re-reading the file is enough.
+ */
+const refreshToken = () => {
+  try {
+    const r = spawnSync('claritty', ['whoami'], { encoding: 'utf8' });
+    return r.status === 0;
+  } catch { return false; }
+};
+
 // Distinguishes "the call failed" from "the call said no". Without that, an
 // expired session reads exactly like a build that hasn't finished — the loop
 // would sit there for ten hours reporting "no verdict" and never say why.
-const api = (method, url, body) => {
+const api = (method, url, body, { retry = true } = {}) => {
   const args = ['-s', '-w', '\n%{http_code}', '-X', method, '-H', `Authorization: Bearer ${token()}`];
   if (body) args.push('-H', 'Content-Type: application/json', '-d', JSON.stringify(body));
   args.push(`${API}${url}`);
@@ -59,7 +72,11 @@ const api = (method, url, body) => {
   catch (e) { return { ok: false, why: `curl: ${e.message}` }; }
   const nl = raw.lastIndexOf('\n');
   const code = Number(raw.slice(nl + 1));
-  if (code === 401 || code === 403) return { ok: false, why: `HTTP ${code} — run \`claritty login\`` };
+  if (code === 401 || code === 403) {
+    // One refresh, once. If it still fails the session is genuinely gone.
+    if (retry && refreshToken()) return api(method, url, body, { retry: false });
+    return { ok: false, why: `HTTP ${code} — run \`claritty login\`` };
+  }
   if (code >= 400) return { ok: false, why: `HTTP ${code}` };
   try { return { ok: true, body: JSON.parse(raw.slice(0, nl)) }; }
   catch { return { ok: false, why: 'non-JSON response' }; }
