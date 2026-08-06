@@ -160,3 +160,83 @@ def test_an_unread_thread_keeps_its_subject_rather_than_inventing_one():
 
     alerts = db.query(models.Alert).all()
     assert worklist.alert_headlines(db, "u1", alerts)[alerts[0].id] == "Re: Q3"
+
+
+# ── claiming the row up front has consequences ──────────────────────────────
+#
+# run_scan now writes its ScanRun before doing the work, so the interval itself
+# serialises concurrent polls. That is worth having, but it changes what a
+# half-finished scan leaves behind, and both consequences are dishonesty of the
+# kind this app is otherwise careful about.
+
+
+def test_a_crashed_scan_does_not_masquerade_as_a_clean_one():
+    """Worst case of claiming early: the row exists, the work never happened.
+
+    "Last scan: just now" with no error is the app telling someone it read their
+    mail when it did not — and `last_scan_error` exists precisely so the UI can
+    explain why the time isn't advancing.
+    """
+    from backend.services import ledger
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+
+    real = ledger.sync_ledger
+    ledger.sync_ledger = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("gmail died mid-scan"))
+    try:
+        with pytest.raises(RuntimeError):
+            sentry.run_scan(db, "u1")
+    finally:
+        ledger.sync_ledger = real
+
+    row = db.query(models.ScanRun).one()
+    assert row.error and "gmail died mid-scan" in row.error
+
+
+def test_a_failure_is_recorded_but_never_swallowed():
+    """The caller still has to see it — routes map it to a 5xx."""
+    from backend.services import ledger
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+
+    real = ledger.sync_ledger
+    ledger.sync_ledger = lambda *a, **k: (_ for _ in ()).throw(ValueError("boom"))
+    try:
+        with pytest.raises(ValueError):
+            sentry.run_scan(db, "u1")
+    finally:
+        ledger.sync_ledger = real
+
+
+def test_a_disconnected_scan_keeps_the_last_good_cleanup_counts():
+    """The subtler consequence. The not-connected path carries forward "the
+    previous run's" counts — and once we claim our own row first, the newest run
+    IS ours, so it carried forward its own zeros and wiped the snapshot on every
+    scan that fired while Gmail was disconnected."""
+    from backend.services import ledger
+    from backend.shared.adapters import IntegrationNotConnected
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    db.add(models.ScanRun(
+        user_id="u1", started_at=utcnow() - timedelta(days=1),
+        promo_count=812, social_count=140, spam_count=33,
+    ))
+    db.commit()
+
+    real = ledger.sync_ledger
+    ledger.sync_ledger = lambda *a, **k: (_ for _ in ()).throw(IntegrationNotConnected("gmail"))
+    try:
+        with pytest.raises(IntegrationNotConnected):
+            sentry.run_scan(db, "u1")
+    finally:
+        ledger.sync_ledger = real
+
+    newest = db.query(models.ScanRun).order_by(models.ScanRun.started_at.desc()).first()
+    assert newest.error == "gmail_not_connected"
+    assert (newest.promo_count, newest.social_count, newest.spam_count) == (812, 140, 33)

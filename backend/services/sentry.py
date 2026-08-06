@@ -365,11 +365,42 @@ def run_scan(
     """Run one inbox scan for `user_id`. Returns a summary dict.
 
     Raises IntegrationNotConnected when Gmail isn't connected (caller maps to 409).
-    A ScanRun row is always written (with `error` set on the not-connected path).
+    A ScanRun row is always written (with `error` set whenever it didn't finish).
 
     `respect_interval` is for the SCHEDULED path only. A user pressing Scan means
     "now", and honouring a cadence there would make the button look broken.
+
+    A crash is recorded on the claimed row before it propagates. Claiming the row
+    up front is what serialises concurrent polls, but it also means a scan that
+    dies half way leaves behind a row that is indistinguishable from a clean scan
+    of an empty inbox — the app would show "last scan: just now" having not read
+    anything. `last_scan_error` exists precisely so the UI can explain why the
+    time isn't advancing; a crash has to reach it too.
     """
+    try:
+        return _run_scan(
+            db, user_id, max_messages=max_messages, respect_interval=respect_interval
+        )
+    except IntegrationNotConnected:
+        raise                       # already recorded its own row, with counts carried
+    except Exception as e:          # noqa: BLE001 — recorded, then re-raised unchanged
+        try:
+            claimed = _latest_scan_run(db, user_id)
+            if claimed is not None and not claimed.error:
+                claimed.error = f"scan_failed: {type(e).__name__}: {e}"[:500]
+                db.commit()
+        except Exception:           # noqa: BLE001 — never mask the original failure
+            logger.exception("could not record scan failure for %s", user_id)
+        raise
+
+
+def _run_scan(
+    db: Session,
+    user_id: str,
+    *,
+    max_messages: int = MAX_MESSAGES,
+    respect_interval: bool = False,
+) -> Dict[str, Any]:
     if respect_interval and not due_for_scan(db, user_id):
         return {
             "scanned": 0, "indexed": 0, "flagged": 0, "labeled": 0, "notified": 0,
@@ -411,6 +442,12 @@ def run_scan(
                         "tier": "needs_reply",
                     })
 
+    # The last run that actually finished. Read BEFORE claiming this one —
+    # claiming makes our own row the newest, so a later "carry forward the last
+    # good counts" would carry forward our own zeros and wipe the cleanup
+    # snapshot every time Gmail was disconnected.
+    previous = _latest_scan_run(db, user_id)
+
     # Claim the slot before doing the work, not after. `started_at` is what
     # `due_for_scan` measures from, and until this row exists every concurrent
     # caller still reads "due" — so two polls arriving together would both run a
@@ -439,7 +476,7 @@ def run_scan(
         # that scans ARE firing — otherwise a run that fires while Gmail is
         # disconnected writes nothing and the UI looks like scheduling stopped.
         # Carry forward the last-good cleanup counts so the snapshot isn't zeroed.
-        prev = _latest_scan_run(db, user_id)
+        prev = previous
         run.error = "gmail_not_connected"
         if prev:
             run.promo_count = prev.promo_count or 0
