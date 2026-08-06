@@ -615,7 +615,7 @@ def test_money_shows_the_figure_with_the_sentence_it_came_from():
     db = _session()
     _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
     fu = _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821")
-    _read(db, fu.thread_id, [{"value": "£4,200", "quote": "the balance of £4,200 is due on the 12th"}])
+    _read(db, fu.thread_id, [{"text": "£4,200", "quote": "the balance of £4,200 is due on the 12th"}])
 
     out = ask.ask(db, "u1", "who owes me money")
 
@@ -630,7 +630,7 @@ def test_money_never_claims_who_owes_whom():
     db = _session()
     _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
     fu = _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821")
-    _read(db, fu.thread_id, [{"value": "£4,200", "quote": "the balance of £4,200"}])
+    _read(db, fu.thread_id, [{"text": "£4,200", "quote": "the balance of £4,200"}])
 
     text = " ".join(str(l.get("text", "")) for l in ask.ask(db, "u1", "who owes me money")["lines"]).lower()
 
@@ -649,6 +649,6 @@ def test_money_is_user_scoped():
     db = _session()
     _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
     fu = _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821")
-    _read(db, fu.thread_id, [{"value": "£4,200", "quote": "the balance of £4,200"}])
+    _read(db, fu.thread_id, [{"text": "£4,200", "quote": "the balance of £4,200"}])
 
     assert "No amounts" in ask.ask(db, "u2", "who owes me money")["title"]

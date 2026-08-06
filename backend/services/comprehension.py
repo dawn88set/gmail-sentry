@@ -463,7 +463,14 @@ def money(db: Session, user_id: str, *, limit: int = 20) -> List[Dict[str, Any]]
     out: List[Dict[str, Any]] = []
     for r in rows:
         for a in (r.amounts or []):
-            value = (a.get("value") or "").strip() if isinstance(a, dict) else str(a).strip()
+            # "text" is the key `_verify` writes. Reading "value" here meant
+            # every amount was silently dropped, and the unit tests agreed
+            # because they were written against the same wrong assumption —
+            # only running a whole thread through the real pipeline showed it.
+            if isinstance(a, dict):
+                value = (a.get("text") or a.get("value") or "").strip()
+            else:
+                value = str(a).strip()
             if not value:
                 continue
             quote = (a.get("quote") or "").strip() if isinstance(a, dict) else ""
