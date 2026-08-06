@@ -832,6 +832,14 @@ class ThreadRead(Base):
     model = Column(String, default="")
     error = Column(Text, default="")
 
+    #: Fields the quote check refused, comma-separated ("their_ask,amount").
+    #: A dropped judgement and one the model never made look identical
+    #: afterwards — both empty — so without this there is no way to tell a
+    #: verifier that is working from one that is rejecting everything. That
+    #: distinction is only reachable in production, where a real model first
+    #: meets this code and where container logs are not available.
+    dropped = Column(Text, nullable=False, default="", server_default="")
+
     read_at = Column(DateTime, default=datetime.utcnow, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

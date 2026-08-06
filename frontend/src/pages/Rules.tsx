@@ -806,6 +806,16 @@ export default function Rules() {
               </p>
             )}
 
+          {/* Reading the mail can be running and still producing nothing — a
+              judgement that fails its quote check is dropped rather than shown,
+              which is right, but silent. The owner is the last person who
+              should have to guess which. Speaks only when something is off. */}
+          {config.reading_health?.message && (
+            <p className="mt-2 px-4 text-[13px] leading-relaxed text-muted-foreground">
+              {config.reading_health.message}
+            </p>
+          )}
+
           {/* Always-visible Slack setup guide (Slack needs an ID, not a name —
               the #1 reason a test fails). */}
           <div className="mt-3 rounded-2xl bg-card p-4 text-[13px] leading-relaxed text-muted-foreground ring-1 ring-border">

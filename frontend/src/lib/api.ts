@@ -144,6 +144,16 @@ export interface SentryConfig {
   /** What the cadence ACTUALLY turned out to be. The setting above is a request;
    *  Claritty's trigger decides how often the app gets to run, so the two can
    *  disagree and nothing else in the product would reveal it. */
+  /** Whether reading the mail is producing anything. The quote check is strict
+   *  by design, and the failure mode of strictness is silence — an app with
+   *  nothing to say looks the same as a quiet inbox. Speaks only when wrong. */
+  reading_health?: {
+    read: number;
+    with_findings: number;
+    dropped: number;
+    verdict: 'ok' | 'none' | 'all_dropped' | 'nothing_found' | 'failing';
+    message: string;
+  };
   scan_health?: {
     configured_minutes: number;
     typical_minutes: number | null;

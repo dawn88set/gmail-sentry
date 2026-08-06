@@ -45,6 +45,7 @@ from backend.shared.adapters import (
 from backend.services import activity
 from backend.services import mail as mail_service
 from backend.services import worklist as worklist_service
+from backend.services import comprehension as comprehension_service
 from backend.services import insights as insights_service
 from backend.services import accounts as accounts_service
 from backend.services import ask as ask_service
@@ -643,7 +644,14 @@ async def get_settings(
     # here, and the setting alone can't tell the owner the truth: the platform's
     # trigger decides how often the app actually gets to run. Measured cadence
     # beside the chosen one, so a shortfall is visible where it's configured.
-    return {**get_config(db, user_id).to_dict(), "scan_health": scan_health(db, user_id)}
+    # `reading_health` rides along for the same reason as `scan_health`: the app
+    # can be running perfectly and still be producing nothing, and the owner is
+    # the last person who should have to guess which. See comprehension.health.
+    return {
+        **get_config(db, user_id).to_dict(),
+        "scan_health": scan_health(db, user_id),
+        "reading_health": comprehension_service.health(db, user_id),
+    }
 
 
 @router.put("/api/config")

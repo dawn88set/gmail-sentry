@@ -339,6 +339,10 @@ def read(db: Session, user_id: str, thread_id: str) -> Optional[models.ThreadRea
     row.messages_read = len(messages)
     row.model = MODEL
     row.error = ""
+    # Recorded, not just logged. See models.ThreadRead.dropped — in production
+    # this is the only way to tell "the model had nothing to say" from "the
+    # verifier rejected everything it said".
+    row.dropped = ",".join(facts["dropped"])
     row.read_at = datetime.utcnow()
     db.add(row)
     db.commit()
@@ -496,3 +500,63 @@ def money(db: Session, user_id: str, *, limit: int = 20) -> List[Dict[str, Any]]
     # still be true.
     out.sort(key=lambda m: (m["at"] or ""), reverse=True)
     return out[:limit]
+
+
+def health(db: Session, user_id: str) -> Dict[str, Any]:
+    """Is reading the mail actually producing anything?
+
+    The quote check is deliberately strict: a judgement without a sentence to
+    back it never reaches a screen. The failure mode of strictness is silence —
+    if some unanticipated formatting difference makes every quote fail to match,
+    the app has nothing to say and looks exactly like a mailbox with nothing in
+    it. Curly apostrophes very nearly did that.
+
+    Production is the first place a real model's output meets this code, and the
+    platform's log endpoint returns placeholder text, so "look at the logs" is
+    not available. This makes the answer visible from the app instead.
+
+    Deliberately NOT shown as a score. It says something only when the numbers
+    say something is wrong.
+    """
+    rows = (
+        db.query(models.ThreadRead)
+        .filter(models.ThreadRead.user_id == user_id)
+        .all()
+    )
+    if not rows:
+        return {"read": 0, "with_findings": 0, "dropped": 0, "verdict": "none", "message": ""}
+
+    with_findings = sum(
+        1 for r in rows
+        if (r.their_ask or "").strip() or (r.your_commitment or "").strip() or (r.amounts or [])
+    )
+    dropped_rows = sum(1 for r in rows if (r.dropped or "").strip())
+    failed = sum(1 for r in rows if (r.error or "").strip())
+
+    verdict, message = "ok", ""
+    # Everything rejected is the signature of a verifier problem, not a quiet
+    # mailbox: the model answered on every thread and nothing survived.
+    if dropped_rows and with_findings == 0:
+        verdict = "all_dropped"
+        message = (
+            f"I read {len(rows)} conversations and couldn't verify a single quote against "
+            "the original mail, so I've shown nothing rather than guess. That's more likely "
+            "a fault my end than an inbox with nothing in it."
+        )
+    elif len(rows) >= 5 and with_findings == 0 and not dropped_rows:
+        verdict = "nothing_found"
+        message = (
+            f"I've read {len(rows)} conversations and found nothing that needs you in any "
+            "of them. If that seems wrong, tell me which thread and I'll say what I saw."
+        )
+    elif failed and failed == len(rows):
+        verdict = "failing"
+        message = f"Every attempt to read a conversation failed ({rows[0].error[:80]})."
+
+    return {
+        "read": len(rows),
+        "with_findings": with_findings,
+        "dropped": dropped_rows,
+        "verdict": verdict,
+        "message": message,
+    }

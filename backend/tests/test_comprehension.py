@@ -501,3 +501,85 @@ def test_a_quote_from_a_different_thread_is_still_rejected():
     assert not comprehension._quoted(
         "the warehouse flagged a damaged pallet", comprehension._norm(_BODY)
     )
+
+
+# ── the failure mode of strictness is silence ───────────────────────────────
+#
+# A judgement that fails its quote check is dropped rather than shown. That is
+# right, and it is invisible: afterwards, a dropped field and one the model
+# never made look identical — both empty. Production is the first place a real
+# model meets this code, and the platform's log endpoint returns placeholder
+# text, so "check the logs" is not available there.
+
+
+def test_what_the_verifier_refused_is_recorded_not_just_logged(monkeypatch):
+    db = _session()
+    _msg(db, "t1")
+    monkeypatch.setattr(comprehension.gmail_adapter, "get_body",
+                        lambda db, u, mid: "Hi — can you confirm the delivery date?")
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "a 40% discount", "quote": "we want a 40% discount"},  # not in the mail
+        "your_commitment": {"text": "", "quote": "", "due": ""},
+        "blocked_on": "you", "amounts": [], "summary": "",
+    })
+
+    row = comprehension.read(db, "u1", "t1")
+
+    assert row.their_ask == ""              # dropped, as it must be
+    assert "their_ask" in (row.dropped or "")   # and SAID SO
+
+
+def test_a_clean_read_records_nothing_dropped(monkeypatch):
+    db = _session()
+    _msg(db, "t1")
+    monkeypatch.setattr(comprehension.gmail_adapter, "get_body",
+                        lambda db, u, mid: "Can you confirm the delivery date before Friday?")
+    _stub_llm(monkeypatch, {
+        "their_ask": {"text": "confirm the delivery date",
+                      "quote": "confirm the delivery date before Friday"},
+        "your_commitment": {"text": "", "quote": "", "due": ""},
+        "blocked_on": "you", "amounts": [], "summary": "",
+    })
+
+    row = comprehension.read(db, "u1", "t1")
+
+    assert row.their_ask
+    assert (row.dropped or "") == ""
+
+
+def test_health_calls_out_a_verifier_that_is_rejecting_everything():
+    """The signature of a broken verifier, not a quiet mailbox: the model
+    answered on every thread and nothing survived. Curly apostrophes nearly
+    caused exactly this."""
+    db = _session()
+    for i in range(4):
+        db.add(models.ThreadRead(user_id="u1", thread_id=f"t{i}", dropped="their_ask"))
+    db.commit()
+
+    h = comprehension.health(db, "u1")
+
+    assert h["verdict"] == "all_dropped"
+    assert "couldn't verify" in h["message"]
+    assert "fault my end" in h["message"]        # doesn't blame the user's inbox
+
+
+def test_health_is_silent_when_reading_is_working():
+    db = _session()
+    db.add(models.ThreadRead(user_id="u1", thread_id="t1", their_ask="send the quote"))
+    db.commit()
+
+    h = comprehension.health(db, "u1")
+    assert h["verdict"] == "ok" and h["message"] == ""
+
+
+def test_health_says_nothing_before_anything_has_been_read():
+    db = _session()
+    assert comprehension.health(db, "u1")["verdict"] == "none"
+
+
+def test_health_is_user_scoped():
+    db = _session()
+    for i in range(4):
+        db.add(models.ThreadRead(user_id="u1", thread_id=f"t{i}", dropped="their_ask"))
+    db.commit()
+    assert comprehension.health(db, "u2")["verdict"] == "none"
