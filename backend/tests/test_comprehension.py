@@ -459,3 +459,45 @@ def test_a_no_reply_address_is_still_never_tracked(bodies, monkeypatch):
     fu_service.sync_followups(db, "u1")
 
     assert db.query(models.FollowUp).filter_by(thread_id="t1").first() is None
+
+
+# ── typography: the difference between working and silently doing nothing ───
+#
+# The quote check is what stops a model's judgement reaching the screen unless
+# the words are really in the mail. It compares text, so it is at the mercy of
+# punctuation: mail clients emit curly quotes and em dashes, and a model quoting
+# that mail back types the straight ASCII equivalents almost every time. Before
+# folding, three of four plausible model quotes were rejected over punctuation
+# alone — every judgement would have vanished, for a reason nobody could have
+# guessed from the screen. These are the regression tests for that.
+
+_BODY = "Hi — we can’t sign off until you confirm the “revised pricing” before the 12th."
+
+
+def test_a_straight_apostrophe_matches_a_curly_one():
+    assert comprehension._quoted("we can't sign off until you confirm", comprehension._norm(_BODY))
+
+
+def test_straight_double_quotes_match_curly_ones():
+    assert comprehension._quoted('the "revised pricing" before the 12th', comprehension._norm(_BODY))
+
+
+def test_a_hyphen_matches_an_em_dash():
+    assert comprehension._quoted("Hi - we can't sign off", comprehension._norm(_BODY))
+
+
+def test_a_non_breaking_space_matches_a_normal_one():
+    body = comprehension._norm("payment of £2,400 is due")
+    assert comprehension._quoted("payment of £2,400 is due", body)
+
+
+def test_folding_punctuation_does_not_let_a_fabrication_through():
+    """The whole point. Loosening the comparison must not loosen the guarantee."""
+    assert not comprehension._quoted("we will ship it on Tuesday", comprehension._norm(_BODY))
+    assert not comprehension._quoted("confirm the revised pricing by Friday", comprehension._norm(_BODY))
+
+
+def test_a_quote_from_a_different_thread_is_still_rejected():
+    assert not comprehension._quoted(
+        "the warehouse flagged a damaged pallet", comprehension._norm(_BODY)
+    )

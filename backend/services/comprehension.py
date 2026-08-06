@@ -103,14 +103,39 @@ def _prompt(subject: str, messages: List[Dict[str, Any]], self_address: str) -> 
 
 # ── the honesty mechanism ───────────────────────────────────────────────────
 
+#: Typographic characters folded to their ASCII equivalents before comparing.
+#:
+#: This is the difference between the feature working and silently doing nothing.
+#: Mail clients emit curly quotes, en and em dashes and non-breaking spaces; a
+#: model quoting that mail back overwhelmingly types the straight ASCII
+#: equivalents. Without folding, "we can\'t sign off" fails to match a body
+#: containing the curly-apostrophe version, the quote check rejects it, the field
+#: is dropped — and every judgement the app has disappears for a reason nobody
+#: would guess from the screen. Measured on a realistic body: three of four
+#: plausible model quotes were dropped over punctuation alone.
+_TYPOGRAPHY = str.maketrans({
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"', "\u2033": '"',
+    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",
+    "\u2015": "-", "\u2212": "-",
+    "\u00a0": " ", "\u2007": " ", "\u2009": " ", "\u202f": " ",
+    "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
+    "\u2026": "...",
+})
+
+
 def _norm(text: str) -> str:
-    """Collapse whitespace and case for comparison.
+    """Collapse whitespace, typography and case for comparison.
 
     Bodies arrive with hard wraps, non-breaking spaces and quoted-printable
     artefacts, so a strict equality check would reject almost every genuine
     quote — which is the failure mode that silently turns this feature off.
+
+    Folding punctuation does NOT weaken the guarantee. The claim being checked is
+    that the model is repeating words really present in the mail; whether the
+    apostrophe it typed was curly or straight is evidence of nothing.
     """
-    return re.sub(r"\s+", " ", (text or "").replace(" ", " ")).strip().lower()
+    return re.sub(r"\s+", " ", (text or "").translate(_TYPOGRAPHY)).strip().lower()
 
 
 def _quoted(quote: str, haystack: str) -> bool:
