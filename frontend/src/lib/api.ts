@@ -60,31 +60,54 @@ api.interceptors.request.use((config) => {
 });
 
 /**
- * Reject a 200 that isn't actually JSON.
+ * Judge a response by its content, not by a header an intermediary can rewrite.
  *
  * This app is served from the same origin as its API, so an infrastructure
- * response — a proxy page while the container restarts mid-deploy, a login
- * redirect — arrives as HTML with a 200 and a perfectly innocent shape. Without
- * this, `response.data` is a STRING, every `data.someField` in this file is
- * `undefined`, and that undefined travels into component state and blows up
- * somewhere far away, at render, with a message that names neither the endpoint
- * nor the cause. That is exactly how one missing field blanked the deployed app.
+ * response — a proxy page while the container restarts, a login redirect —
+ * arrives as HTML with a 200. Left alone, `response.data` is a STRING, every
+ * `data.someField` in this file is `undefined`, and that undefined travels into
+ * component state and throws far away at render, naming neither the endpoint
+ * nor the cause. That is the mechanism that blanked the deployed app.
  *
- * Failing here instead turns it into an ordinary API error: the caller's catch
- * runs, toApiError() gives it a message, and the user sees a toast that says
- * something is wrong rather than a screen that says nothing.
+ * The first version of this check keyed on the content-type header, and that was
+ * wrong in a way production demonstrated immediately: the header is set by
+ * whatever last touched the response, so a perfectly good JSON body delivered
+ * without `application/json` got rejected, and a working endpoint showed
+ * "unexpected response from the server". A header is a claim about the payload;
+ * the payload is the fact.
+ *
+ * So: if the body is a string that parses as JSON, use it. Only a body that is
+ * NOT JSON is a real infrastructure response, and only then does this fail —
+ * turning it into an ordinary API error the caller can catch and toast, rather
+ * than an undefined that detonates somewhere else.
  */
 api.interceptors.response.use((response) => {
-  const ct = String(response.headers?.['content-type'] || '');
-  if (typeof response.data === 'string' && !ct.includes('application/json')) {
+  if (typeof response.data !== 'string') return response;
+
+  const body = response.data.trim();
+  if (body === '') {
     return Promise.reject(
-      Object.assign(new Error('The server returned a page instead of data — it may be restarting.'), {
-        response: { status: response.status, data: { detail: 'Unexpected response from the server.' } },
+      Object.assign(new Error('The server returned an empty response.'), {
         isAxiosError: true,
+        response: { status: response.status, data: { detail: 'The server returned nothing.' } },
       }),
     );
   }
-  return response;
+
+  try {
+    // A correct body that merely lost its content-type on the way here.
+    return { ...response, data: JSON.parse(body) };
+  } catch {
+    return Promise.reject(
+      Object.assign(new Error('The server returned a page instead of data — it may be restarting.'), {
+        isAxiosError: true,
+        response: {
+          status: response.status,
+          data: { detail: 'Unexpected response from the server.' },
+        },
+      }),
+    );
+  }
 });
 
 // ── Error helpers ───────────────────────────────────────────────────────────

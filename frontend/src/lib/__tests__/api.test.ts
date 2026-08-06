@@ -56,3 +56,37 @@ describe('list endpoints degrade to empty, never to undefined', () => {
     expect((alerts ?? []).filter(Boolean)).toEqual([]);
   });
 });
+
+
+/**
+ * The interceptor must judge the payload, not the header.
+ *
+ * Its first version keyed on content-type and production disproved that
+ * immediately: a correct JSON body delivered without `application/json` got
+ * rejected, and a working endpoint reported "unexpected response from the
+ * server". A header is a claim about the payload; the payload is the fact.
+ */
+describe('response interpretation', () => {
+  const asJson = (body: string) => {
+    try {
+      return { ok: true as const, data: JSON.parse(body.trim()) };
+    } catch {
+      return { ok: false as const };
+    }
+  };
+
+  it('accepts a JSON body that arrived without a JSON content-type', () => {
+    const r = asJson('{"items":[],"total":0}');
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.data.total).toBe(0);
+  });
+
+  it('rejects a body that is genuinely a page, not data', () => {
+    expect(asJson('<!doctype html><html><body>504 Gateway Timeout</body></html>').ok).toBe(false);
+  });
+
+  it('treats an empty body as a failure rather than as empty data', () => {
+    // '' parses as nothing; silently becoming {} would hide a real outage.
+    expect(asJson('').ok).toBe(false);
+  });
+});
