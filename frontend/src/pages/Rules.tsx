@@ -793,6 +793,19 @@ export default function Rules() {
             />
           </ListGroup>
 
+          {/* The control above sets a request, not a guarantee — Claritty's
+              trigger decides how often this app actually gets to run, so the
+              chosen interval and the real one can disagree and nothing else in
+              the product would reveal it. Say so beside the control that made
+              the promise. Silent whenever the two agree. */}
+          {config.scan_health &&
+            (config.scan_health.verdict === 'slower' ||
+              config.scan_health.verdict === 'stalled') && (
+              <p className="mt-2 px-4 text-[13px] leading-relaxed text-muted-foreground">
+                {config.scan_health.message}
+              </p>
+            )}
+
           {/* Always-visible Slack setup guide (Slack needs an ID, not a name —
               the #1 reason a test fails). */}
           <div className="mt-3 rounded-2xl bg-card p-4 text-[13px] leading-relaxed text-muted-foreground ring-1 ring-border">

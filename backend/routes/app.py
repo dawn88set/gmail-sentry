@@ -25,7 +25,7 @@ import time
 from backend.database import get_db
 from backend.security import require_user
 from backend import models
-from backend.services.sentry import run_scan, get_config
+from backend.services.sentry import run_scan, get_config, scan_health
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
 from backend.shared.adapters import IntegrationNotConnected, IntegrationError
@@ -626,7 +626,11 @@ async def get_settings(
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    return get_config(db, user_id).to_dict()
+    # `scan_health` rides along with the settings because the interval control is
+    # here, and the setting alone can't tell the owner the truth: the platform's
+    # trigger decides how often the app actually gets to run. Measured cadence
+    # beside the chosen one, so a shortfall is visible where it's configured.
+    return {**get_config(db, user_id).to_dict(), "scan_health": scan_health(db, user_id)}
 
 
 @router.put("/api/config")

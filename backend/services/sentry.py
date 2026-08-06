@@ -175,12 +175,30 @@ def _refresh_cleanup_counts(db: Session, user_id: str, run: models.ScanRun) -> N
             logger.info(f"cleanup count {q} skipped: {e}")
 
 
+def _grace(minutes: int) -> timedelta:
+    """How early a tick may arrive and still count as "the interval has elapsed".
+
+    Without this the cadence silently DOUBLES. The platform fires the trigger on
+    its own clock, and every scheduler jitters by a few seconds. Measured against
+    the last run's `started_at`, a tick landing at 4m58s of a 5-minute interval
+    fails a bare `>=`, the scan is skipped, and the next opportunity is a full
+    interval later — so the owner who asked for 5 minutes gets 10. Jitter is
+    symmetric, so that happens on roughly every other tick.
+
+    A window of 20% (capped at a minute) absorbs the jitter. Erring this way
+    costs at most one slightly-early scan; erring the other way silently halves
+    how often the app looks at the mail, which is the whole product.
+    """
+    return timedelta(seconds=min(60.0, minutes * 60 * 0.2))
+
+
 def due_for_scan(db: Session, user_id: str, *, now: Optional[datetime] = None) -> bool:
     """Has the user's chosen interval elapsed since the last scan?
 
     The platform fires `sentry-scan` on ITS schedule; this is how the owner's own
     "check my mail every N minutes" preference is honoured without them having to
-    find Claritty's trigger settings. Only ever slows scanning down.
+    find Claritty's trigger settings. Only ever slows scanning down — it cannot
+    make the app scan more often than the trigger fires (see `scan_health`).
     """
     cfg = get_config(db, user_id)
     minutes = max(1, int(getattr(cfg, "scan_interval_minutes", 5) or 5))
@@ -193,7 +211,66 @@ def due_for_scan(db: Session, user_id: str, *, now: Optional[datetime] = None) -
     )
     if last is None:
         return True
-    return (now or datetime.utcnow()) - last >= timedelta(minutes=minutes)
+    return (now or datetime.utcnow()) - last >= timedelta(minutes=minutes) - _grace(minutes)
+
+
+def scan_health(db: Session, user_id: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Is the mail actually being read as often as the owner asked?
+
+    Two clocks decide that and only one of them is ours. The owner picks an
+    interval here; the PLATFORM decides how often it fires `sentry-scan`, and the
+    app only ever runs when it does. So our setting can slow scanning down but
+    never speed it up, and if the platform trigger is coarse — or was never
+    created — the app quietly reads the mail far less often than the settings
+    screen claims. That gap is invisible from inside the app, which is exactly
+    the kind of silent shortfall an owner discovers by missing something.
+
+    So measure it instead of asserting it: compare the interval the owner chose
+    against the cadence the scans actually arrived at. Manual scans only ever
+    make gaps smaller, so a `slower` verdict can't be a false alarm from someone
+    pressing Scan.
+    """
+    now = now or datetime.utcnow()
+    want = max(1, int(getattr(get_config(db, user_id), "scan_interval_minutes", 5) or 5))
+
+    stamps = [
+        s for (s,) in db.query(models.ScanRun.started_at)
+        .filter(models.ScanRun.user_id == user_id)
+        .order_by(models.ScanRun.started_at.desc())
+        .limit(12)
+        .all() if s
+    ]
+    last = stamps[0] if stamps else None
+    # Newest-first, so each pair is (newer, older).
+    gaps = sorted((a - b).total_seconds() / 60.0 for a, b in zip(stamps, stamps[1:]))
+    typical = gaps[len(gaps) // 2] if gaps else None
+
+    if last is None:
+        verdict, message = "never", "No scan has run yet."
+    elif (now - last) > timedelta(minutes=max(3 * want, want + 10)):
+        verdict = "stalled"
+        message = (
+            f"The last scan was {int((now - last).total_seconds() // 60)} minutes ago, "
+            f"not the {want} you asked for. The scheduled scan may be turned off — "
+            "check this app's trigger in Claritty, or press Scan for an immediate check."
+        )
+    elif typical is not None and len(gaps) >= 3 and typical > want * 1.5:
+        verdict = "slower"
+        message = (
+            f"Scans are arriving about every {int(round(typical))} minutes, not every "
+            f"{want}. The app can only run when Claritty's schedule fires it — raise "
+            "that trigger's frequency to get closer to what you picked here."
+        )
+    else:
+        verdict, message = "ok", ""
+
+    return {
+        "configured_minutes": want,
+        "typical_minutes": int(round(typical)) if typical is not None else None,
+        "last_scan_at": last.isoformat() if last else None,
+        "verdict": verdict,
+        "message": message,
+    }
 
 
 def run_scan(

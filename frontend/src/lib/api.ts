@@ -141,6 +141,16 @@ export interface SentryConfig {
    *  scan trigger fires on that cadence and the app only runs when it does, so
    *  this can slow scanning down but never speed it up. */
   scan_interval_minutes?: number;
+  /** What the cadence ACTUALLY turned out to be. The setting above is a request;
+   *  Claritty's trigger decides how often the app gets to run, so the two can
+   *  disagree and nothing else in the product would reveal it. */
+  scan_health?: {
+    configured_minutes: number;
+    typical_minutes: number | null;
+    last_scan_at: string | null;
+    verdict: 'ok' | 'never' | 'stalled' | 'slower';
+    message: string;
+  };
 }
 
 export interface CleanupCounts {
