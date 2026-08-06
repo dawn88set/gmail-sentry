@@ -516,3 +516,61 @@ def test_one_users_contacts_cannot_be_chased_by_another():
 
     assert "No one matching" in out["title"]
     assert db.query(models.Nudge).count() == 0
+
+
+def test_chase_picks_a_thread_that_can_actually_be_chased():
+    """Found on real data: an account with three open threads — two waiting on
+    the owner, one genuinely gone quiet — answered "chase them" with "this
+    thread isn't waiting on them", because ranking by risk alone picks the most
+    valuable thread, and the most valuable one is usually the one where the ball
+    is in YOUR court. Declining when there is something to do is the worst
+    possible answer."""
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
+    _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821", risk=95)      # ball: you
+    _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Supplier terms", risk=90)    # ball: you
+    _quiet_loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Q4 delivery", risk=20)
+
+    out = ask.ask(db, "u1", "chase Mark")
+
+    assert out["proposal"]["kind"] == "nudge"
+    nudge = db.query(models.Nudge).filter_by(id=out["proposal"]["payload"]["nudge_id"]).one()
+    fu = db.query(models.FollowUp).filter_by(id=nudge.followup_id).one()
+    assert "Q4 delivery" in (fu.subject or "")
+
+
+def test_when_nothing_can_be_chased_the_reason_is_about_the_biggest_thread():
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
+    _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821", risk=95)
+    _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Supplier terms", risk=10)
+
+    out = ask.ask(db, "u1", "chase Mark")
+
+    assert "Not chasing" in out["title"]
+    assert any("Invoice 4821" in str(l.get("text", "")) for l in out["lines"])
+
+
+def test_a_company_name_with_a_space_is_findable():
+    """The app was showing a name it could not then look up: Accounts renders
+    meridian-supply.com as "Meridian Supply", and nothing stored contains that
+    string — the domain has a hyphen and no space. Every multi-word company was
+    unreachable from Ask, while single-word ones worked."""
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz", domain="meridian-supply.com")
+
+    for phrasing in ("Meridian Supply", "meridian supply", "MeridianSupply", "meridian-supply"):
+        assert _names(ask._find_counterparties(db, "u1", phrasing)) == ["Mark Ruiz"], phrasing
+
+
+def test_the_fallback_does_not_match_everyone():
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz", domain="meridian-supply.com")
+    _cp(db, "dana@northwind.co", "Dana Levi", domain="northwind.co")
+
+    assert ask._find_counterparties(db, "u1", "Meridian Supply") != []
+    assert ask._find_counterparties(db, "u1", "Sunrise Logistics") == []
+
+
+def _names(rows):
+    return [r.display_name for r in rows]

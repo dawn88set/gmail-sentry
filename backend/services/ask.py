@@ -281,6 +281,12 @@ def _answer_now(db: Session, user_id: str) -> Dict[str, Any]:
     return {"title": "Right now", "stats": stats, "lines": lines, "link": "/"}
 
 
+def _slug(text: str) -> str:
+    """Letters and digits only — "Meridian Supply", "meridian-supply.com" and
+    "MeridianSupply" all collapse to the same thing."""
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
 def _find_counterparties(db: Session, user_id: str, subject: str) -> List[models.Counterparty]:
     """Match a person or company by name, address or domain.
 
@@ -291,7 +297,7 @@ def _find_counterparties(db: Session, user_id: str, subject: str) -> List[models
     if not term:
         return []
     like = f"%{term}%"
-    return (
+    rows = (
         db.query(models.Counterparty)
         .filter(
             models.Counterparty.user_id == user_id,
@@ -306,6 +312,36 @@ def _find_counterparties(db: Session, user_id: str, subject: str) -> List[models
         .limit(25)
         .all()
     )
+    if rows:
+        return rows
+
+    # The app was showing a name it could not then look up. Accounts renders
+    # `company_of()`, which turns meridian-supply.com into "Meridian Supply" —
+    # and nothing stored contains that string, because the domain has a hyphen
+    # and no space. So an owner reading "Meridian Supply" off their own screen
+    # and typing it back got "no one matching", while single-word companies like
+    # Northwind worked. Every multi-word company was unreachable from Ask.
+    #
+    # Compare on letters and digits alone, which makes the punctuation the two
+    # sides disagree about irrelevant. Only as a fallback, so the cheap indexed
+    # query still handles the common case.
+    key = _slug(term)
+    if len(key) < 3:
+        return []
+    everyone = (
+        db.query(models.Counterparty)
+        .filter(models.Counterparty.user_id == user_id)
+        .order_by(models.Counterparty.importance.desc())
+        .limit(500)
+        .all()
+    )
+    return [
+        c for c in everyone
+        if key in _slug(cp_service.company_of(c))
+        or key in _slug(c.domain)
+        or key in _slug(c.display_name)
+        or key in _slug(c.crm_company)
+    ][:25]
 
 
 def _answer_who(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
@@ -774,18 +810,35 @@ def _answer_chase(db: Session, user_id: str, subject: str, target: str) -> Dict[
             "lines": [_block("There's no unanswered thread with them to chase.", muted=True)],
         }
 
-    # When they said what it's about, chase THAT thread. Otherwise the one most
-    # worth chasing — which is what `risk` already ranks.
+    # Prefer a thread that can ACTUALLY be chased.
+    #
+    # Ranking by risk alone picked the most valuable open thread and then
+    # refused, because the most valuable one is usually the one where the ball
+    # is in YOUR court. Observed on real data: an account with three open
+    # threads — two awaiting you, one genuinely gone quiet — answered "chase
+    # them" with "this thread isn't waiting on them", while the thread that was
+    # waiting on them sat right there. Declining when there is something to do
+    # is the worst possible answer.
+    def _rank(f):
+        return -(f.risk or 0)
+
     terms = _terms(target)
     if terms:
-        scored = [
-            (sum(t in f"{f.subject or ''} {f.ask_summary or ''}".lower() for t in terms), f)
-            for f in loops
-        ]
-        scored.sort(key=lambda x: (-x[0], -(x[1].risk or 0)))
-        fu = scored[0][1] if scored[0][0] else max(loops, key=lambda f: f.risk or 0)
+        def _hits(f):
+            hay = f"{f.subject or ''} {f.ask_summary or ''}".lower()
+            return sum(t in hay for t in terms)
+        matched = [f for f in loops if _hits(f)]
+        candidates = matched or loops
     else:
-        fu = max(loops, key=lambda f: f.risk or 0)
+        candidates = loops
+
+    chaseable = [f for f in candidates if not nudge_service.why_not_eligible(db, user_id, f)]
+    if chaseable:
+        fu = sorted(chaseable, key=_rank)[0]
+    else:
+        # Nothing here can be chased — pick the most important one so the reason
+        # we show is about the thread they most likely meant.
+        fu = sorted(candidates, key=_rank)[0]
 
     nudge, refusal = nudge_service.generate_nudge(db, user_id, fu)
     who = fu.counterparty_name or fu.counterparty_email or subject
