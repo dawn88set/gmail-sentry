@@ -53,3 +53,26 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('the app')).toBeTruthy();
   });
 });
+
+describe('ErrorBoundary inside the widget frame', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    document.body.classList.add('widget-host');
+  });
+  afterEach(() => {
+    document.body.classList.remove('widget-host');
+    vi.restoreAllMocks();
+  });
+
+  it('stays small enough for a 170px frame instead of showing the full panel', () => {
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    );
+    // The widget is a fixed frame; a failed widget should still be a tidy widget.
+    expect(screen.getByText(/couldn’t load/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
+    expect(screen.queryByText(/nothing was sent, filed or changed/i)).toBeNull();
+  });
+});

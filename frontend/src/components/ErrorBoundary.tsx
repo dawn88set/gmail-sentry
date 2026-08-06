@@ -44,6 +44,23 @@ export class ErrorBoundary extends Component<Props, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
 
+    // The widget renders under body.widget-host in a fixed 170/360px frame, so
+    // the full-page panel below would overflow it and look like the breakage it
+    // is reporting. A widget that fails should still be a tidy widget. This
+    // reads a class rather than a viewport, which keeps the widget's
+    // window-size invariance intact (CLAUDE.md).
+    const inWidget =
+      typeof document !== 'undefined' && document.body.classList.contains('widget-host');
+
+    if (inWidget) {
+      return (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-3 text-center">
+          <p className="text-[13px] font-semibold text-foreground">Couldn’t load</p>
+          <p className="text-[11px] leading-snug text-muted-foreground">Open the app to retry.</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
         <p className="text-[17px] font-semibold text-foreground">This screen didn’t load</p>
