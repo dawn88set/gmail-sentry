@@ -431,3 +431,57 @@ def read_pending(db: Session, user_id: str, thread_ids: List[str], *, limit: int
             # backlog making the same failing call.
             break
     return done
+
+
+def money(db: Session, user_id: str, *, limit: int = 20) -> List[Dict[str, Any]]:
+    """Every figure the mail actually stated, with the sentence it came from.
+
+    These were being extracted, quote-verified and stored, and then shown
+    nowhere — the same "computed and then thrown away" the worklist was built to
+    fix. For someone whose inbox carries orders and invoices, the amounts ARE the
+    inbox.
+
+    What this deliberately does NOT do is decide who owes whom. An amount alone
+    does not say direction, and inferring it would be exactly the kind of
+    invention the quote rule exists to prevent — an app that tells an owner the
+    wrong person owes them £4,000 is worse than one that stays quiet. So each row
+    carries the amount, who the thread is with, the verbatim sentence, and which
+    side the thread is waiting on, and lets the person reading it conclude.
+    """
+    rows = (
+        db.query(models.ThreadRead)
+        .filter(models.ThreadRead.user_id == user_id)
+        .all()
+    )
+    loops = {
+        f.thread_id: f
+        for f in db.query(models.FollowUp)
+        .filter(models.FollowUp.user_id == user_id)
+        .all()
+    }
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        for a in (r.amounts or []):
+            value = (a.get("value") or "").strip() if isinstance(a, dict) else str(a).strip()
+            if not value:
+                continue
+            quote = (a.get("quote") or "").strip() if isinstance(a, dict) else ""
+            loop = loops.get(r.thread_id)
+            out.append({
+                "amount": value,
+                "quote": quote,
+                "thread_id": r.thread_id,
+                "who": (loop.counterparty_name or loop.counterparty_email) if loop else "",
+                "subject": (loop.subject if loop else "") or "",
+                "context": (r.their_ask or r.your_commitment or r.summary or "").strip(),
+                # Which side the conversation is waiting on. NOT a claim about
+                # who owes the money.
+                "waiting_on": r.blocked_on or (loop.ball if loop else "") or "",
+                "at": r.read_at.isoformat() if r.read_at else None,
+            })
+
+    # Newest reads first — the most recent figure is the one most likely to
+    # still be true.
+    out.sort(key=lambda m: (m["at"] or ""), reverse=True)
+    return out[:limit]

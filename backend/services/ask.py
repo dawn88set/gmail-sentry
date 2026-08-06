@@ -61,9 +61,10 @@ PROMISED = "promised"       # "what did I promise" / "what am I late on"
 SCHEDULE = "schedule"       # "check my mail every hour"             → proposal
 NOTIFY = "notify"           # "only ping me about urgent"            → proposal
 CHASE = "chase"             # "chase Dana about the quote"           → a drafted nudge
+MONEY = "money"             # "who owes me money", "what's outstanding"
 UNKNOWN = "unknown"
 
-_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, PROMISED, RULE, FILE, SCHEDULE, NOTIFY, CHASE)
+_INTENTS = (NOW, WHO, FIND, QUIET, BRIEF, PREP, PROMISED, RULE, FILE, SCHEDULE, NOTIFY, CHASE, MONEY)
 
 #: Cadences the app can actually honour. Five minutes is the floor because the
 #: platform's own trigger fires on that interval and the app only runs when it
@@ -115,6 +116,8 @@ _ROUTER_SYSTEM = (
     "  notify — which mail should ping them (subject = 'urgent' or 'all')\n"
     "  chase — asking to chase/nudge/follow up with someone (subject = who, "
     "target = what it's about, if said)\n"
+    "  money — asking about amounts, invoices, payments, what is outstanding "
+    "or unpaid\n"
     'Reply with ONLY JSON: {"intent": "...", "subject": "...", "target": "..."}. '
     'Use "" for anything not present.'
 )
@@ -178,6 +181,11 @@ def _interpret_keywords(question: str) -> Dict[str, str]:
         return {"intent": NOTIFY, "subject": original, "target": ""}
     if re.search(r"\b(always|whenever|any time|every time)\b.*\b(flag|alert|urgent|tell me)\b", q):
         return {"intent": RULE, "subject": original, "target": ""}
+    if re.search(
+        r"\b(owes?|owed|outstanding|unpaid|invoice[sd]?|payment|paid|billing|"
+        r"how much|balance)\b", q
+    ) and not re.search(r"\b(file|label|organi[sz]e|find|search|show me)\b", q):
+        return {"intent": MONEY, "subject": "", "target": ""}
     # No trailing \b: "promise"/"promised"/"commitment" all need to match, and
     # \bpromis\b matches none of them.
     if re.search(r"\bpromis|\bcommit|\bsaid i'?d\b|\blate on\b|\bbehind on\b|\bowe.*deliver", q):
@@ -868,6 +876,54 @@ def _answer_chase(db: Session, user_id: str, subject: str, target: str) -> Dict[
     }
 
 
+def _answer_money(db: Session, user_id: str) -> Dict[str, Any]:
+    """Every figure the mail actually stated, and where it came from.
+
+    For an owner whose inbox carries orders and invoices, "who owes me money"
+    is a first-class question, and it used to route to `unknown`. The amounts
+    were already being extracted, quote-verified and stored — and shown nowhere.
+
+    What this refuses to do is decide direction. An amount does not say who owes
+    whom, and inferring it would be exactly the invention the quote rule exists
+    to stop: telling an owner the wrong person owes them four thousand pounds is
+    worse than saying nothing. So it shows the figure, the thread, the sentence
+    it came from and which side the conversation is waiting on, and lets the
+    person reading it draw the conclusion. The caveat is stated, not buried.
+    """
+    from backend.services import comprehension as comp
+
+    items = comp.money(db, user_id, limit=12)
+    if not items:
+        return {
+            "title": "No amounts found yet",
+            "lines": [_block(
+                "I only see figures written in threads I've read. Nothing so far.",
+                muted=True,
+            )],
+        }
+
+    theirs = [m for m in items if m["waiting_on"] in ("them", "they")]
+    stats = [_stat(len(items), "amounts mentioned")]
+    if theirs:
+        stats.append(_stat(len(theirs), "waiting on them", tone="warn"))
+
+    lines = []
+    for m in items[:8]:
+        who = m["who"] or "someone"
+        side = " · waiting on them" if m["waiting_on"] in ("them", "they") else ""
+        lines.append(_block(f"{m['amount']} — {who}{side}", strong=bool(side)))
+        if m["quote"]:
+            lines.append(_block(f"“{m['quote'][:120]}”", muted=True))
+        elif m["context"]:
+            lines.append(_block(m["context"][:120], muted=True))
+    lines.append(_block(
+        "These are figures quoted in your mail, not an accounting system — "
+        "and I don't infer who owes whom.",
+        muted=True,
+    ))
+    return {"title": "Money in your mail", "stats": stats, "lines": lines, "link": "/"}
+
+
 def _answer_unknown(question: str) -> Dict[str, Any]:
     return {
         "title": "I can answer things like",
@@ -929,6 +985,8 @@ def ask(db: Session, user_id: str, question: str, *, context: Optional[str] = No
         out = _propose_notify(db, user_id, subject)
     elif intent == CHASE:
         out = _answer_chase(db, user_id, subject, target)
+    elif intent == MONEY:
+        out = _answer_money(db, user_id)
     else:
         out = _answer_unknown(q)
 

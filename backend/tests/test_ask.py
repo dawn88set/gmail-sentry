@@ -574,3 +574,81 @@ def test_the_fallback_does_not_match_everyone():
 
 def _names(rows):
     return [r.display_name for r in rows]
+
+
+# ── money: figures the mail actually stated ─────────────────────────────────
+#
+# "who owes me money" routed to `unknown`, while the amounts to answer it were
+# already being extracted, quote-verified and stored — and shown nowhere. For an
+# owner whose inbox carries orders and invoices, the amounts ARE the inbox.
+#
+# The line these hold: it shows figures and refuses to infer direction. An
+# amount does not say who owes whom, and telling someone the wrong party owes
+# them £4,000 is worse than saying nothing.
+
+
+def _read(db, thread_id, amounts, **kw):
+    d = dict(user_id="u1", thread_id=thread_id, amounts=amounts,
+             read_at=utcnow(), blocked_on="them")
+    d.update(kw)
+    r = models.ThreadRead(**d)
+    db.add(r); db.commit()
+    return r
+
+
+def test_asking_about_money_is_recognised():
+    for phrasing in (
+        "who owes me money",
+        "what's outstanding",
+        "any unpaid invoices",
+        "how much am I owed",
+    ):
+        assert ask.interpret(phrasing)["intent"] == ask.MONEY, phrasing
+
+
+def test_searching_for_invoice_mail_is_still_a_search_not_a_money_question():
+    assert ask.interpret("find anything about the invoice")["intent"] == ask.FIND
+    assert ask.interpret("file invoice mail into Ops")["intent"] == ask.FILE
+
+
+def test_money_shows_the_figure_with_the_sentence_it_came_from():
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
+    fu = _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821")
+    _read(db, fu.thread_id, [{"value": "£4,200", "quote": "the balance of £4,200 is due on the 12th"}])
+
+    out = ask.ask(db, "u1", "who owes me money")
+
+    text = " ".join(str(l.get("text", "")) for l in out["lines"])
+    assert "£4,200" in text
+    assert "balance of £4,200 is due" in text     # checkable, not taken on trust
+    assert "Mark Ruiz" in text
+
+
+def test_money_never_claims_who_owes_whom():
+    """The whole design constraint. An amount does not carry direction."""
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
+    fu = _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821")
+    _read(db, fu.thread_id, [{"value": "£4,200", "quote": "the balance of £4,200"}])
+
+    text = " ".join(str(l.get("text", "")) for l in ask.ask(db, "u1", "who owes me money")["lines"]).lower()
+
+    assert "owes you" not in text and "you owe" not in text
+    assert "not an accounting system" in text     # the caveat is stated, not buried
+
+
+def test_money_with_nothing_read_says_so_rather_than_showing_zero():
+    db = _session()
+    out = ask.ask(db, "u1", "who owes me money")
+    assert "No amounts" in out["title"]
+    assert "threads I've read" in " ".join(str(l.get("text", "")) for l in out["lines"])
+
+
+def test_money_is_user_scoped():
+    db = _session()
+    _cp(db, "mark@meridian-supply.com", "Mark Ruiz")
+    fu = _loop(db, "mark@meridian-supply.com", "Mark Ruiz", "Invoice 4821")
+    _read(db, fu.thread_id, [{"value": "£4,200", "quote": "the balance of £4,200"}])
+
+    assert "No amounts" in ask.ask(db, "u2", "who owes me money")["title"]
