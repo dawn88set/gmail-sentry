@@ -140,26 +140,8 @@ For completeness, everything verifiable on this end passes, on 2026-08-04:
 * `claritty doctor` passes every check, including your platform dry-run
 * our `Dockerfile` is byte-identical to the current seed's
 
-**A deploy can report complete success and serve nothing.** This is the most
-serious of the three, because there is no error anywhere for a developer to
-find. On 2026-08-06 a build published cleanly and the app has served nothing for
-45+ minutes:
-
-```
-deployedAt          2026-08-06T13:36:54Z
-status              ACTIVE      installationStep  Ready (progress 100)
-isHealthy           true        draftErrorAt      null
-healthStatus        null        lastHealthCheckAt null
-app pane            blank
-```
-
-`isHealthy: true` beside `healthStatus: null` and `lastHealthCheckAt: null`
-suggests nothing has actually probed the container — the flag looks like a
-default rather than a measurement. The identical image runs locally: `docker run`
-the same digest and `/` returns 200 with real data.
-
-Three things make this impossible to diagnose from outside, and all three are
-fixable on your side:
+**Diagnosing a deployed app from outside is close to impossible.** These three
+are independent of any one incident, and all are fixable on your side:
 
 * `<id>.apps.claritty.ai` answers **403 to every path**, with or without a
   bearer token, so a developer cannot ask their own deployed container what it
@@ -167,28 +149,30 @@ fixable on your side:
 * `GET /api/apps/:id/logs` returns four placeholder lines — identical
   timestamps, generic text, and "Server listening on port 3000" when the app
   record itself says `appPort: 3200`. It reads as a stub. Real container logs
-  here would have made every one of these tickets unnecessary.
+  here would have made most of this report unnecessary.
 * the app row still carries `error: "Deployment was interrupted - please retry"`
   and a `lastError` from an EARLIER failed attempt, days stale, while
   `draftErrorAt` is null — so the error fields cannot be used to tell a current
   failure from an old one.
 
-**The API's own fields contradict each other on a failed publish.** On
-2026-08-06 at 15:12 a draft built cleanly (`draftDeployedAt` set,
-`draftErrorAt` null). Publishing it produced this, all at the same moment:
+**A failed publish reports contradictory state.** On 2026-08-06 at 15:12 a draft
+built cleanly (`draftDeployedAt` set, `draftErrorAt` null). Publishing it
+produced this, all at the same moment:
 
 ```
 status            FAILED
 installationStep  Done
 draftErrorAt      null
-deployedAt        unchanged (2026-08-06T13:36:54Z)
+deployedAt        unchanged
 ```
 
 A publish that fails should not report its step as "Done", and it should record
-an error somewhere. Any tooling that watches `draftErrorAt` — the field your own
-deploy flow moves on a failed BUILD — cannot see a failed PUBLISH at all, and
-sits waiting on a deploy that has already lost. Please set the same error field
-on both paths, or document which field is authoritative.
+an error somewhere. Tooling that watches `draftErrorAt` — the field the failed
+BUILD path moves — cannot see a failed PUBLISH at all, and waits on a deploy
+that has already lost. Please set the same error field on both paths, or
+document which field is authoritative. (Publishing also appears to rebuild the
+image from scratch — "Validating source", "Running security scan", "Building
+image" all re-run — which is worth confirming is intended.)
 
 **An installed app disappeared from the workspace.** `7e925d43-7188-4d48-8a55-9eb203f59378`
 ("Gmail Sentry", live since 2026-07-20, with connected Gmail and real user data)
