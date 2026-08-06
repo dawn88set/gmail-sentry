@@ -99,6 +99,11 @@ agents:
       - discord.send_message
       - twilio.send_whatsapp
     input:
+      # Ordering only. The engine derives step order from ${steps...} refs, so
+      # without a reference the scan and the report run in PARALLEL and the
+      # report gets built from whatever was already there. Optional, so running
+      # the agent on its own still works.
+      after_scan: { type: string, required: false }
       user_id: { type: string, required: true }
     output:
       summary: { type: string, required: true }
@@ -120,10 +125,20 @@ workflows:
     inputs:
       user_id: { type: string, required: true }
     steps:
+      # Scan BEFORE reporting. A daily report built on two-day-old data is
+      # wrong on its own terms — and on this platform it is also the only scan
+      # anyone can rely on: INTERVAL triggers have never fired here, while DAILY
+      # ones do, so this is what guarantees the mail gets read at all.
+      - id: scan
+        agent: triage-agent
+        input:
+          user_id: "${input.user_id}"
+        onError: { strategy: skip }
       - id: digest
         agent: digest-agent
         input:
           user_id: "${input.user_id}"
+          after_scan: "${steps.scan.output.summary}"
     outputs:
       summary: "${steps.digest.output.summary}"
 
