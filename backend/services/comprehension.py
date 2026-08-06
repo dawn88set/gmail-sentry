@@ -388,6 +388,10 @@ def commitments(db: Session, user_id: str, *, limit: int = 20, now: Optional[dat
             "what": r.your_commitment,
             "quote": r.commitment_quote,
             "to": (fu.counterparty_name or fu.counterparty_email or "") if fu else "",
+            # The address as well as the name. Callers that need to ask "is this
+            # promise to the person on this screen?" cannot do it by display
+            # name — two contacts share a name far more often than an address.
+            "to_email": (fu.counterparty_email or "") if fu else "",
             "subject": (fu.subject or "") if fu else "",
             "promised_at": r.commitment_at.isoformat() if r.commitment_at else None,
             "due_at": r.commitment_due.isoformat() if r.commitment_due else None,

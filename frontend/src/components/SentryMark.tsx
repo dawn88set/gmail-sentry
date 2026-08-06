@@ -5,6 +5,13 @@ import { cn } from '@/lib/utils';
  * The Gmail Sentry mark: a rainbow-gradient shield guarding an envelope, set on
  * a white square tile with a hairline border — the app icon. The square-with-
  * border framing (not a circle) is intentional so it reads as an app glyph.
+ *
+ * The hex colours here are deliberate and must NOT become theme tokens. This is
+ * a fixed brand glyph, like a favicon: the tile is literally white in both
+ * themes, so the slate envelope reads against it either way, and a mark whose
+ * colours changed with the theme would stop being a recognisable mark. The
+ * identity gate flags raw hex as possible theme drift — this is the exception it
+ * asks you to confirm.
  */
 export function SentryMark({ className }: { className?: string }) {
   // useId → unique gradient id per instance (the mark renders in both the top

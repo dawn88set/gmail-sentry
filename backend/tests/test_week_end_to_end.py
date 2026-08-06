@@ -196,3 +196,26 @@ def test_asking_about_money_answers_from_that_amount(week):
     out = ask.ask(db, U, "who owes me money")
     assert out["title"] == "Money in your mail"
     assert "£38,400" in " ".join(str(l.get("text", "")) for l in out["lines"])
+
+
+def test_prep_leads_with_what_you_promised_them(week):
+    """Walking into a call without remembering what you promised the person
+    you're talking to is the specific failure this app exists to prevent. It was
+    stored, and shown everywhere except the screen you'd read before the call."""
+    db, U = week
+
+    out = ask.ask(db, U, "prep me for my call with Dana")
+
+    text = " ".join(str(l.get("text", "")) for l in out["lines"])
+    assert "You promised: send the revised pricing" in text
+    assert "I'll get you the revised pricing by Friday" in text
+
+
+def test_prep_does_not_attribute_a_promise_to_the_wrong_person(week):
+    """A promise made to Dana must not appear in Priya's dossier."""
+    db, U = week
+
+    text = " ".join(str(l.get("text", ""))
+                    for l in ask.ask(db, U, "prep me for my call with Priya")["lines"])
+
+    assert "You promised" not in text

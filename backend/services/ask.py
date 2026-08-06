@@ -527,10 +527,27 @@ def _answer_prep(db: Session, user_id: str, subject: str) -> Dict[str, Any]:
     if best.your_reply_rate:
         stats.append(_stat(f"{best.your_reply_rate}%", "you answer"))
 
+    # What you told THEM you would do. Before a call this outranks everything
+    # else on this screen: walking into a conversation without remembering the
+    # thing you promised the person you're talking to is the specific failure
+    # this app exists to prevent, and it was stored and shown nowhere here.
+    from backend.services import comprehension as comp
+
+    owed_to_them = [
+        c for c in comp.commitments(db, user_id, limit=50)
+        if (c.get("to_email") or "").lower() in emails
+        or (c.get("to") or "") in {(p.display_name or "") for p in people}
+    ]
+
     lines = []
     if acc:
         lines.append(_block(
             f"{accounts_service.REL_LABEL.get(acc.relationship, 'Unclassified')} · {acc.name}", strong=True))
+    for c in owed_to_them[:3]:
+        late = f" · {c['overdue_days']}d late" if c["overdue_days"] else ""
+        lines.append(_block(f"You promised: {c['what']}{late}", strong=True))
+        if c["quote"]:
+            lines.append(_block(f"you wrote: “{c['quote'][:110]}”", muted=True))
     for f in loops[:5]:
         side = "waiting on you" if (f.ball or "") == "you" else "waiting on them"
         lines.append(_block(f"{f.ask_summary or f.subject or '(no subject)'} — {side}"))

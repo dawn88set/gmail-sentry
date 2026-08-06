@@ -1,6 +1,14 @@
 import { cn } from '@/lib/utils';
 
 /** Official 4-color Google "G" (colors via the gmail.* palette — no raw hex). */
+/*
+ * The hex colours in the service icons below are each provider's official brand
+ * colour — Telegram #2AABEE, Discord #5865F2, WhatsApp #25D366. They identify
+ * the service, so they are fixed by definition and must not be replaced with
+ * theme tokens: a green WhatsApp glyph that turned indigo with the app theme
+ * would stop being recognisable, which is the entire job of a service icon.
+ * (The identity gate flags raw hex as possible drift; this is that exception.)
+ */
 export function GoogleLogo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
