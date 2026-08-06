@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -316,6 +318,49 @@ def scan_if_due(user_id: str) -> None:
         db.close()
 
 
+#: Users with a mailbox sweep in flight. The first read is the only thing in this
+#: app that makes sustained Gmail traffic, and it now has two drivers: the loop
+#: on the Today page and the background pass on every poll. Both call
+#: `sync_ledger`, which walks from persisted state — so running them at once
+#: doesn't corrupt anything, it just does the same expensive walk twice and
+#: doubles the request rate at precisely the moment the broker starts throttling.
+#: That is the 429 the owner actually saw. Process-local, like the rate-limit
+#: cooldown, and for the same reason: it's a politeness throttle on one container.
+_sweeping: set = set()
+_sweep_guard = threading.Lock()
+
+
+def acquire_sweep(user_id: str) -> bool:
+    """Take the sweep guard. True if taken, False if someone already holds it."""
+    with _sweep_guard:
+        if user_id in _sweeping:
+            return False
+        _sweeping.add(user_id)
+        return True
+
+
+def release_sweep(user_id: str) -> None:
+    with _sweep_guard:
+        _sweeping.discard(user_id)
+
+
+@contextmanager
+def _claim_sweep(user_id: str):
+    """Yields True if this caller may sweep, False if one is already running."""
+    with _sweep_guard:
+        if user_id in _sweeping:
+            yielded = False
+        else:
+            _sweeping.add(user_id)
+            yielded = True
+    try:
+        yield yielded
+    finally:
+        if yielded:
+            with _sweep_guard:
+                _sweeping.discard(user_id)
+
+
 def sweep_if_unread(user_id: str) -> None:
     """Advance the first read of the mailbox, if it hasn't finished.
 
@@ -345,8 +390,11 @@ def sweep_if_unread(user_id: str) -> None:
         st = ledger.get_sync_state(db, user_id)
         if bool(st.backfill_done):
             return
-        ledger.sync_ledger(db, user_id)
-        followups.sync_followups(db, user_id)
+        with _claim_sweep(user_id) as mine:
+            if not mine:
+                return              # the page's own loop (or another poll) has it
+            ledger.sync_ledger(db, user_id)
+            followups.sync_followups(db, user_id)
     except (IntegrationNotConnected, IntegrationError):
         pass                                    # throttled or not connected; try later
     except Exception:                           # noqa: BLE001 — background work

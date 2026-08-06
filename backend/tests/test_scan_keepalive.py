@@ -240,3 +240,61 @@ def test_a_disconnected_scan_keeps_the_last_good_cleanup_counts():
     newest = db.query(models.ScanRun).order_by(models.ScanRun.started_at.desc()).first()
     assert newest.error == "gmail_not_connected"
     assert (newest.promo_count, newest.social_count, newest.spam_count) == (812, 140, 33)
+
+
+# ── one sweep at a time ─────────────────────────────────────────────────────
+
+
+def test_the_sweep_guard_admits_one_caller():
+    """The first read now has two drivers — the Today page's loop and the
+    background pass on every poll. Both walk the mailbox from persisted state, so
+    running together corrupts nothing; it just does the expensive walk twice and
+    doubles the request rate at exactly the moment the broker throttles."""
+    assert sentry.acquire_sweep("u1") is True
+    try:
+        assert sentry.acquire_sweep("u1") is False
+    finally:
+        sentry.release_sweep("u1")
+    assert sentry.acquire_sweep("u1") is True
+    sentry.release_sweep("u1")
+
+
+def test_one_users_sweep_does_not_block_another():
+    assert sentry.acquire_sweep("u1") is True
+    try:
+        assert sentry.acquire_sweep("u2") is True
+        sentry.release_sweep("u2")
+    finally:
+        sentry.release_sweep("u1")
+
+
+def test_the_guard_is_released_even_when_the_sweep_raises(db, monkeypatch):
+    """A crash must not wedge the first read until the container restarts."""
+    from backend.services import ledger
+
+    monkeypatch.setattr("backend.database.SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(ledger, "sync_ledger",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    sentry.sweep_if_unread("u1")          # swallows, by contract
+
+    assert sentry.acquire_sweep("u1") is True
+    sentry.release_sweep("u1")
+
+
+def test_a_second_poll_stands_down_while_a_sweep_runs(db, monkeypatch):
+    from backend.services import ledger
+
+    monkeypatch.setattr("backend.database.SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    calls = []
+    monkeypatch.setattr(ledger, "sync_ledger", lambda *a, **k: calls.append(1))
+
+    assert sentry.acquire_sweep("u1") is True       # pretend the page holds it
+    try:
+        sentry.sweep_if_unread("u1")
+    finally:
+        sentry.release_sweep("u1")
+
+    assert calls == []

@@ -31,6 +31,8 @@ from backend.services.sentry import (
     scan_health,
     scan_if_due,
     sweep_if_unread,
+    acquire_sweep,
+    release_sweep,
 )
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
@@ -1673,6 +1675,16 @@ async def onboarding_backfill_route(
     budget_s = 20.0
     started = time.monotonic()
     swept = 0
+    # Shared with the background pass, so the page's loop and a poll can't both
+    # walk the mailbox. They would not corrupt each other — sync_ledger walks
+    # from persisted state — but they would do the same expensive walk twice and
+    # double the request rate exactly when the broker starts throttling, which
+    # is the 429 this app actually hit.
+    if not acquire_sweep(user_id):
+        progress = _onboarding_progress(db, user_id)
+        progress["swept"] = 0
+        progress["complete"] = False
+        return progress
     try:
         while time.monotonic() - started < budget_s:
             st = ledger.get_sync_state(db, user_id)
@@ -1707,6 +1719,8 @@ async def onboarding_backfill_route(
         return progress
     except IntegrationError as e:
         raise HTTPException(status_code=502, detail=f"Couldn’t read Gmail: {e}")
+    finally:
+        release_sweep(user_id)
 
     progress = _onboarding_progress(db, user_id)
     if progress["backfill_done"]:
