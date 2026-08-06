@@ -291,7 +291,7 @@ function AlertPeek({ alert }: { alert: WidgetAlert }) {
         <span className="block truncate text-[13px] font-semibold text-foreground">
           {parseSender(alert.sender).name}
         </span>
-        <span className="block truncate text-[12px] text-muted-foreground">{alert.subject}</span>
+        <span className="block truncate text-[12px] text-muted-foreground">{alert.headline || alert.subject}</span>
         {alert.reply_ready && (
           <span className="mt-0.5 block text-[11px] font-medium text-accent">Reply ready</span>
         )}
@@ -316,7 +316,7 @@ function AlertRow({ alert, onClick }: { alert: WidgetAlert; onClick: () => void 
         >
           {parseSender(alert.sender).name}
         </span>
-        <span className="block truncate text-[12px] text-muted-foreground">{alert.subject}</span>
+        <span className="block truncate text-[12px] text-muted-foreground">{alert.headline || alert.subject}</span>
       </div>
       {alert.reply_ready && (
         <span className="flex-shrink-0 text-[11px] font-medium text-accent">Reply</span>

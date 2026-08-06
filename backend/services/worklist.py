@@ -100,6 +100,51 @@ def _email_only(sender: str) -> str:
     return raw.strip().strip('"').lower()
 
 
+def alert_headlines(db: Session, user_id: str, alerts: List[Any]) -> Dict[str, str]:
+    """The one sentence each alert should say, keyed by alert id.
+
+    Shared with the widget on purpose. The widget is the surface an owner
+    actually looks at — the app is the 10% — and it was showing raw subject
+    lines ("Re: Q3") while the app showed the real ask ("wants a 12% discount on
+    40 seats"). Two surfaces disagreeing about the same mail is worse than
+    either one being plain, so there is one function and both call it.
+
+    Precedence: what the thread actually SAYS, then the ask the loop extracted,
+    then the subject. Never a guess — an unread thread with no loop keeps its
+    subject line rather than getting a sentence invented for it.
+    """
+    thread_ids = {a.thread_id for a in alerts if a.thread_id}
+    if not thread_ids:
+        return {a.id: (a.subject or "(no subject)") for a in alerts}
+
+    reads = {
+        r.thread_id: r
+        for r in db.query(models.ThreadRead)
+        .filter(
+            models.ThreadRead.user_id == user_id,
+            models.ThreadRead.thread_id.in_(thread_ids),
+            models.ThreadRead.their_ask != "",
+        )
+        .all()
+    }
+    loops = {
+        f.thread_id: f
+        for f in db.query(models.FollowUp)
+        .filter(models.FollowUp.user_id == user_id, models.FollowUp.thread_id.in_(thread_ids))
+        .all()
+    }
+    out: Dict[str, str] = {}
+    for a in alerts:
+        tid = a.thread_id or ""
+        loop = loops.get(tid)
+        out[a.id] = (
+            (reads[tid].their_ask if tid in reads else "")
+            or (loop.ask_summary if loop and loop.ask_summary else "")
+            or (a.subject or "(no subject)")
+        )
+    return out
+
+
 def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
     """The ranked list, plus what's already been cleared today.
 
@@ -150,13 +195,8 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
     # And when the thread has actually been READ, that beats both. A fresh alert
     # has no loop yet — the Alert/FollowUp boundary holds one back for its first
     # 24 hours — so without this the newest and most urgent mail is the only
-    # mail still showing a bare subject line.
-    reads = {
-        r.thread_id: r
-        for r in db.query(models.ThreadRead)
-        .filter(models.ThreadRead.user_id == user_id, models.ThreadRead.their_ask != "")
-        .all()
-    }
+    # mail still showing a bare subject line. One helper, shared with the widget.
+    headlines = alert_headlines(db, user_id, alerts)
     for a in alerts:
         loop = asks.get(a.thread_id or "")
         due = loop.due_at if loop else None
@@ -167,11 +207,7 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
             "who": _short(a.sender or ""),
             "email": a.sender or "",
             "company": company_by_email.get(_email_only(a.sender or ""), ""),
-            "headline": (
-                (reads[a.thread_id].their_ask if a.thread_id in reads else "")
-                or (loop.ask_summary if loop and loop.ask_summary else "")
-                or (a.subject or "(no subject)")
-            ),
+            "headline": headlines.get(a.id) or a.subject or "(no subject)",
             "subject": a.subject or "",
             "urgent": a.tier == "urgent",
             "due_at": due.isoformat() if due else None,

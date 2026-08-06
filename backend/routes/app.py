@@ -1016,9 +1016,16 @@ async def get_widget_data(
             .first()
         )
 
+        # What each row should SAY. Shared with the worklist so the widget and
+        # the app can never describe the same mail differently — the widget is
+        # the surface people actually look at, and it was the one still showing
+        # "Re: Q3" after the app learned to say what was being asked for.
+        headlines = worklist_service.alert_headlines(db, user_id, ranked[:3])
+
         top_alerts = [
             {
                 "id": a.id,
+                "headline": headlines.get(a.id) or a.subject or "(no subject)",
                 "subject": a.subject or "(no subject)",
                 "sender": a.sender or "",
                 "tier": a.tier,

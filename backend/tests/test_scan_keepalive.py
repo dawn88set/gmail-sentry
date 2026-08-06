@@ -107,3 +107,56 @@ def test_a_started_scan_immediately_blocks_a_second_one(db):
     db.commit()
 
     assert sentry.due_for_scan(db, "u1") is False
+
+
+# ── one headline, two surfaces ──────────────────────────────────────────────
+
+
+def test_the_widget_and_the_worklist_describe_the_same_mail_the_same_way():
+    """The widget is the surface people actually look at; the app is the 10%.
+
+    The widget was showing "Re: Q3" while the worklist showed what was being
+    asked for, because each built its own headline. Two surfaces disagreeing
+    about the same mail is worse than either being plain, so they share one
+    function — this holds them together.
+    """
+    from backend.services import worklist
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+
+    db.add(models.Alert(
+        user_id="u1", gmail_message_id="m1", thread_id="t1",
+        sender="Dana Levi <dana@northwind.co>", subject="Re: Q3",
+        tier="urgent", status="new", created_at=utcnow(),
+    ))
+    db.add(models.ThreadRead(
+        user_id="u1", thread_id="t1",
+        their_ask="a 12% discount on 40 seats",
+        their_ask_quote="12% discount on 40 seats",
+    ))
+    db.commit()
+
+    alerts = db.query(models.Alert).all()
+    widget_headline = worklist.alert_headlines(db, "u1", alerts)[alerts[0].id]
+    app_headline = worklist.build(db, "u1")["items"][0]["headline"]
+
+    assert widget_headline == app_headline == "a 12% discount on 40 seats"
+
+
+def test_an_unread_thread_keeps_its_subject_rather_than_inventing_one():
+    from backend.services import worklist
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    db.add(models.Alert(
+        user_id="u1", gmail_message_id="m1", thread_id="t1",
+        sender="Dana Levi <dana@northwind.co>", subject="Re: Q3",
+        tier="urgent", status="new", created_at=utcnow(),
+    ))
+    db.commit()
+
+    alerts = db.query(models.Alert).all()
+    assert worklist.alert_headlines(db, "u1", alerts)[alerts[0].id] == "Re: Q3"

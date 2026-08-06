@@ -196,6 +196,10 @@ export interface ScanSummary {
 // Shape returned by GET /api/widget (see backend/routes/app.py).
 export interface WidgetAlert {
   id: string;
+  /** What this mail is actually asking for, when the thread has been read —
+   *  falls back to the subject. Same helper as the worklist, so the widget and
+   *  the app never describe the same mail differently. */
+  headline?: string;
   subject: string;
   sender: string;
   tier: Tier;
