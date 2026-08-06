@@ -140,6 +140,47 @@ For completeness, everything verifiable on this end passes, on 2026-08-04:
 * `claritty doctor` passes every check, including your platform dry-run
 * our `Dockerfile` is byte-identical to the current seed's
 
+**A deploy can report complete success and serve nothing.** This is the most
+serious of the three, because there is no error anywhere for a developer to
+find. On 2026-08-06 a build published cleanly and the app has served nothing for
+45+ minutes:
+
+```
+deployedAt          2026-08-06T13:36:54Z
+status              ACTIVE      installationStep  Ready (progress 100)
+isHealthy           true        draftErrorAt      null
+healthStatus        null        lastHealthCheckAt null
+app pane            blank
+```
+
+`isHealthy: true` beside `healthStatus: null` and `lastHealthCheckAt: null`
+suggests nothing has actually probed the container — the flag looks like a
+default rather than a measurement. The identical image runs locally: `docker run`
+the same digest and `/` returns 200 with real data.
+
+Three things make this impossible to diagnose from outside, and all three are
+fixable on your side:
+
+* `<id>.apps.claritty.ai` answers **403 to every path**, with or without a
+  bearer token, so a developer cannot ask their own deployed container what it
+  is doing.
+* `GET /api/apps/:id/logs` returns four placeholder lines — identical
+  timestamps, generic text, and "Server listening on port 3000" when the app
+  record itself says `appPort: 3200`. It reads as a stub. Real container logs
+  here would have made every one of these tickets unnecessary.
+* the app row still carries `error: "Deployment was interrupted - please retry"`
+  and a `lastError` from an EARLIER failed attempt, days stale, while
+  `draftErrorAt` is null — so the error fields cannot be used to tell a current
+  failure from an old one.
+
+**An installed app disappeared from the workspace.** `7e925d43-7188-4d48-8a55-9eb203f59378`
+("Gmail Sentry", live since 2026-07-20, with connected Gmail and real user data)
+has `status: DELETED`, `deletedAt: 2026-08-04T23:04:31.863Z`. No deletion was
+requested through the UI at that time. Please check the audit log for what
+issued that call — an installed app vanishing mid-deploy is a data-loss event,
+and from outside there is no way to tell whether it was the platform, the CLI,
+or something else.
+
 **The ask:** the CodeBuild log for any failing build of
 `claritty-app-7e925d43-dft`. Failures die ~60–90s into "Building image", while
 successful builds take ~3 minutes — so they're failing early rather than timing
