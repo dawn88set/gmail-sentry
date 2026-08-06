@@ -118,7 +118,13 @@ export default function AccountDetail() {
     );
   }
 
-  const open = data.threads.filter((t) => !['done', 'ignored'].includes(t.state));
+  // Same class of bug that blanked the deployed app: indexing into a fetched
+  // object assumes a field that a partial or error response won't have, and the
+  // throw happens during render, so it costs the whole screen rather than this
+  // one list.
+  const threads = Array.isArray(data.threads) ? data.threads : [];
+  const people = Array.isArray(data.people) ? data.people : [];
+  const open = threads.filter((t) => !['done', 'ignored'].includes(t.state));
 
   return (
     <Screen title={data.name}>
@@ -172,7 +178,7 @@ export default function AccountDetail() {
 
       <ListSection title="People">
         <ListGroup>
-          {data.people.map((p) => (
+          {people.map((p) => (
             <ListRow
               key={p.email}
               title={p.display_name || p.email}

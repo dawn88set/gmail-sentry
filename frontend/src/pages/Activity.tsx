@@ -522,7 +522,8 @@ function InsightsTab() {
     );
   }
 
-  const { coverage, response, attention, at_risk, handled } = data;
+  // Defaults so a partial payload costs this panel, not the whole screen.
+  const { coverage, response, attention, at_risk, handled } = data ?? {};
 
   if (coverage.messages === 0) {
     return (

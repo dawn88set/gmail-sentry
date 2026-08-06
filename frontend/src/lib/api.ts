@@ -945,8 +945,20 @@ export interface Worklist {
   overdue: number;
 }
 
-export const getWorklist = async (limit = 12): Promise<Worklist> =>
-  (await api.get('/api/worklist', { params: { limit } })).data;
+export const getWorklist = async (limit = 12): Promise<Worklist> => {
+  // Normalise at the boundary. The worklist IS the landing screen, so a body
+  // without `items` doesn't degrade this one component — it throws during
+  // render and takes the whole app with it.
+  const d = (await api.get('/api/worklist', { params: { limit } })).data ?? {};
+  return {
+    ...d,
+    items: Array.isArray(d.items) ? d.items : [],
+    total: d.total ?? 0,
+    done_today: d.done_today ?? 0,
+    ready_to_send: d.ready_to_send ?? 0,
+    overdue: d.overdue ?? 0,
+  };
+};
 
 // ── Accounts: the companies behind the mailbox ──────────────────────────────
 // Every other surface is organised the way mail arrives — a message, a thread,

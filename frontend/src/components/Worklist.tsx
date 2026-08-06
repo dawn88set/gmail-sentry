@@ -69,7 +69,18 @@ export function Worklist({
     );
   }
 
-  const { items, total, done_today, ready_to_send, overdue } = data;
+  // Defaults, not decoration. `data` is whatever the API returned, and a body
+  // missing `items` makes the next line throw during render — which unmounts the
+  // whole tree and leaves a blank screen, not a broken list. Destructuring an
+  // API response is a place where "it always has that field" is an assumption,
+  // and an assumption that costs the entire app when it is wrong.
+  const {
+    items = [],
+    total = 0,
+    done_today = 0,
+    ready_to_send = 0,
+    overdue = 0,
+  } = data;
 
   if (items.length === 0) {
     return (
