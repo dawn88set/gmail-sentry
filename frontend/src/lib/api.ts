@@ -1057,6 +1057,9 @@ export interface OnboardingProgress {
   /** Indexed AND readable. This, not backfill_done, is the finish line. */
   complete?: boolean;
   swept?: number;
+  /** Set when Gmail's broker throttled us mid-walk. Not a failure — wait this
+   *  many seconds and call again; the walk resumes where it stopped. */
+  paused_seconds?: number;
 }
 
 export const getOnboardingProgress = async (): Promise<OnboardingProgress> =>

@@ -140,6 +140,53 @@ class IntegrationError(Exception):
         super().__init__(message)
 
 
+class IntegrationRateLimited(IntegrationError):
+    """The broker is throttling us (HTTP 429) — the call should be retried later.
+
+    A subclass, so every existing `except IntegrationError` still catches it and
+    nothing starts failing in a new way; but code that can usefully back off can
+    catch this specifically and pause instead of reporting a broken mailbox.
+    """
+
+    def __init__(self, service: str, message: Optional[str] = None):
+        super().__init__(service, message or f"{service} is rate-limiting — pausing briefly.")
+
+
+#: When each service may be called again, as a monotonic deadline. Process-local
+#: on purpose: it is a politeness throttle, not a correctness mechanism, and the
+#: app runs as one container.
+_cooldowns: Dict[str, float] = {}
+
+#: How long to stand off when the broker doesn't say. Long enough to actually
+#: drain its window, short enough that a first read still finishes while someone
+#: is watching it.
+RATE_LIMIT_COOLDOWN_S = 60.0
+
+
+def note_rate_limited(service: str, retry_after: Optional[str] = None) -> None:
+    """Record that `service` throttled us, so other callers stop dogpiling it."""
+    import time as _time
+
+    try:
+        wait = float(retry_after or 0) or RATE_LIMIT_COOLDOWN_S
+    except ValueError:
+        wait = RATE_LIMIT_COOLDOWN_S
+    _cooldowns[service] = _time.monotonic() + min(wait, 300.0)
+
+
+def cooling_down(service: str) -> float:
+    """Seconds until `service` may be called again; 0 when it's fine to call.
+
+    Anything that reads mail speculatively — the keepalive scan, the background
+    half of the first read — checks this first. Without it, being throttled makes
+    the app try HARDER (every poll starting another scan), which is how a brief
+    throttle turns into a sustained one.
+    """
+    import time as _time
+
+    return max(0.0, _cooldowns.get(service, 0.0) - _time.monotonic())
+
+
 def _platform_base() -> str:
     """The platform base URL, reading BOTH env spellings (two-t `CLARITTY_` and
     one-t `CLARITY_`). main.py and validate_startup.py already read both because
@@ -285,15 +332,38 @@ def execute_tool(
     body = {"userId": user_id, "arguments": arguments}
     if app_id:
         body["appId"] = app_id
-    try:
-        resp = httpx.post(
-            url,
-            headers={"X-Claritty-Internal": secret},
-            json=body,
-            timeout=30,
-        )
-    except httpx.HTTPError as e:
-        raise IntegrationError(service, f"{tool} executor call failed: {e}")
+    import time as _time
+
+    # 429 is not a failure, it is "not yet". The broker throttles per app, and a
+    # first read walks the mailbox in six-hour buckets — enough calls to trip it
+    # routinely. Treating that as an error surfaced "Couldn't read your mail" and
+    # abandoned the walk part-way, which looks exactly like the app being broken.
+    # Retry a couple of times, honouring Retry-After when the broker sends one,
+    # then hand back a rate-limit signal the callers can pause on.
+    resp = None
+    for attempt in range(3):
+        try:
+            resp = httpx.post(
+                url,
+                headers={"X-Claritty-Internal": secret},
+                json=body,
+                timeout=30,
+            )
+        except httpx.HTTPError as e:
+            raise IntegrationError(service, f"{tool} executor call failed: {e}")
+        if resp.status_code != 429:
+            break
+        if attempt == 2:
+            break
+        try:
+            wait = float(resp.headers.get("Retry-After") or 0)
+        except ValueError:
+            wait = 0.0
+        _time.sleep(min(max(wait, 1.0 * (2 ** attempt)), 8.0))
+
+    if resp.status_code == 429:
+        note_rate_limited(service, resp.headers.get("Retry-After"))
+        raise IntegrationRateLimited(service)
     if resp.status_code == 409:
         raise IntegrationNotConnected(service)
     if resp.status_code >= 400:

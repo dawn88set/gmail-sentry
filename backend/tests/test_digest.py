@@ -169,3 +169,60 @@ def test_users_are_isolated():
     db = _session()
     a_loop(db, "u1", thread="t1", state="going_cold", who="mark", subject="Theirs")
     assert digest.build_digest_text(db, "u2") == ""
+
+
+# ── duplicate schedules ─────────────────────────────────────────────────────
+
+
+def _sends(monkeypatch):
+    """Record every delivery attempt instead of making one."""
+    sent = []
+    monkeypatch.setattr(
+        digest.notify, "notify_all",
+        lambda db, u, cfg, text: sent.append(text) or [{"ok": True, "channel": "slack"}],
+    )
+    return sent
+
+
+def test_two_schedules_firing_together_send_one_report(monkeypatch):
+    """The platform created TWO identical 08:00 instances of this trigger on the
+    live workspace. The app can't stop a duplicate schedule existing, but the
+    same report arriving twice is its problem, not the owner's."""
+    db = _session()
+    sent = _sends(monkeypatch)
+    a_loop(db, "u1", thread="t1", state="going_cold", who="dana", subject="Q3")
+
+    first = digest.run_digest(db, "u1")
+    second = digest.run_digest(db, "u1")
+
+    assert first["sent"] is True
+    assert second["sent"] is False and second["reason"] == "already_sent"
+    assert len(sent) == 1
+
+
+def test_a_deliberate_second_report_later_in_the_day_still_sends(monkeypatch):
+    """Morning and evening digests are a real thing someone might configure —
+    the guard has to catch duplicates, not a second scheduled report."""
+    db = _session()
+    sent = _sends(monkeypatch)
+    a_loop(db, "u1", thread="t1", state="going_cold", who="dana", subject="Q3")
+
+    digest.run_digest(db, "u1")
+    # Age the record past the window, as ten hours later would.
+    ev = db.query(models.ActivityEvent).filter_by(user_id="u1", kind="report_sent").one()
+    ev.at = utcnow() - digest.DUPLICATE_WINDOW - timedelta(minutes=1)
+    db.commit()
+
+    assert digest.run_digest(db, "u1")["sent"] is True
+    assert len(sent) == 2
+
+
+def test_one_users_report_does_not_suppress_anothers(monkeypatch):
+    db = _session()
+    sent = _sends(monkeypatch)
+    a_loop(db, "u1", thread="t1", state="going_cold", who="dana", subject="Q3")
+    a_loop(db, "u2", thread="t2", state="going_cold", who="sam", subject="Renewal")
+
+    assert digest.run_digest(db, "u1")["sent"] is True
+    assert digest.run_digest(db, "u2")["sent"] is True
+    assert len(sent) == 2

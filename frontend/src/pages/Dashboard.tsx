@@ -140,6 +140,13 @@ export default function Dashboard() {
       // requires every open loop to have a name and a subject. Bounded so a
       // server that never reports complete can't spin here forever.
       for (let i = 0; i < 60 && !p.complete; i++) {
+        // Gmail's broker throttles per app, and a first read is the burstiest
+        // thing this app does — so being asked to wait is ordinary, not a
+        // failure. Waiting keeps the walk going; hammering through the pause is
+        // what earns a longer one.
+        if (p.paused_seconds) {
+          await new Promise((r) => setTimeout(r, Math.min(p.paused_seconds!, 60) * 1000));
+        }
         p = await runBackfill();
         setFirstRun(p);
       }
@@ -164,7 +171,9 @@ export default function Dashboard() {
         text:
           e.status === 409
             ? 'Connect Gmail first — that’s where your accounts come from.'
-            : `Couldn’t read your mail: ${e.message}`,
+            : e.status === 429
+              ? 'Gmail is rate-limiting us — the read will pick up again shortly.'
+              : `Couldn’t read your mail: ${e.message}`,
       });
     } finally {
       readingRef.current = false;
@@ -377,10 +386,17 @@ export default function Dashboard() {
                     <div className="h-full w-1/3 animate-sweep rounded-full bg-accent" />
                   </div>
 
+                  {/* "keeps going if you leave" is the line that matters. This
+                      read used to be driven only by the loop in this component,
+                      so navigating away abandoned it half-done; the server
+                      advances it too now, and the copy should say so rather
+                      than quietly implying you have to sit and watch. */}
                   <div className="mt-2 text-[12.5px] text-muted-foreground">
-                    {firstRun.backfill_done && firstRun.anonymous_loops > 0
-                      ? `Working out who ${firstRun.anonymous_loops} more conversation${firstRun.anonymous_loops === 1 ? ' is' : 's are'} with…`
-                      : `Going back ${firstRun.horizon_days} days · you can keep using the app`}
+                    {firstRun.paused_seconds
+                      ? 'Gmail asked us to slow down — picking up again in a moment.'
+                      : firstRun.backfill_done && firstRun.anonymous_loops > 0
+                        ? `Working out who ${firstRun.anonymous_loops} more conversation${firstRun.anonymous_loops === 1 ? ' is' : 's are'} with…`
+                        : `Going back ${firstRun.horizon_days} days · keeps going if you leave this page`}
                   </div>
                 </>
               ) : (

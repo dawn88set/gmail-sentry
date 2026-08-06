@@ -41,6 +41,11 @@ from backend.integrations import notify
 logger = logging.getLogger(__name__)
 
 
+#: How close two reports have to be before the second is treated as a duplicate
+#: of the first rather than a second scheduled report. See `run_digest`.
+DUPLICATE_WINDOW = timedelta(hours=1)
+
+
 #: One definition, so the report and the in-app activity feed name the same
 #: person the same way.
 _short_sender = activity.short_sender
@@ -189,7 +194,28 @@ def _refresh_profile_if_stale(db: Session, user_id: str) -> None:
 
 def run_digest(db: Session, user_id: str) -> Dict[str, Any]:
     """Build + send the digest. Never raises (notify is best-effort + isolated).
-    Returns a summary so the agent/workflow can report what happened."""
+    Returns a summary so the agent/workflow can report what happened.
+
+    Sends at most one report per hour. The platform can hold more than one
+    schedule instance for this trigger, and on this workspace it created two
+    identical ones — same trigger, both at 08:00 — which would deliver the same
+    report to the same person twice. The app cannot stop a duplicate schedule
+    being created, but it can decline to send the duplicate. An hour is wide
+    enough to absorb two instances firing together and narrow enough that a
+    deliberate morning-and-evening pair still gets both.
+    """
+    recent = (
+        db.query(models.ActivityEvent)
+        .filter(
+            models.ActivityEvent.user_id == user_id,
+            models.ActivityEvent.kind == "report_sent",
+            models.ActivityEvent.at >= datetime.utcnow() - DUPLICATE_WINDOW,
+        )
+        .first()
+    )
+    if recent is not None:
+        return {"ok": True, "sent": False, "reason": "already_sent"}
+
     _refresh_profile_if_stale(db, user_id)
     cfg = get_config(db, user_id)
     text = build_digest_text(db, user_id)

@@ -273,6 +273,88 @@ def scan_health(db: Session, user_id: str, *, now: Optional[datetime] = None) ->
     }
 
 
+def scan_if_due(user_id: str) -> None:
+    """Scan now if the owner's interval has elapsed. Safe to call on any request.
+
+    The app's schedule is not the app's to run: the platform fires `sentry-scan`
+    and calls in. On this workspace that trigger has never fired once — every
+    INTERVAL trigger across every installed app is hours to weeks overdue with
+    `lastRunAt` null — so the mail was only ever read when someone pressed Scan.
+    An inbox assistant that only looks when you ask it to is a mail client.
+
+    So the app also checks its own watch whenever it is being used. A poll from
+    the widget or a screen refresh runs the scan the schedule owes, at the
+    cadence the owner picked and never faster: `due_for_scan` is the same gate
+    the scheduled path uses, and `run_scan` claims its ScanRun row before doing
+    any work, so simultaneous polls cannot both scan.
+
+    This is a floor, not a replacement — it can only keep the mail fresh while
+    someone is looking. When the platform's scheduler starts firing, the same
+    interval check means the two simply take whichever tick comes first.
+
+    Never raises: it runs after the response has been handed back, so anything
+    escaping here would be logged noise on a request the user already has.
+    """
+    from backend.database import SessionLocal
+    from backend.shared.adapters import cooling_down
+
+    # Being throttled must not make the app try harder. This runs on every poll,
+    # so without the check a brief 429 becomes a sustained one.
+    if cooling_down("gmail"):
+        return
+
+    db = SessionLocal()
+    try:
+        if not due_for_scan(db, user_id):
+            return
+        run_scan(db, user_id)
+    except IntegrationNotConnected:
+        pass                                    # nothing to scan; the UI says so
+    except Exception:                           # noqa: BLE001 — background work
+        logger.exception("keepalive scan failed for %s", user_id)
+    finally:
+        db.close()
+
+
+def sweep_if_unread(user_id: str) -> None:
+    """Advance the first read of the mailbox, if it hasn't finished.
+
+    The first read was driven entirely by a loop inside the Today page: the
+    client called `/api/onboarding/backfill` over and over until it reported
+    done. So navigating away — or reloading, or locking the phone — stopped the
+    walk part-way, and the owner came back to a half-read mailbox with a progress
+    bar that had silently given up. Nothing about reading someone's mail should
+    depend on which screen they are looking at.
+
+    So the server advances it too, on any request, in the background. The client
+    loop still runs when Today is open (it is faster, and it is what makes the
+    bar move), and the two cannot collide: `sync_ledger` walks from persisted
+    sync state, and this takes one bite per request rather than looping.
+
+    Never raises — same contract as `scan_if_due`.
+    """
+    from backend.database import SessionLocal
+    from backend.services import followups, ledger
+    from backend.shared.adapters import cooling_down
+
+    if cooling_down("gmail"):
+        return
+
+    db = SessionLocal()
+    try:
+        st = ledger.get_sync_state(db, user_id)
+        if bool(st.backfill_done):
+            return
+        ledger.sync_ledger(db, user_id)
+        followups.sync_followups(db, user_id)
+    except (IntegrationNotConnected, IntegrationError):
+        pass                                    # throttled or not connected; try later
+    except Exception:                           # noqa: BLE001 — background work
+        logger.exception("background first-read sweep failed for %s", user_id)
+    finally:
+        db.close()
+
+
 def run_scan(
     db: Session,
     user_id: str,
@@ -329,7 +411,15 @@ def run_scan(
                         "tier": "needs_reply",
                     })
 
+    # Claim the slot before doing the work, not after. `started_at` is what
+    # `due_for_scan` measures from, and until this row exists every concurrent
+    # caller still reads "due" — so two polls arriving together would both run a
+    # full scan against Gmail. Writing it now makes the interval itself the lock,
+    # and a scan that dies half way still holds the slot for one interval rather
+    # than being retried on every request.
     run = models.ScanRun(user_id=user_id)
+    db.add(run)
+    db.commit()
 
     # Bring the thread ledger up to date, then take work FROM it rather than
     # re-querying Gmail. Two consequences worth stating plainly:

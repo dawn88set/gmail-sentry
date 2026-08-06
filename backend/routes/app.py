@@ -11,7 +11,7 @@ the bundled Gmail/Slack adapters, which raise IntegrationNotConnected → we map
 HTTP 409 (the UI turns it into a connect prompt). We never fake success.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -25,10 +25,21 @@ import time
 from backend.database import get_db
 from backend.security import require_user
 from backend import models
-from backend.services.sentry import run_scan, get_config, scan_health
+from backend.services.sentry import (
+    run_scan,
+    get_config,
+    scan_health,
+    scan_if_due,
+    sweep_if_unread,
+)
 from backend.services.reply import draft_reply, style_for
 from backend.services.learn import get_profile, learn_patterns
-from backend.shared.adapters import IntegrationNotConnected, IntegrationError
+from backend.shared.adapters import (
+    IntegrationNotConnected,
+    IntegrationError,
+    IntegrationRateLimited,
+    cooling_down,
+)
 from backend.services import activity
 from backend.services import mail as mail_service
 from backend.services import worklist as worklist_service
@@ -975,11 +986,18 @@ async def scan_now(
 
 @router.get("/api/widget")
 async def get_widget_data(
+    background: BackgroundTasks,
     size: str = "large",
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """The glance: urgent count, last scan, top alerts, and cleanup counts."""
+    """The glance: urgent count, last scan, top alerts, and cleanup counts.
+
+    Scans in the background when the owner's interval has elapsed. The widget is
+    the surface that polls most often and the one whose entire job is to be
+    current, so it is where a stalled schedule shows up first. Queued AFTER the
+    response, so the glance stays fast whether or not a scan runs."""
+    background.add_task(scan_if_due, user_id)
     try:
         active = (
             _active_filter(db.query(models.Alert).filter(models.Alert.user_id == user_id))
@@ -1448,6 +1466,7 @@ async def archive_mail(message_id: str, user_id: str = Depends(require_user), db
 
 @router.get("/api/worklist")
 async def get_worklist(
+    background: BackgroundTasks,
     limit: int = 12,
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
@@ -1462,6 +1481,8 @@ async def get_worklist(
     The two sources are disjoint by construction, so the count can be trusted —
     see followups.py on the Alert/FollowUp boundary.
     """
+    background.add_task(scan_if_due, user_id)
+    background.add_task(sweep_if_unread, user_id)
     return worklist_service.build(db, user_id, limit=max(1, min(limit, 50)))
 
 
@@ -1606,10 +1627,17 @@ def _onboarding_progress(db: Session, user_id: str) -> dict:
 
 @router.get("/api/onboarding/progress")
 async def onboarding_progress_route(
+    background: BackgroundTasks,
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """How much of the mailbox has been read so far."""
+    """How much of the mailbox has been read so far.
+
+    Also nudges the read forward. Asking how far along it is should not be the
+    one thing that DOESN'T advance it — this endpoint is polled from surfaces
+    that outlive the Today page, so it is what keeps a first read alive after
+    the owner navigates away."""
+    background.add_task(sweep_if_unread, user_id)
     return _onboarding_progress(db, user_id)
 
 
@@ -1659,6 +1687,17 @@ async def onboarding_backfill_route(
                 followups.sync_followups(db, user_id)
     except IntegrationNotConnected:
         raise HTTPException(status_code=409, detail="Gmail isn’t connected")
+    except IntegrationRateLimited:
+        # Not a failure — "not yet". The broker throttles per app and a first read
+        # is the burstiest thing this app ever does, so hitting the limit is
+        # ordinary. Returning progress with a pause tells the client to wait and
+        # keep going; raising here abandoned the walk part-way and told the owner
+        # their mail couldn't be read, which is both alarming and untrue.
+        progress = _onboarding_progress(db, user_id)
+        progress["swept"] = swept
+        progress["complete"] = False
+        progress["paused_seconds"] = int(cooling_down("gmail")) + 1
+        return progress
     except IntegrationError as e:
         raise HTTPException(status_code=502, detail=f"Couldn’t read Gmail: {e}")
 
