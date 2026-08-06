@@ -298,3 +298,43 @@ def test_a_second_poll_stands_down_while_a_sweep_runs(db, monkeypatch):
         sentry.release_sweep("u1")
 
     assert calls == []
+
+
+# ── upkeep must not hold the request open ───────────────────────────────────
+
+
+def test_the_detached_helpers_return_immediately(monkeypatch):
+    """FastAPI's BackgroundTasks are NOT detached — Starlette awaits them inside
+    the ASGI call, so a scan taking tens of seconds keeps a user-facing GET open
+    until the proxy answers with a timeout page instead. That is what the
+    deployed worklist started returning, on the one endpoint carrying both jobs.
+    """
+    import time
+
+    started = []
+
+    def slow(user_id):
+        started.append(user_id)
+        time.sleep(0.5)
+
+    monkeypatch.setattr(sentry, "scan_if_due", slow)
+
+    t0 = time.monotonic()
+    sentry.scan_if_due_detached("u1")
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.1, f"the request waited {elapsed:.2f}s on upkeep"
+    time.sleep(0.2)
+    assert started == ["u1"]          # it really did run, just not inline
+
+
+def test_upkeep_failing_to_start_never_breaks_the_request(monkeypatch):
+    """A page must render even if the housekeeping can't be scheduled."""
+    import threading as _t
+
+    def boom(*a, **k):
+        raise RuntimeError("can't spawn")
+
+    monkeypatch.setattr(_t, "Thread", boom)
+    sentry.scan_if_due_detached("u1")      # must not raise
+    sentry.sweep_if_unread_detached("u1")

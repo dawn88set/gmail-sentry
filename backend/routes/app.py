@@ -11,7 +11,7 @@ the bundled Gmail/Slack adapters, which raise IntegrationNotConnected → we map
 HTTP 409 (the UI turns it into a connect prompt). We never fake success.
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -29,8 +29,8 @@ from backend.services.sentry import (
     run_scan,
     get_config,
     scan_health,
-    scan_if_due,
-    sweep_if_unread,
+    scan_if_due_detached,
+    sweep_if_unread_detached,
     acquire_sweep,
     release_sweep,
 )
@@ -996,7 +996,6 @@ async def scan_now(
 
 @router.get("/api/widget")
 async def get_widget_data(
-    background: BackgroundTasks,
     size: str = "large",
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
@@ -1007,7 +1006,7 @@ async def get_widget_data(
     the surface that polls most often and the one whose entire job is to be
     current, so it is where a stalled schedule shows up first. Queued AFTER the
     response, so the glance stays fast whether or not a scan runs."""
-    background.add_task(scan_if_due, user_id)
+    scan_if_due_detached(user_id)
     try:
         active = (
             _active_filter(db.query(models.Alert).filter(models.Alert.user_id == user_id))
@@ -1483,7 +1482,6 @@ async def archive_mail(message_id: str, user_id: str = Depends(require_user), db
 
 @router.get("/api/worklist")
 async def get_worklist(
-    background: BackgroundTasks,
     limit: int = 12,
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
@@ -1498,8 +1496,8 @@ async def get_worklist(
     The two sources are disjoint by construction, so the count can be trusted —
     see followups.py on the Alert/FollowUp boundary.
     """
-    background.add_task(scan_if_due, user_id)
-    background.add_task(sweep_if_unread, user_id)
+    scan_if_due_detached(user_id)
+    sweep_if_unread_detached(user_id)
     return worklist_service.build(db, user_id, limit=max(1, min(limit, 50)))
 
 
@@ -1644,7 +1642,6 @@ def _onboarding_progress(db: Session, user_id: str) -> dict:
 
 @router.get("/api/onboarding/progress")
 async def onboarding_progress_route(
-    background: BackgroundTasks,
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
@@ -1654,7 +1651,7 @@ async def onboarding_progress_route(
     one thing that DOESN'T advance it — this endpoint is polled from surfaces
     that outlive the Today page, so it is what keeps a first read alive after
     the owner navigates away."""
-    background.add_task(sweep_if_unread, user_id)
+    sweep_if_unread_detached(user_id)
     return _onboarding_progress(db, user_id)
 
 

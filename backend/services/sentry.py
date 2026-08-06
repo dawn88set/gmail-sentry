@@ -361,6 +361,41 @@ def _claim_sweep(user_id: str):
                 _sweeping.discard(user_id)
 
 
+def _detach(fn, user_id: str) -> None:
+    """Run `fn(user_id)` without holding the request open.
+
+    FastAPI's BackgroundTasks are NOT detached: Starlette awaits them inside the
+    ASGI call, after the body is sent but before the request completes
+    (`await self.background()` in Response.__call__). A full inbox scan can take
+    tens of seconds, so hanging one off a user-facing GET keeps that request open
+    long past its response — and the platform's proxy answers with a timeout page
+    instead. That is HTML with a 200-ish shape, which is exactly the "unexpected
+    response from the server" the deployed worklist started showing, on the one
+    endpoint I had attached both background jobs to.
+
+    A daemon thread genuinely detaches. Pile-up is already prevented by the
+    checks these functions run first — the scan interval, the claimed ScanRun
+    row, the sweep guard and the rate-limit cooldown — so this can spawn at most
+    one live thread per user per job.
+    """
+    try:
+        threading.Thread(
+            target=fn, args=(user_id,), daemon=True, name=f"{fn.__name__}-{user_id[:8]}"
+        ).start()
+    except Exception:  # noqa: BLE001 — a request must never fail over upkeep
+        logger.exception("could not start %s for %s", getattr(fn, "__name__", fn), user_id)
+
+
+def scan_if_due_detached(user_id: str) -> None:
+    """`scan_if_due`, off the request's critical path. See `_detach`."""
+    _detach(scan_if_due, user_id)
+
+
+def sweep_if_unread_detached(user_id: str) -> None:
+    """`sweep_if_unread`, off the request's critical path. See `_detach`."""
+    _detach(sweep_if_unread, user_id)
+
+
 def sweep_if_unread(user_id: str) -> None:
     """Advance the first read of the mailbox, if it hasn't finished.
 
