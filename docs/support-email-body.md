@@ -173,6 +173,23 @@ fixable on your side:
   `draftErrorAt` is null — so the error fields cannot be used to tell a current
   failure from an old one.
 
+**The API's own fields contradict each other on a failed publish.** On
+2026-08-06 at 15:12 a draft built cleanly (`draftDeployedAt` set,
+`draftErrorAt` null). Publishing it produced this, all at the same moment:
+
+```
+status            FAILED
+installationStep  Done
+draftErrorAt      null
+deployedAt        unchanged (2026-08-06T13:36:54Z)
+```
+
+A publish that fails should not report its step as "Done", and it should record
+an error somewhere. Any tooling that watches `draftErrorAt` — the field your own
+deploy flow moves on a failed BUILD — cannot see a failed PUBLISH at all, and
+sits waiting on a deploy that has already lost. Please set the same error field
+on both paths, or document which field is authoritative.
+
 **An installed app disappeared from the workspace.** `7e925d43-7188-4d48-8a55-9eb203f59378`
 ("Gmail Sentry", live since 2026-07-20, with connected Gmail and real user data)
 has `status: DELETED`, `deletedAt: 2026-08-04T23:04:31.863Z`. No deletion was

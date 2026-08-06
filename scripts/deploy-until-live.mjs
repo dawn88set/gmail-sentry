@@ -119,6 +119,12 @@ const state = () => {
     // can show it; never gate success on it (an earlier version did, which
     // would have retried forever through a perfectly good deploy).
     container: a.containerId || null,
+    // The publish step can fail WITHOUT setting draftErrorAt. Observed
+    // 2026-08-06: status FAILED, installationStep "Done", draftErrorAt null,
+    // all at once. Watching only draftErrorAt meant the loop sat through its
+    // whole inner poll seeing "no verdict" on a deploy that had already lost.
+    failed: (a.status || "") === "FAILED",
+    step: a.installationStep || "",
     // The platform's own triage of the failure. Today it self-classifies as
     // infra — type UNKNOWN, userActionable false, "Deployment was interrupted -
     // please retry" — which is the whole justification for this loop. If that
@@ -164,6 +170,8 @@ for (let n = 1; n <= ATTEMPTS; n++) {
     if (s.live && s.live !== app.deployedAt) { outcome = 'live'; base = s; break; }
     if (s.draft && s.draft !== base.draft) { outcome = 'built'; base = s; break; }
     if (s.err && s.err !== base.err) { outcome = 'failed'; base = s; break; }
+    // Some failures never touch draftErrorAt — see `failed` in state().
+    if (s.failed) { outcome = 'failed'; base = s; break; }
   }
 
   if (outcome === 'failed' && !base.infra) {
@@ -205,7 +213,11 @@ for (let n = 1; n <= ATTEMPTS; n++) {
       console.log('    Mail tab and the worklist on Today before calling it done.');
       process.exit(0);
     }
-    if (s.err && s.err !== base.err) { console.log(`  ${stamp()}  publish failed — back to retrying`); base = s; break; }
+    if ((s.err && s.err !== base.err) || s.failed) {
+      console.log(`  ${stamp()}  publish failed (${s.failed ? 'status FAILED' : 'draftErrorAt moved'}) — back to retrying`);
+      base = s;
+      break;
+    }
   }
   if (n === ATTEMPTS) break;
   sleep(WAIT_MIN * 60_000);
