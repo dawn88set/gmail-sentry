@@ -473,10 +473,33 @@ def run_scan(
     #       one spike, and ordered worst-first so the mail most likely to cost
     #       something is understood first.
     try:
-        pending = [
+        # Fresh flagged mail FIRST. `list_followups` deliberately excludes a
+        # thread while its newest message is still a live alert (the
+        # Alert/FollowUp boundary), so reading only open loops would skip
+        # exactly the newest and most urgent mail for its first 24 hours —
+        # the mail the user is most likely to open today.
+        alert_threads = [
+            a.thread_id
+            for a in db.query(models.Alert)
+            .filter(
+                models.Alert.user_id == user_id,
+                models.Alert.tier.in_(("urgent", "needs_reply")),
+                models.Alert.status.in_(("new", "seen")),
+            )
+            .order_by(models.Alert.created_at.desc())
+            .limit(20)
+            .all()
+            if a.thread_id
+        ]
+        loop_threads = [
             f.thread_id
             for f in followups.list_followups(db, user_id, state="open", limit=40)
             if f.thread_id
+        ]
+        seen_ids: set = set()
+        pending = [
+            t for t in (alert_threads + loop_threads)
+            if not (t in seen_ids or seen_ids.add(t))
         ]
         read_count = comprehension.read_pending(db, user_id, pending)
         if read_count:

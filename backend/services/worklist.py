@@ -147,6 +147,16 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
         .filter(models.FollowUp.user_id == user_id)
         .all()
     }
+    # And when the thread has actually been READ, that beats both. A fresh alert
+    # has no loop yet — the Alert/FollowUp boundary holds one back for its first
+    # 24 hours — so without this the newest and most urgent mail is the only
+    # mail still showing a bare subject line.
+    reads = {
+        r.thread_id: r
+        for r in db.query(models.ThreadRead)
+        .filter(models.ThreadRead.user_id == user_id, models.ThreadRead.their_ask != "")
+        .all()
+    }
     for a in alerts:
         loop = asks.get(a.thread_id or "")
         due = loop.due_at if loop else None
@@ -157,7 +167,11 @@ def build(db: Session, user_id: str, *, limit: int = 12) -> Dict[str, Any]:
             "who": _short(a.sender or ""),
             "email": a.sender or "",
             "company": company_by_email.get(_email_only(a.sender or ""), ""),
-            "headline": (loop.ask_summary if loop and loop.ask_summary else (a.subject or "(no subject)")),
+            "headline": (
+                (reads[a.thread_id].their_ask if a.thread_id in reads else "")
+                or (loop.ask_summary if loop and loop.ask_summary else "")
+                or (a.subject or "(no subject)")
+            ),
             "subject": a.subject or "",
             "urgent": a.tier == "urgent",
             "due_at": due.isoformat() if due else None,

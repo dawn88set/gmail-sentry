@@ -189,3 +189,34 @@ def test_an_unknown_sender_has_no_company_rather_than_a_guess():
     _loop(db, counterparty_email="stranger@nowhere.example")
 
     assert worklist.build(db, "u1")["items"][0]["company"] == ""
+
+
+def test_a_fresh_alert_shows_the_real_ask_not_its_subject_line():
+    """The newest mail was the ONLY mail still showing a bare subject.
+
+    A fresh alert has no follow-up yet — the Alert/FollowUp boundary holds one
+    back for its first 24 hours — so the loop's ask_summary isn't available, and
+    the row fell through to "Re: Q3". That's the row a user is most likely to
+    open today.
+    """
+    db = _session()
+    a = _alert(db, thread_id="t9", subject="Re: Q3")
+    db.add(models.ThreadRead(
+        user_id="u1", thread_id="t9",
+        their_ask="volume pricing for 250 seats before their board on the 14th",
+        their_ask_quote="I need volume pricing for 250 seats",
+    ))
+    db.commit()
+
+    row = worklist.build(db, "u1")["items"][0]
+
+    assert row["headline"] == "volume pricing for 250 seats before their board on the 14th"
+    # The subject is still carried, just not used as the headline.
+    assert row["subject"] == "Re: Q3"
+
+
+def test_an_unread_alert_still_falls_back_to_its_subject():
+    db = _session()
+    _alert(db, thread_id="t9", subject="Re: Q3")
+
+    assert worklist.build(db, "u1")["items"][0]["headline"] == "Re: Q3"
