@@ -108,7 +108,10 @@ api.interceptors.response.use((response) => {
     return Promise.reject(
       Object.assign(new Error('The server returned an empty response.'), {
         isAxiosError: true,
-        response: { status: response.status, data: { detail: 'The server returned nothing.' } },
+        response: {
+          status: response.status,
+          data: { detail: `The server sent ${response.status} with an empty body.` },
+        },
       }),
     );
   }
@@ -117,12 +120,24 @@ api.interceptors.response.use((response) => {
     // A correct body that merely lost its content-type on the way here.
     return { ...response, data: JSON.parse(body) };
   } catch {
+    // Say WHAT came back. "Unexpected response from the server" is true and
+    // useless: it cannot be acted on, reported usefully, or told apart from any
+    // other failure. This app is served from behind a proxy, so the body is the
+    // only evidence of who actually answered — and without it a bug like this
+    // costs hours of guessing. Redacted and capped: an error page is low risk,
+    // but it is not worth putting anything token-shaped on someone's screen.
+    const evidence = body
+      .replace(/[A-Za-z0-9_-]{40,}/g, '…')
+      .replace(/\s+/g, ' ')
+      .slice(0, 120);
     return Promise.reject(
       Object.assign(new Error('The server returned a page instead of data — it may be restarting.'), {
         isAxiosError: true,
         response: {
           status: response.status,
-          data: { detail: 'Unexpected response from the server.' },
+          data: {
+            detail: `The server sent ${response.status} but not data: “${evidence}”`,
+          },
         },
       }),
     );
