@@ -224,7 +224,21 @@ matches the last successful build of the PREVIOUS app in this workspace,
 endpoint appeared. That points at an image being reused across apps rather than
 anything in the source we upload, but we cannot see far enough to say.
 
-**What we looked at in clarity-api, and ruled out.** The build path itself
+**Our half is proven correct.** Rebuilding the upload bundle exactly as the CLI
+does (same tar flags, same excludes):
+
+```
+bundle            2.0 MB, 127 files under backend/
+backend/routes/app.py   76,463 bytes — byte-identical to the working tree
+  /api/alerts       present      /api/worklist     present
+  /api/accounts     present      /api/commitments  present
+```
+
+Every endpoint production is missing is in the bytes we upload, and the repo has
+exactly one Dockerfile, at the root, which is first in your generator's search
+order. So the divergence happens after the upload.
+
+**What we read in clarity-api, and ruled out.** The build path itself
 looks correct: `tier2-build.service.ts` → `prepare()` does `fs.remove(dir)` and
 then an unconditional `downloadAppSourceToLocal(appId, dir)`, so the image
 should be built from the source just uploaded. We could not find a path where a
@@ -241,9 +255,19 @@ Two smaller staleness issues we did notice, neither of which explains this:
   materialization and deliberately falls through, so a materialization failure
   proceeds rather than stopping.
 
-So the cause is still unidentified from outside, which is why the observations
-above matter more than any theory: a current frontend and a pre-3-August API in
-one container, across seventeen deploys, with deployedAt advancing every time.
+We also confirmed the image really is rebuilt each time — the SPA's hashed asset
+filename changes and new UI strings appear within minutes — and that the app has
+no stale `deploymentProgress.inFlightBuild` pointer that the re-attach path could
+be reusing. `prepare()` does `fs.remove(dir)` then an unconditional
+`downloadAppSourceToLocal`, and the non-Lambda path calls `getOrBuildAppImage`
+with `forceRebuild: true`.
+
+Which leaves a genuine contradiction we cannot resolve from outside: one image,
+rebuilt from a source tree we have verified is correct, producing a CURRENT
+frontend and a pre-3-August API. The parts we cannot see are the CodeBuild
+buildspec (particularly any `--cache-from` layer reuse) and how the built image
+is applied to the running service. That is where we would look next, and it is
+the one place a developer cannot.
 
 Two consequences worth stating:
 
