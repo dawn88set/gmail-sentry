@@ -5,6 +5,7 @@
  */
 
 import axios from 'axios';
+import { isTokenExpiring, requestFreshSession } from './session';
 
 /**
  * Where API requests go depends on HOW the app is served (preview proxy vs
@@ -33,10 +34,22 @@ const proxyApiBase = persisted(
   resolveProxyApiBase(window.location.pathname),
 );
 
-const edgeToken = persisted(
-  'claritty_token',
-  new URLSearchParams(window.location.search).get('claritty_token'),
-);
+/**
+ * The host's identity token, re-read on every request rather than captured once.
+ *
+ * It is valid for 30 minutes. Reading it a single time at module load meant a
+ * pane left open for half an hour kept sending a dead token, every call failed,
+ * and the app looked like it had signed itself out — the "it makes me log in
+ * again all the time" report. Re-reading costs nothing and picks up a fresh
+ * token the moment the host provides one.
+ */
+const currentEdgeToken = (): string | null =>
+  new URLSearchParams(window.location.search).get('claritty_token') ??
+  persisted('claritty_token', null);
+
+// Cache the first one we see, so a client-side route change (which drops the
+// query string) doesn't lose the token.
+persisted('claritty_token', new URLSearchParams(window.location.search).get('claritty_token'));
 
 const API_BASE_URL = proxyApiBase ?? (import.meta.env.VITE_API_URL || '');
 
@@ -47,6 +60,7 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   if (proxyApiBase) return config;
+  const edgeToken = currentEdgeToken();
   if (edgeToken) {
     config.headers.Authorization = `Bearer ${edgeToken}`;
     return config;
@@ -108,6 +122,26 @@ api.interceptors.response.use((response) => {
       }),
     );
   }
+}, (error) => {
+  // The host's token lives 30 minutes. When it dies, every call fails at once
+  // and the app looks like it signed itself out — but there is nothing here to
+  // log into, so a login prompt would send people hunting for a password that
+  // does not exist. Only the host can mint a new token, and the deep-link
+  // message it already listens for makes it reopen the pane with a fresh one.
+  const status = error?.response?.status;
+  if (status === 401 || status === 403) {
+    if (isTokenExpiring(currentEdgeToken())) {
+      const asked = requestFreshSession();
+      error.sessionExpired = true;
+      error.sessionRefreshRequested = asked;
+      if (error.response?.data) {
+        error.response.data.detail = asked
+          ? 'Your session timed out — reopening the app.'
+          : 'Your session timed out. Refresh the page to continue.';
+      }
+    }
+  }
+  return Promise.reject(error);
 });
 
 // ── Error helpers ───────────────────────────────────────────────────────────
