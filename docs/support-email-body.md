@@ -296,6 +296,40 @@ Two consequences worth stating:
   placeholder text, an app cannot detect this itself. It took a full day and a
   purpose-built error message to see it.
 
+**`claritty deploy` cannot update a live app, and says it did.** This is a CLI
+gap rather than a bug in the pipeline, and it is the first thing a developer
+hits.
+
+`.claritty.json` pins the templateId, and that part works — `submitUpload`
+reuses the bound app instead of creating a duplicate. But for an app that has
+already been deployed, the platform deliberately targets the DRAFT:
+
+```ts
+const target = opts?.target ?? (appDraftsEnabled(...) && wasDeployed && !healMode
+  ? 'draft' : 'live');
+```
+
+Only the very first deploy goes live. Every deploy after that updates the draft
+and leaves the installed app untouched — and the CLI has no command that
+promotes it. `claritty publish` lists an app in the marketplace; it does not call
+`publish-draft`. We had to POST `/api/generation/apps/:id/publish-draft`
+ourselves to make anything reach the live app.
+
+Meanwhile the CLI prints, on that same run:
+
+```
+✓ Gmail Sentry is live in your workspace
+```
+
+which is not true for any deploy after the first — the live app is unchanged at
+that moment. A developer following the documented `init → login → deploy` flow
+would reasonably believe their change shipped.
+
+The fix is small and entirely in the CLI: after a successful draft build, either
+call `publish-draft` (perhaps behind `--publish`, defaulting to on for a
+non-interactive deploy), or print what actually happened — "draft updated; run
+X to publish" — instead of "is live".
+
 **Embedded apps are signed out every 30 minutes, and an app cannot fix it.**
 This is the one users notice, because it looks like the app logging itself out.
 
