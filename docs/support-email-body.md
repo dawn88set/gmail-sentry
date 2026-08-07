@@ -238,45 +238,26 @@ Every endpoint production is missing is in the bytes we upload, and the repo has
 exactly one Dockerfile, at the root, which is first in your generator's search
 order. So the divergence happens after the upload.
 
-**The strongest lead: the build may never read the uploaded source.** The CLI
-upload lands at `apps/{appId}/source/` — we verified that path is written and
-correct. But the image build reads somewhere else entirely:
+**What we read in clarity-api, and eliminated.** Every step from upload to image
+looks correct, which is why we are sending observations rather than a fix:
 
-`docker-image.service.ts` → `buildLambdaAppImage()`:
+* `materializeUploadToSource` clears the app'"'"'s S3 source and re-puts every file
+  from the uploaded tarball.
+* `prepare()` does `fs.remove(dir)` then an unconditional
+  `downloadAppSourceToLocal` — no stale local tree survives.
+* `ensureAppStructure` restores missing folders from the app'"'"'s OWN S3 source
+  (current), not from an older snapshot.
+* `packageSourceFromLocal` is called with `forceRepackage: true`, so the
+  `app-templates/{id}/{version}/source.zip` build input is rewritten every deploy
+  rather than reused.
+* `getOrBuildAppImage` is called with `forceRebuild: true` on the ECS path.
+* No stale `deploymentProgress.inFlightBuild`, so the "already SUCCEEDED —
+  reusing" re-attach shortcut is not firing.
+* The buildspec unzips the CodeBuild-provided source and runs
+  `docker build --platform linux/amd64` with no `--cache-from`.
 
-```ts
-const version = opts.versionOverride || template.latestValidatedVersion || template.version;
-const s3Key   = `app-templates/${template.id}/${version}/source.zip`;
-if (!(await this.checkS3ObjectExists(s3Key))) throw new Error('App source not found in S3 …');
-```
-
-It only READS that zip. A live deploy passes no `versionOverride` (only drafts
-do), so the key is identical on every CLI deploy. The zip is written by exactly
-one function, `packageAndUploadSource()`, which:
-
-* returns the existing object untouched when `forceRepackage` is false — its own
-  comment warns this makes "a stale cached source.zip silently rebuild the OLD
-  code on every reinstall"; and
-* when it does repackage, builds the zip from a **GitHub clone** of
-  `template.githubRepoUrl` — not from the S3 source the CLI just uploaded.
-
-If that is what happens for direct-upload apps, the CLI's bundle would never
-reach the image at all, and the build would keep using a zip packaged from
-GitHub at whatever date it was last written — which matches a container serving
-code from ~2 August. Note this app's submission also reported
-`GitHub access failed: GitHub App not connected`, so a repackage attempt would
-have nothing to clone from.
-
-**The one-query check:** compare, in S3,
-`apps/<appId>/source/backend/routes/app.py` against
-`app-templates/<templateId>/<version>/source.zip` — their LastModified dates,
-and whether the zip contains `/api/worklist`. If the zip is older than the
-upload, that is the whole bug.
-
-We are flagging this as a lead, not a diagnosis — we cannot see which branch
-runs for a direct upload.
-
-**What we read in clarity-api, and ruled out.** The build path itself
+Two smaller staleness issues we noticed on the way, neither of which explains
+this: The build path itself
 looks correct: `tier2-build.service.ts` → `prepare()` does `fs.remove(dir)` and
 then an unconditional `downloadAppSourceToLocal(appId, dir)`, so the image
 should be built from the source just uploaded. We could not find a path where a
