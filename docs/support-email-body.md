@@ -182,6 +182,44 @@ issued that call — an installed app vanishing mid-deploy is a data-loss event,
 and from outside there is no way to tell whether it was the platform, the CLI,
 or something else.
 
+**Embedded apps are signed out every 30 minutes, and an app cannot fix it.**
+This is the one users notice, because it looks like the app logging itself out.
+
+The iframe URL carries identity as a JWT. The one issued to this app:
+
+```
+iat  2026-08-06T21:11:10Z
+exp  2026-08-06T21:41:10Z     ← 30 minutes
+```
+
+After that, every request fails. We verified where, because it decides who can
+fix it — the edge rejects the expired token before it reaches the app at all:
+
+```
+GET <app-id>.apps.claritty.ai/api/worklist
+  no token                 → 403 {"error":"Forbidden","message":"Access denied"}
+  expired token (bearer)   → 403 {"error":"Forbidden","message":"Access denied"}
+  expired token (query)    → 403 {"error":"Forbidden","message":"Access denied"}
+```
+
+So no app-side session, cookie or retry can help: the request never arrives.
+Reloading the iframe cannot help either, since its own URL still carries the
+dead token. Only the host can mint a new one, and there is no documented way to
+ask for one — the postMessage bridge covers deep links and quick actions, not
+session renewal.
+
+We have worked around it by asking the host to reopen the pane shortly before
+expiry, which is intrusive and depends on undocumented behaviour. Any of these
+would make it unnecessary, in rough order of preference:
+
+1. a documented `postMessage` for token renewal, so the app can refresh silently;
+2. the host re-issuing the iframe `src` on a timer, which needs nothing from apps;
+3. a longer token lifetime, which only moves the problem;
+
+and, either way, a distinguishable response for "expired" versus "not allowed" —
+right now both are `403 Access denied`, so an app cannot tell a lapsed session
+from a permissions problem, and cannot say anything useful to the person using it.
+
 **The ask:** the CodeBuild log for any failing build of
 `claritty-app-7e925d43-dft`. Failures die ~60–90s into "Building image", while
 successful builds take ~3 minutes — so they're failing early rather than timing

@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { isTokenExpiring, requestFreshSession } from './session';
+import { isTokenExpiring, requestFreshSession, scheduleSessionRefresh } from './session';
 
 /**
  * Where API requests go depends on HOW the app is served (preview proxy vs
@@ -52,6 +52,11 @@ const currentEdgeToken = (): string | null =>
 persisted('claritty_token', new URLSearchParams(window.location.search).get('claritty_token'));
 
 const API_BASE_URL = proxyApiBase ?? (import.meta.env.VITE_API_URL || '');
+
+// Renew before the token lapses rather than after something breaks. The
+// platform edge rejects an expired token with 403 before it reaches this app,
+// so renewing in time is the only avenue an embedded app has.
+scheduleSessionRefresh(currentEdgeToken());
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -131,7 +136,7 @@ api.interceptors.response.use((response) => {
   const status = error?.response?.status;
   if (status === 401 || status === 403) {
     if (isTokenExpiring(currentEdgeToken())) {
-      const asked = requestFreshSession();
+      const asked = requestFreshSession(undefined, currentEdgeToken());
       error.sessionExpired = true;
       error.sessionRefreshRequested = asked;
       if (error.response?.data) {

@@ -7,7 +7,13 @@
  * expired token. Only the host can mint a new one.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { decodeToken, isTokenExpiring, requestFreshSession, resetSessionAsk } from '../session';
+import {
+  decodeToken,
+  isTokenExpiring,
+  requestFreshSession,
+  resetSessionAsk,
+  scheduleSessionRefresh,
+} from '../session';
 
 function tokenWithExp(secondsFromNow: number): string {
   const payload = { exp: Math.floor(Date.now() / 1000) + secondsFromNow, userId: 'u1' };
@@ -43,15 +49,15 @@ describe('asking the host for a fresh session', () => {
   beforeEach(() => resetSessionAsk());
   afterEach(() => vi.restoreAllMocks());
 
-  it('asks once, not on every failed request', () => {
+  it('asks once per token, not on every failed request', () => {
     const post = vi.fn();
     vi.stubGlobal('window', {
       parent: { postMessage: post },
       location: { pathname: '/', search: '' },
     } as unknown as Window & typeof globalThis);
 
-    expect(requestFreshSession()).toBe(true);
-    expect(requestFreshSession()).toBe(false);   // a pane reopening repeatedly is worse
+    expect(requestFreshSession(undefined, 'tok-a')).toBe(true);
+    expect(requestFreshSession(undefined, 'tok-a')).toBe(false); // a pane reopening repeatedly is worse
     expect(post).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
@@ -62,5 +68,60 @@ describe('asking the host for a fresh session', () => {
     vi.stubGlobal('window', w);
     expect(requestFreshSession()).toBe(false);
     vi.unstubAllGlobals();
+  });
+});
+
+
+describe('renewing before anything breaks', () => {
+  beforeEach(() => {
+    resetSessionAsk();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('asks the host shortly BEFORE the token lapses, not after it fails', () => {
+    const post = vi.fn();
+    vi.stubGlobal('window', {
+      parent: { postMessage: post },
+      location: { pathname: '/', search: '' },
+    } as unknown as Window & typeof globalThis);
+
+    const token = tokenWithExp(1800);          // 30 minutes, as production issues
+    scheduleSessionRefresh(token);
+
+    vi.advanceTimersByTime(28 * 60 * 1000);    // 28 min — still healthy
+    expect(post).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(2 * 60 * 1000);     // past the 60s margin
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire instantly for a token that is already dead', () => {
+    // Otherwise loading a stale pane would reopen it the moment it appeared.
+    const post = vi.fn();
+    vi.stubGlobal('window', {
+      parent: { postMessage: post },
+      location: { pathname: '/', search: '' },
+    } as unknown as Window & typeof globalThis);
+
+    scheduleSessionRefresh(tokenWithExp(-60));
+    vi.advanceTimersByTime(60 * 1000);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('can be cancelled, so an unmount leaves no timer behind', () => {
+    const post = vi.fn();
+    vi.stubGlobal('window', {
+      parent: { postMessage: post },
+      location: { pathname: '/', search: '' },
+    } as unknown as Window & typeof globalThis);
+
+    scheduleSessionRefresh(tokenWithExp(1800))();
+    vi.advanceTimersByTime(31 * 60 * 1000);
+    expect(post).not.toHaveBeenCalled();
   });
 });

@@ -51,7 +51,10 @@ export function isTokenExpiring(token: string | null): boolean {
   return claims.exp * 1000 - Date.now() < EXPIRY_MARGIN_S * 1000;
 }
 
-let asked = false;
+//: One ask per token, not one per page. A token that is replaced gets its own
+//: chance to be renewed; a token that is already being renewed does not get
+//: asked about twice.
+let askedForToken: string | null = null;
 
 /**
  * Ask the host to reopen this app, which re-mints the token.
@@ -61,10 +64,11 @@ let asked = false;
  * feel like the app was fighting them. Returns whether the ask was made — the
  * caller decides what to tell the user when it wasn't (standalone, no host).
  */
-export function requestFreshSession(path?: string): boolean {
-  if (asked) return false;
+export function requestFreshSession(path?: string, token?: string | null): boolean {
+  const key = token ?? 'unknown';
+  if (askedForToken === key) return false;
   if (typeof window === 'undefined' || window.parent === window) return false;
-  asked = true;
+  askedForToken = key;
   try {
     window.parent.postMessage(
       {
@@ -83,5 +87,32 @@ export function requestFreshSession(path?: string): boolean {
 
 /** For tests and for a manual retry after the user has been told. */
 export function resetSessionAsk(): void {
-  asked = false;
+  askedForToken = null;
+}
+
+/**
+ * Renew BEFORE the token dies, so nothing ever fails.
+ *
+ * Reacting to a 401 means the user has already seen something break. The token
+ * carries its own expiry, so the honest thing is to act on it: ask the host for
+ * a fresh session shortly before the current one lapses, while everything still
+ * works. One ask per token, so this cannot become a loop — if the host honours
+ * it, a new pane loads with a new token and this schedules itself again from
+ * scratch; if it doesn't, the reactive path still explains what happened.
+ *
+ * Nothing here can make a dead token work: the platform edge rejects an expired
+ * token with 403 before the request reaches this app at all (verified against
+ * production). Renewal in time is the only avenue an app has.
+ */
+export function scheduleSessionRefresh(token: string | null): () => void {
+  const claims = decodeToken(token);
+  if (!claims?.exp) return () => {};
+
+  const msUntilRenewal = claims.exp * 1000 - Date.now() - EXPIRY_MARGIN_S * 1000;
+  // setTimeout clamps anything over ~24.8 days and fires immediately on a
+  // negative delay, which would ask the instant an already-dead token loads.
+  if (msUntilRenewal <= 0 || msUntilRenewal > 24 * 60 * 60 * 1000) return () => {};
+
+  const timer = setTimeout(() => requestFreshSession(undefined, token), msUntilRenewal);
+  return () => clearTimeout(timer);
 }
