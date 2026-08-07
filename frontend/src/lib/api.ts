@@ -344,6 +344,20 @@ export interface WidgetData {
   top_account?: { key: string; name: string; silent_days: number | null } | null;
 }
 
+
+/** Which build is serving — see backend/services/build_id.py. Unauthenticated
+ *  and cheap on purpose: it is needed exactly when other things are broken. */
+export interface BuildIdentity {
+  fingerprint: string;
+  routes_fingerprint: string;
+  route_count: number;
+  routes: string[];
+  started_at: string;
+}
+
+export const getVersion = async (): Promise<BuildIdentity> =>
+  (await api.get('/api/version')).data;
+
 // ── Integrations setup (connection status) ──────────────────────────────────
 export interface RequiredIntegration {
   id: string;

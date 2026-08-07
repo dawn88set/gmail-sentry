@@ -11,7 +11,7 @@ the bundled Gmail/Slack adapters, which raise IntegrationNotConnected → we map
 HTTP 409 (the UI turns it into a connect prompt). We never fake success.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -25,6 +25,7 @@ import time
 from backend.database import get_db
 from backend.security import require_user
 from backend import models
+from backend.services.build_id import build_identity
 from backend.services.sentry import (
     run_scan,
     get_config,
@@ -633,6 +634,23 @@ class ConfigUpdate(BaseModel):
     auto_draft: Optional[bool] = None
     scan_interval_minutes: Optional[int] = None
     channel_tiers: Optional[dict] = None
+
+
+@router.get("/api/version")
+async def get_version(request: Request):
+    """Which build is actually serving this request.
+
+    Deliberately UNAUTHENTICATED and cheap. The one time this matters is when
+    something is wrong and nobody can tell what is running — a moment when
+    requiring a session, a working database or a connected integration would
+    make it useless. It reads only the code already loaded in this process.
+
+    Compare `fingerprint` against a working tree with:
+        python3 -c "from backend.services.build_id import source_fingerprint as f; print(f())"
+    Equal means the deployed code IS that tree. Different means it is not, and
+    no amount of reading deploy logs will change that.
+    """
+    return build_identity(request.app)
 
 
 @router.get("/api/config")

@@ -29,6 +29,8 @@ import {
   toggleLabelRule,
   deleteLabelRule,
   getOnboardingStatus,
+  getVersion,
+  type BuildIdentity,
   getRequiredIntegrations,
   toApiError,
   type SentryConfig,
@@ -171,6 +173,7 @@ export default function Rules() {
     auto_draft: true,
     scan_interval_minutes: 5,
   });
+  const [build, setBuild] = useState<BuildIdentity | null>(null);
   const [testResults, setTestResults] = useState<NotifyResult[] | null>(null);
   const [testing, setTesting] = useState(false);
   const [testingChannel, setTestingChannel] = useState<string | null>(null);
@@ -255,6 +258,11 @@ export default function Rules() {
         setObRole(s.role || '');
         setObIntent(s.intent || '');
       })
+      .catch(() => undefined);
+    // Which build is answering. Soft-fails: this exists to help when things are
+    // broken, so it must never be the thing that breaks the page.
+    getVersion()
+      .then(setBuild)
       .catch(() => undefined);
   }, [show]);
 
@@ -1025,6 +1033,17 @@ export default function Rules() {
             Add filing rule
           </IosButton>
         </ListSection>
+
+        {/* Which build is actually serving. Small, last, and easy to ignore
+            until the day it is the only thing that matters: a deploy can report
+            success while an older API keeps running, and without this nobody
+            can tell. Compare it against a working tree with
+            `python3 -c "from backend.services.build_id import source_fingerprint as f; print(f())"`. */}
+        {build && (
+          <p className="mt-6 px-4 pb-2 text-center text-[11px] text-muted-foreground">
+            build {build.fingerprint} · {build.route_count} endpoints
+          </p>
+        )}
       </Screen>
     </>
   );
