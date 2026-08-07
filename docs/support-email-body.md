@@ -211,6 +211,19 @@ instance, which suggests a cached or misrouted image rather than a stale deploy.
 The previous app in this workspace (7e925d43, deleted) last deployed
 2026-08-02T16:42:58 — immediately before the first failing endpoint appeared.
 
+The Draft and Installed containers behave identically — the same endpoints 404
+on both — so this is not the publish step failing to roll a new image. Whatever
+is stale is stale at build time, for both.
+
+We also ruled out the obvious app-side causes. Our Dockerfile copies the whole
+source in one layer, so a backend change cannot be cached past a frontend one;
+the platform generates its own Dockerfile in any case. And the cutoff does not
+match any dependency date (requirements.txt last changed 2026-07-30) — it
+matches the last successful build of the PREVIOUS app in this workspace,
+7e925d43, at 2026-08-02T16:42:58, which is immediately before the first missing
+endpoint appeared. That points at an image being reused across apps rather than
+anything in the source we upload, but we cannot see far enough to say.
+
 Two consequences worth stating:
 
 * `deployedAt` moving means nothing. It moved sixteen times while the API stayed
