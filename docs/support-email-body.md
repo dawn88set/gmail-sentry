@@ -182,6 +182,43 @@ issued that call — an installed app vanishing mid-deploy is a data-loss event,
 and from outside there is no way to tell whether it was the platform, the CLI,
 or something else.
 
+**The frontend deploys and the backend does not — with proof.** This is the
+most damaging one: sixteen successful deploys changed the UI every time and
+never once changed the API.
+
+The app serves its own frontend and API from one container (nginx on 3200
+proxying /api/ to uvicorn on 8000). In production they are running different
+code. Endpoints are answered by their age:
+
+```
+/api/alerts      added 2026-07-02   → real JSON
+/api/cleanup     added 2026-07-02   → real JSON
+/api/config      added 2026-07-02   → real JSON
+/api/worklist    added 2026-08-03   → <!doctype html> … our own index.html
+/api/accounts    added 2026-08-04   → <!doctype html>
+/api/commitments added 2026-08-05   → <!doctype html>
+```
+
+Everything from 2 July works; everything added from 3 August onward 404s and the
+edge rewrites that 404 into the SPA shell with a 200. Meanwhile the FRONTEND on
+that same screen is minutes old — a string we deployed twenty minutes earlier is
+rendering. So the container is serving a current frontend and a backend from
+before 3 August.
+
+Note the app itself was first deployed 2026-08-06, AFTER all three of those
+endpoints existed. The backend it is serving is therefore older than the app
+instance, which suggests a cached or misrouted image rather than a stale deploy.
+The previous app in this workspace (7e925d43, deleted) last deployed
+2026-08-02T16:42:58 — immediately before the first failing endpoint appeared.
+
+Two consequences worth stating:
+
+* `deployedAt` moving means nothing. It moved sixteen times while the API stayed
+  fixed, so developers have no way to know their backend never shipped.
+* combined with 5xx being rewritten to index.html and /logs returning
+  placeholder text, an app cannot detect this itself. It took a full day and a
+  purpose-built error message to see it.
+
 **Embedded apps are signed out every 30 minutes, and an app cannot fix it.**
 This is the one users notice, because it looks like the app logging itself out.
 
