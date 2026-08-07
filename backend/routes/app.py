@@ -1498,7 +1498,31 @@ async def get_worklist(
     """
     scan_if_due_detached(user_id)
     sweep_if_unread_detached(user_id)
-    return worklist_service.build(db, user_id, limit=max(1, min(limit, 50)))
+    try:
+        return worklist_service.build(db, user_id, limit=max(1, min(limit, 50)))
+    except Exception as e:  # noqa: BLE001 — see below; re-raising loses the cause
+        # Report the failure IN the payload rather than as a 5xx.
+        #
+        # Not a cosmetic choice. This platform's edge rewrites an error response
+        # into the SPA's own index.html with a 200, so a 500 raised here reaches
+        # the browser as HTML and the app can only say "the server sent 200 but
+        # not data". Every 5xx an app on this platform raises is destroyed the
+        # same way, and its container logs are not readable either — so a 2xx
+        # carrying the error is the only channel an app has to tell its own UI
+        # what went wrong.
+        #
+        # This is NOT faking success: the list is empty, `error` is set, and the
+        # UI shows a failure state with this text. What it refuses to do is let
+        # the reason be swallowed on the way out.
+        logger.exception("worklist failed for %s", user_id)
+        return {
+            "items": [],
+            "total": 0,
+            "done_today": 0,
+            "ready_to_send": 0,
+            "overdue": 0,
+            "error": f"{type(e).__name__}: {e}"[:300],
+        }
 
 
 @router.get("/api/insights")

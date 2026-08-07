@@ -1027,6 +1027,15 @@ export const getWorklist = async (limit = 12): Promise<Worklist> => {
   // without `items` doesn't degrade this one component — it throws during
   // render and takes the whole app with it.
   const d = (await api.get('/api/worklist', { params: { limit } })).data ?? {};
+  // The server reports its own failure in the payload, because this platform's
+  // edge turns a 5xx into the SPA shell with a 200 — see the route. Surfacing it
+  // as a rejection keeps the caller's existing error path working.
+  if (d.error) {
+    throw Object.assign(new Error(String(d.error)), {
+      isAxiosError: true,
+      response: { status: 200, data: { detail: String(d.error) } },
+    });
+  }
   return {
     ...d,
     items: Array.isArray(d.items) ? d.items : [],

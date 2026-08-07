@@ -338,3 +338,49 @@ def test_upkeep_failing_to_start_never_breaks_the_request(monkeypatch):
     monkeypatch.setattr(_t, "Thread", boom)
     sentry.scan_if_due_detached("u1")      # must not raise
     sentry.sweep_if_unread_detached("u1")
+
+
+# ── a failure must survive the trip to the browser ──────────────────────────
+
+
+def test_a_failing_worklist_reports_why_instead_of_raising(monkeypatch):
+    """This platform's edge rewrites a 5xx into the SPA's own index.html with a
+    200, so an exception raised here reaches the browser as HTML and the app can
+    only say "the server sent 200 but not data". Container logs are not readable
+    either, so a 2xx carrying the error is the only channel an app has.
+
+    This is not faking success: the list is empty, `error` is set, and the UI
+    shows a failure state with this text.
+    """
+    from fastapi.testclient import TestClient
+    from backend.main import app as fastapi_app
+    from backend.services import worklist as wl
+
+    monkeypatch.setattr(
+        wl, "build", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("column does not exist"))
+    )
+
+    r = TestClient(fastapi_app).get("/api/worklist?limit=8", headers={"X-User-ID": "u1"})
+
+    assert r.status_code == 200                      # survives the edge
+    body = r.json()
+    assert body["items"] == [] and body["total"] == 0  # nothing invented
+    assert "column does not exist" in body["error"]    # and it SAYS why
+    assert "RuntimeError" in body["error"]
+
+
+def test_a_working_worklist_carries_no_error_field(monkeypatch):
+    """The error field appears only when something actually failed — otherwise
+    the client would show a failure state on every healthy load."""
+    from fastapi.testclient import TestClient
+    from backend.main import app as fastapi_app
+    from backend.services import worklist as wl
+
+    monkeypatch.setattr(wl, "build", lambda *a, **k: {
+        "items": [], "total": 0, "done_today": 0, "ready_to_send": 0, "overdue": 0,
+    })
+
+    r = TestClient(fastapi_app).get("/api/worklist?limit=2", headers={"X-User-ID": "u1"})
+
+    assert r.status_code == 200
+    assert "error" not in r.json()
