@@ -9,6 +9,8 @@ Gmail/OAuth.
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+import logging
+
 import httpx
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -19,6 +21,9 @@ class GmailNotConnected(Exception):
     """Raised when there is no usable Gmail credential for the user."""
 
 
+logger = logging.getLogger(__name__)
+
+
 class GmailClient:
     """
     Construct with the user's decrypted credentials dict:
@@ -27,10 +32,19 @@ class GmailClient:
     token on demand; read `.credentials` afterwards to persist refreshed tokens.
     """
 
-    def __init__(self, creds: Dict[str, Any]):
+    def __init__(self, creds: Dict[str, Any], on_refresh=None):
+        """`on_refresh(credentials)` is called the moment a token is renewed.
+
+        Callers used to persist by reading `.credentials` after the operation
+        finished, which quietly threw the new token away whenever that operation
+        then failed — so the next call refreshed again, and a run of failures
+        meant a refresh per call. A token is worth keeping the instant it exists,
+        independently of what it was fetched for.
+        """
         if not creds or not creds.get("access_token"):
             raise GmailNotConnected("Gmail is not connected.")
         self.credentials: Dict[str, Any] = dict(creds)
+        self._on_refresh = on_refresh
 
     def _refresh(self) -> None:
         refresh_token = self.credentials.get("refresh_token")
@@ -55,8 +69,49 @@ class GmailClient:
             self.credentials["token_expiry"] = (
                 datetime.utcnow() + timedelta(seconds=int(tok["expires_in"]))
             ).isoformat()
+        if self._on_refresh:
+            # Persisting must never be able to fail the call it happened during.
+            try:
+                self._on_refresh(dict(self.credentials))
+            except Exception:  # noqa: BLE001
+                logger.exception("could not persist refreshed Gmail credentials")
+
+    #: How much headroom to leave before the stored expiry. A token that dies
+    #: mid-flight costs a wasted round trip and a retry; refreshing a minute
+    #: early costs nothing.
+    EXPIRY_MARGIN_S = 60
+
+    def _access_token_expired(self) -> bool:
+        """Is the stored access token past (or nearly past) its expiry?
+
+        `token_expiry` was being written on every refresh and read by nothing, so
+        the client only ever discovered expiry by being told 401 — which means a
+        guaranteed wasted round trip on the first call after the hour, paid again
+        by every operation, because each one builds a fresh client. An expiry we
+        already know is not something to be surprised by.
+
+        Unparseable or missing is NOT treated as expired: without a usable expiry
+        the reactive 401 path is still correct, and guessing "expired" would
+        refresh on every single call.
+        """
+        raw = self.credentials.get("token_expiry")
+        if not raw:
+            return False
+        try:
+            expiry = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return False
+        if expiry.tzinfo is not None:
+            expiry = expiry.replace(tzinfo=None)
+        return expiry - datetime.utcnow() < timedelta(seconds=self.EXPIRY_MARGIN_S)
 
     def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
+        # Refresh BEFORE spending a request on a token we know is dead. The 401
+        # path below stays as a backstop: clock skew, a token revoked early, or
+        # an expiry we couldn't read.
+        if self._access_token_expired():
+            self._refresh()
+
         def _do():
             return httpx.request(
                 method,

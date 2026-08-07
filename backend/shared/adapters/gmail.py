@@ -37,8 +37,21 @@ SERVICE = "gmail"
 
 def _client(db, user_id: str) -> GmailClient:
     creds = load_credentials(db, user_id, SERVICE)  # raises IntegrationNotConnected
+
+    def _keep(fresh):
+        """Persist the moment a token is renewed, not when the call finishes.
+
+        Every operation here saves on its success path only, so a token
+        refreshed for a call that then failed was discarded — and the next call
+        refreshed again. A run of failures meant one refresh per call.
+        """
+        persist_refreshed(db, user_id, SERVICE, {
+            "access_token": fresh.get("access_token"),
+            "token_expiry": fresh.get("token_expiry"),
+        })
+
     try:
-        return GmailClient(creds)
+        return GmailClient(creds, on_refresh=_keep)
     except GmailNotConnected as e:
         raise IntegrationNotConnected(SERVICE, str(e))
 
