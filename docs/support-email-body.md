@@ -224,6 +224,44 @@ matches the last successful build of the PREVIOUS app in this workspace,
 endpoint appeared. That points at an image being reused across apps rather than
 anything in the source we upload, but we cannot see far enough to say.
 
+**We think we have found it, in clarity-api.** Two places reuse a stale local
+source tree instead of the one just uploaded, and one of them keys on `backend/`
+specifically — which is exactly the split we see.
+
+`modules/generation/services/tier2-build.service.ts` (~line 1546):
+
+```ts
+const dir = this.localDir(appId);
+if (!(await fs.pathExists(path.join(dir, 'backend')))) {
+  await this.seedFork.downloadAppSourceToLocal(appId, dir).catch(() => undefined);
+}
+```
+
+The freshly uploaded S3 source is fetched ONLY when `backend/` is absent from
+that build box. If a stale `generated-apps/<appId>/backend` is already there, it
+is used as-is and the new upload is never read — the build succeeds, the deploy
+is recorded, and the container runs old backend code. The frontend has no such
+guard, so it updates. That is the exact signature: current UI, months-old API.
+
+`modules/generation/generation-orchestrator.service.ts` (~line 2435) compounds
+it — when the S3→local materialization throws, the error is logged and execution
+deliberately falls through:
+
+```ts
+} catch (bridgeError: any) {
+  this.logger.error(`Phase-4 S3→local materialization failed ...`);
+  // Fall through; for seed-fork the Tier-2 gate already passed ...
+}
+```
+
+so a failed materialization also proceeds to build from whatever is on disk.
+
+Both would be invisible to a developer: the build genuinely succeeds, and
+`deployedAt` advances. A cheap fix for the first is to make the download
+unconditional, or to key the guard on the uploaded object's ETag/version rather
+than on a directory existing. We have not run the platform locally to confirm,
+so please treat this as a strong lead rather than a diagnosis.
+
 Two consequences worth stating:
 
 * `deployedAt` moving means nothing. It moved sixteen times while the API stayed
