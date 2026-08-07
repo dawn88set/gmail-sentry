@@ -38,22 +38,30 @@ def source_fingerprint() -> str:
     Cached: the files cannot change under a running process, and hashing on
     every request would put real work on a health check.
     """
-    h = hashlib.sha256()
+    # Collect first, then sort the RELATIVE paths globally. A depth-first walk
+    # order would be just as deterministic here, but it is not reproducible in
+    # another language without reimplementing the walk — and the CLI computes
+    # this same hash before a deploy so the two can be compared. One flat,
+    # lexicographic order is the thing both sides can agree on.
+    rels = []
     for root, dirs, files in os.walk(_BACKEND_DIR):
-        dirs[:] = sorted(d for d in dirs if d not in _SKIP and not d.startswith("."))
-        for name in sorted(files):
-            if not name.endswith(".py"):
-                continue
-            path = os.path.join(root, name)
-            rel = os.path.relpath(path, _BACKEND_DIR)
-            h.update(rel.encode())
-            try:
-                with open(path, "rb") as fh:
-                    h.update(fh.read())
-            except OSError:
-                # An unreadable file is itself a fact about this build; record
-                # that rather than silently hashing a different set of files.
-                h.update(b"<unreadable>")
+        dirs[:] = [d for d in dirs if d not in _SKIP and not d.startswith(".")]
+        rels.extend(
+            os.path.relpath(os.path.join(root, n), _BACKEND_DIR)
+            for n in files
+            if n.endswith(".py")
+        )
+
+    h = hashlib.sha256()
+    for rel in sorted(rels):
+        h.update(rel.encode())
+        try:
+            with open(os.path.join(_BACKEND_DIR, rel), "rb") as fh:
+                h.update(fh.read())
+        except OSError:
+            # An unreadable file is itself a fact about this build; record that
+            # rather than silently hashing a different set of files.
+            h.update(b"<unreadable>")
     return h.hexdigest()[:16]
 
 

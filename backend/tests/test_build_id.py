@@ -57,3 +57,38 @@ def test_the_route_fingerprint_reflects_the_api_surface():
     v = _version()
     assert v["route_count"] == len(v["routes"])
     assert len(v["routes_fingerprint"]) == 12
+
+
+def test_the_hash_is_reproducible_outside_python(tmp_path, monkeypatch):
+    """The CLI computes this same hash before a deploy so the two can be
+    compared — "did my code reach production" becomes a comparison instead of a
+    guess. That only works if the ordering is something another language can
+    reproduce without reimplementing os.walk, so the contract is: collect the
+    relative paths, sort them lexicographically, hash path-then-bytes.
+    """
+    import hashlib
+    import os
+
+    root = tmp_path / "backend"
+    (root / "services").mkdir(parents=True)
+    (root / "z_last.py").write_text("z\n")
+    (root / "a_first.py").write_text("a\n")
+    (root / "services" / "mid.py").write_text("m\n")
+    (root / "__pycache__").mkdir()
+    (root / "__pycache__" / "ignored.py").write_text("nope\n")
+
+    monkeypatch.setattr(build_id, "_BACKEND_DIR", str(root))
+    build_id.source_fingerprint.cache_clear()
+    got = build_id.source_fingerprint()
+    build_id.source_fingerprint.cache_clear()
+
+    # The independent restatement of the contract — flat, sorted, path+bytes.
+    rels = sorted(["a_first.py", "z_last.py", os.path.join("services", "mid.py")])
+    h = hashlib.sha256()
+    for rel in rels:
+        h.update(rel.encode())
+        h.update((root / rel).read_bytes())
+
+    assert got == h.hexdigest()[:16]
+    # …and the cache directory really was skipped.
+    assert "nope" not in "".join(rels)
