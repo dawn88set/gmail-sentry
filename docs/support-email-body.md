@@ -224,43 +224,26 @@ matches the last successful build of the PREVIOUS app in this workspace,
 endpoint appeared. That points at an image being reused across apps rather than
 anything in the source we upload, but we cannot see far enough to say.
 
-**We think we have found it, in clarity-api.** Two places reuse a stale local
-source tree instead of the one just uploaded, and one of them keys on `backend/`
-specifically — which is exactly the split we see.
+**What we looked at in clarity-api, and ruled out.** The build path itself
+looks correct: `tier2-build.service.ts` → `prepare()` does `fs.remove(dir)` and
+then an unconditional `downloadAppSourceToLocal(appId, dir)`, so the image
+should be built from the source just uploaded. We could not find a path where a
+stale tree reaches the image, and we are not going to guess further.
 
-`modules/generation/services/tier2-build.service.ts` (~line 1546):
+Two smaller staleness issues we did notice, neither of which explains this:
 
-```ts
-const dir = this.localDir(appId);
-if (!(await fs.pathExists(path.join(dir, 'backend')))) {
-  await this.seedFork.downloadAppSourceToLocal(appId, dir).catch(() => undefined);
-}
-```
+* `tier2-build.service.ts` → `preDeployStartupSmoke()` (~1546) fetches the S3
+  source ONLY when `backend/` is absent locally, so the pre-deploy smoke GATE can
+  run against an older tree than the one being shipped. That would let a broken
+  app pass its gate, or a fixed one fail it — worth tightening, but it does not
+  build the image.
+* `generation-orchestrator.service.ts` (~2435) logs a failed S3→local
+  materialization and deliberately falls through, so a materialization failure
+  proceeds rather than stopping.
 
-The freshly uploaded S3 source is fetched ONLY when `backend/` is absent from
-that build box. If a stale `generated-apps/<appId>/backend` is already there, it
-is used as-is and the new upload is never read — the build succeeds, the deploy
-is recorded, and the container runs old backend code. The frontend has no such
-guard, so it updates. That is the exact signature: current UI, months-old API.
-
-`modules/generation/generation-orchestrator.service.ts` (~line 2435) compounds
-it — when the S3→local materialization throws, the error is logged and execution
-deliberately falls through:
-
-```ts
-} catch (bridgeError: any) {
-  this.logger.error(`Phase-4 S3→local materialization failed ...`);
-  // Fall through; for seed-fork the Tier-2 gate already passed ...
-}
-```
-
-so a failed materialization also proceeds to build from whatever is on disk.
-
-Both would be invisible to a developer: the build genuinely succeeds, and
-`deployedAt` advances. A cheap fix for the first is to make the download
-unconditional, or to key the guard on the uploaded object's ETag/version rather
-than on a directory existing. We have not run the platform locally to confirm,
-so please treat this as a strong lead rather than a diagnosis.
+So the cause is still unidentified from outside, which is why the observations
+above matter more than any theory: a current frontend and a pre-3-August API in
+one container, across seventeen deploys, with deployedAt advancing every time.
 
 Two consequences worth stating:
 
