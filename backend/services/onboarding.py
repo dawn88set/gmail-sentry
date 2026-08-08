@@ -32,6 +32,63 @@ _BULK_LOCALPARTS = {
     "alerts", "alert", "community", "social", "help",
 }
 
+# What someone ASKS FOR, turned into patterns that generalise.
+#
+# The old proposal read the inbox's most frequent senders and offered them as
+# urgent VIPs. Frequency is the wrong signal: the most frequent senders in any
+# mailbox are the newsletters, which is how "Urgent: From Samsung" and
+# "Urgent: From Trip.com" ended up proposed beside filing rules that archived
+# those very domains. It also ignored what the owner had just said they wanted.
+#
+# A pattern survives a change of vendor, a new client, a different address. A
+# sender rule only ever matches the one sender it was written for.
+_INTENT_PACKS: Dict[str, List[str]] = {
+    "invoic": ["invoice", "receipt", "payment due", "past due", "statement", "remittance"],
+    "bill": ["invoice", "receipt", "payment due", "subscription", "billing"],
+    "pay": ["payment due", "past due", "remittance", "wire", "bank details"],
+    "client": ["proposal", "contract", "statement of work", "kickoff", "renewal", "onboarding"],
+    "customer": ["proposal", "contract", "renewal", "onboarding", "escalation"],
+    "contract": ["contract", "agreement", "statement of work", "signature", "countersigned"],
+    "lead": ["introduction", "intro", "referral", "enquiry", "inquiry", "quote"],
+    "contact": ["introduction", "intro", "referral", "enquiry"],
+    "order": ["purchase order", "order confirmation", "delivery", "shipment", "tracking"],
+    "deadline": ["deadline", "due by", "by end of day", "eod", "reminder"],
+    "meet": ["reschedule", "availability", "calendar", "call on", "book a time"],
+    "support": ["outage", "incident", "downtime", "bug", "refund"],
+    "security": ["security alert", "password reset", "unusual sign-in", "verification code"],
+    "legal": ["agreement", "nda", "terms", "counsel", "dispute"],
+}
+
+# Formats worth catching wherever they appear — the shapes business mail takes,
+# independent of who sent it.
+_FORMAT_PATTERNS: List[tuple] = [
+    ("invoice", "Invoices", "needs_reply"),
+    ("receipt", "Receipts", "fyi"),
+    ("purchase order", "Purchase orders", "needs_reply"),
+    ("quote", "Quotes", "needs_reply"),
+    ("contract", "Contracts", "needs_reply"),
+    ("renewal", "Renewals", "needs_reply"),
+    ("proposal", "Proposals", "needs_reply"),
+]
+
+
+def _intent_keywords(description: str, role: str) -> List[str]:
+    """The patterns implied by what the owner actually asked for.
+
+    Matched on word STEMS — the keys are prefixes ("invoic", not "invoice") so
+    that "invoice", "invoices" and "invoicing" all land on the same pack — someone writing "manage my client cycles and invoices"
+    should not have that sentence stored as one opaque rule.
+    """
+    text = f"{description or ''} {role or ''}".lower()
+    out: List[str] = []
+    for stem, words in _INTENT_PACKS.items():
+        if stem in text:
+            for w in words:
+                if w not in out:
+                    out.append(w)
+    return out
+
+
 # Role → a starter keyword pack (used to seed keyword rules when we can't ground).
 _ROLE_KEYWORDS: Dict[str, List[str]] = {
     "founder": ["invoice", "investor", "contract", "board", "term sheet"],
@@ -143,7 +200,49 @@ def _collect_inbox_signals(db: Session, user_id: str, sample: int) -> Optional[D
         "sample_subjects": subjects,
         "promo_domains": promo_domains,
         "counts": counts,
+        "correspondents": _real_correspondents(db, user_id),
     }
+
+
+def _real_correspondents(db: Session, user_id: str, limit: int = 4) -> List[Dict[str, Any]]:
+    """People the owner actually corresponds with — by behaviour, not volume.
+
+    The app already works this out for the Accounts screen: who writes, whether
+    the owner REPLIES, how quickly, and whether the address is a machine. Reply
+    behaviour is the only honest evidence that mail from someone matters, and it
+    is what separates a client from a newsletter that happens to arrive daily.
+    """
+    try:
+        from backend import models
+        from backend.services import counterparty as cp
+
+        rows = (
+            db.query(models.Counterparty)
+            .filter(
+                models.Counterparty.user_id == user_id,
+                models.Counterparty.muted == False,  # noqa: E712
+            )
+            .all()
+        )
+    except Exception:  # noqa: BLE001 — signals are best-effort by contract
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for c in rows:
+        email = (c.email or "").lower()
+        if not email or cp.is_machine_sender(email):
+            continue
+        if not (c.your_reply_rate or 0):
+            continue  # they write, you never answer — that is not a VIP
+        out.append({
+            "email": email,
+            "name": c.display_name or "",
+            "reply_rate": int(c.your_reply_rate or 0),
+            "importance": int(c.importance or 0),
+            "reason": f"you reply to them {int(c.your_reply_rate or 0)}% of the time",
+        })
+    out.sort(key=lambda x: (-x["reply_rate"], -x["importance"]))
+    return out[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +271,16 @@ def _build_prompt(
         ts = ", ".join(
             f"{s['email']}({s['count']})" for s in signals.get("top_senders", [])[:8]
         )
-        parts.append(f"\nMost frequent senders in their inbox: {ts or 'n/a'}")
+        parts.append(
+            f"\nMost frequent senders (CONTEXT ONLY — mostly newsletters): {ts or 'n/a'}"
+        )
+        corr = signals.get("correspondents") or []
+        if corr:
+            parts.append(
+                "People they actually correspond with (reply behaviour — these are "
+                "the only defensible VIPs): "
+                + ", ".join(f"{c['email']} ({c['reason']})" for c in corr[:4])
+            )
         if signals.get("promo_domains"):
             parts.append(f"Promotional/newsletter domains: {', '.join(signals['promo_domains'])}")
         if signals.get("sample_subjects"):
@@ -190,8 +298,21 @@ def _build_prompt(
         '"label_rules":[{"name":"","match_type":"sender|domain|subject_keyword",'
         '"match_value":"","target_label":"","archive_after":true,"reason":""}],'
         '"notify_tier":"urgent|needs_reply","scan_minutes":5,"summary":""}\n'
-        "Prefer concrete, grounded rules (use the real senders/domains above). Keep "
-        "reasons to a short phrase. 3-6 triage rules, 1-4 label rules."
+        "RULES THAT GENERALISE, not one-offs:\n"
+        "- Lead with what the user asked for, as PATTERNS — subject words and "
+        "formats like invoice, purchase order, contract, renewal, receipt. A "
+        "pattern still works when the vendor, the client or the address changes; "
+        "a sender rule only ever matches the sender it was written for.\n"
+        "- The frequent-sender list is context, NOT a list of VIPs. The most "
+        "frequent senders in any mailbox are its newsletters. Never make a "
+        "promotional/newsletter domain urgent, and never make urgent a sender you "
+        "are also filing and archiving — those two rules cancel out.\n"
+        "- Only propose a person as a VIP when there is evidence the user deals "
+        "with them (they appear as a correspondent, or the user named them). "
+        "Never the user's own address.\n"
+        "- If the user described a goal in a sentence, translate it into patterns "
+        "rather than storing the sentence as one rule.\n"
+        "Keep reasons to a short phrase. 3-6 triage rules, 1-4 label rules."
     )
     return "\n".join(parts)
 
@@ -228,6 +349,28 @@ def _normalize(draft: Dict[str, Any]) -> Dict[str, Any]:
             "archive_after": bool(r.get("archive_after", False)),
             "reason": str(r.get("reason", "")).strip(),
         })
+    # A sender cannot be both urgent and archived-as-noise. The old proposal
+    # offered exactly that — "Urgent: From Samsung" above "File
+    # innovations.samsungusa.com → Newsletters" — which is not a preference to
+    # weigh up, it is two instructions that cancel out. Filing wins: it is the
+    # rule grounded in what the mail demonstrably IS.
+    filed = {
+        r["match_value"].lower()
+        for r in lab
+        if r["match_type"] in ("domain", "sender") and r.get("archive_after")
+    }
+    if filed:
+        kept = []
+        for r in tri:
+            v = r["value"].lower()
+            dom = v.split("@")[-1]
+            if r["kind"] == "vip_sender" and (v in filed or dom in filed or any(
+                v.endswith(f) or dom.endswith(f) for f in filed
+            )):
+                continue
+            kept.append(r)
+        tri = kept
+
     notify = str(draft.get("notify_tier", "urgent")).lower()
     if notify not in ("urgent", "needs_reply"):
         notify = "urgent"
@@ -252,15 +395,44 @@ def _heuristic(
     lab: List[Dict[str, Any]] = []
     default_tier = "urgent" if (noise or "balanced") == "urgent" else "needs_reply"
 
-    # Grounded: top personal senders → VIP; promo domains → filing.
+    # 1. WHAT THEY ASKED FOR, as patterns. First, because it is the only part
+    #    the owner actually stated — and a pattern keeps working when the vendor,
+    #    the client or the address changes, which a sender rule never does.
+    promo_domains = set((signals or {}).get("promo_domains", []) or [])
+    for w in _intent_keywords(description, role)[:6]:
+        tri.append({
+            "name": w[:1].upper() + w[1:], "kind": "keyword", "value": w,
+            "tier": default_tier, "reason": "From what you asked for",
+        })
+
+    # 2. Formats actually present in their mail. Grounded in real subjects, but
+    #    proposed as the SHAPE rather than as the sender that happened to use it.
+    subjects = " | ".join((signals or {}).get("sample_subjects", []) or []).lower()
+    for token, label, tier in _FORMAT_PATTERNS:
+        if token in subjects and not any(r["value"] == token for r in tri):
+            tri.append({
+                "name": label, "kind": "keyword", "value": token,
+                "tier": tier, "reason": f"“{token}” already appears in your mail",
+            })
+
+    # 3. People — only ones the owner really corresponds with. A VIP rule is a
+    #    claim that mail from someone matters, and frequency does not support it:
+    #    the most frequent senders in any mailbox are its newsletters, which is
+    #    how Samsung and Trip.com were once proposed as urgent beside rules that
+    #    archived those same domains.
     if signals:
-        for s in signals.get("top_senders", []):
-            if s.get("personal") and len(tri) < 3:
-                who = s.get("name") or s["email"]
-                tri.append({
-                    "name": f"From {who}", "kind": "vip_sender", "value": s["email"],
-                    "tier": "urgent", "reason": f"You get a lot of mail from {s['email']} ({s['count']} recently)",
-                })
+        for s in signals.get("correspondents", [])[:2]:
+            addr = (s.get("email") or "").lower()
+            if not addr or addr.split("@")[-1] in promo_domains:
+                continue
+            who = s.get("name") or addr
+            tri.append({
+                "name": f"From {who}", "kind": "vip_sender", "value": addr,
+                "tier": "urgent", "reason": s.get("reason") or "You reply to them",
+            })
+
+    # 4. Filing: the noise, unchanged — this part was always right.
+    if signals:
         for dom in signals.get("promo_domains", [])[:3]:
             lab.append({
                 "name": f"File {dom}", "match_type": "domain", "match_value": dom,
@@ -268,24 +440,29 @@ def _heuristic(
                 "reason": f"{dom} sends you promotions — file & archive them",
             })
 
-    # Role keyword pack.
+    # 5. Role pack, only to fill a thin draft — never ahead of what they said.
     role_key = (role or "").lower()
-    for k, words in _ROLE_KEYWORDS.items():
-        if k in role_key:
-            for w in words[:4]:
-                tri.append({
-                    "name": f"Keyword: {w}", "kind": "keyword", "value": w,
-                    "tier": default_tier, "reason": f"Common priority for a {role}",
-                })
-            break
+    if len(tri) < 3:
+        for k, words in _ROLE_KEYWORDS.items():
+            if k in role_key:
+                for w in words[:4]:
+                    if not any(r["value"] == w for r in tri):
+                        tri.append({
+                            "name": f"Keyword: {w}", "kind": "keyword", "value": w,
+                            "tier": default_tier, "reason": f"Common priority for a {role}",
+                        })
+                break
 
-    # Anything explicit in the free-text (emails → VIP, quoted words → nl).
+    # 6. An address they typed is a deliberate instruction — keep honouring it.
     for email in dict.fromkeys(EMAIL_RE.findall(description or "")):
         tri.append({
             "name": f"From {email}", "kind": "vip_sender", "value": email.lower(),
             "tier": "urgent", "reason": "You mentioned this sender",
         })
-    if description and not EMAIL_RE.search(description):
+    # Their sentence is kept as a rule ONLY when nothing concrete came of it —
+    # otherwise "manage my client cycles and invoices" becomes one opaque rule
+    # that says nothing and matches almost nothing.
+    if description and not EMAIL_RE.search(description) and not tri:
         tri.append({
             "name": "Your instruction", "kind": "nl", "value": description.strip()[:180],
             "tier": default_tier, "reason": "From what you described",
