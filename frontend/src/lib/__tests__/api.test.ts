@@ -90,3 +90,31 @@ describe('response interpretation', () => {
     expect(asJson('').ok).toBe(false);
   });
 });
+
+
+/**
+ * A page where data should be is not a crash — it is a server that is
+ * restarting or running a build older than the endpoint being called. The
+ * message has to say that, because the person reading it can act on it
+ * ("wait, or redeploy") and cannot act on "<!doctype html>".
+ */
+describe('what a non-JSON response tells the user', () => {
+  const meaning = (body: string) =>
+    /<!doctype html|<html/i.test(body)
+      ? 'The server sent a web page instead of data — it may be restarting, or running an older version of this app.'
+      : 'The server sent 200 but not data.';
+
+  it('names the likely cause when a web page comes back', () => {
+    const m = meaning('<!doctype html><html lang="en"><head>');
+    expect(m).toMatch(/web page instead of data/);
+    expect(m).toMatch(/older version/);
+  });
+
+  it('does not lead with markup', () => {
+    expect(meaning('<!doctype html>').startsWith('<')).toBe(false);
+  });
+
+  it('falls back to a plain statement for other non-JSON bodies', () => {
+    expect(meaning('garbled')).toMatch(/not data/);
+  });
+});

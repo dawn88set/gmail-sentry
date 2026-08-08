@@ -23,6 +23,7 @@ import {
   getAccounts,
   getCommitments,
   getWorklist,
+  worklistFromAlerts,
   runBackfill,
   runScan,
   toApiError,
@@ -64,6 +65,9 @@ export default function Dashboard() {
   const [work, setWork] = useState<WorklistData | null>(null);
   const [workLoading, setWorkLoading] = useState(true);
   const [workError, setWorkError] = useState<string | null>(null);
+  // True when the list was rebuilt from alerts because the worklist endpoint
+  // was unavailable — shown to the user, never hidden.
+  const [workPartial, setWorkPartial] = useState(false);
   const [scanning, setScanning] = useState(false);
   // First-run reading state. `null` = not started/needed.
   const [firstRun, setFirstRun] = useState<OnboardingProgress | null>(null);
@@ -110,8 +114,24 @@ export default function Dashboard() {
     // Thread-level open loops — the other half of "what needs you". Soft-fails:
     // a missing loop count shouldn't blank the whole dashboard.
     getWorklist(8)
-      .then((w) => { setWork(w); setWorkError(null); })
-      .catch((err) => setWorkError(toApiError(err).message))
+      .then((w) => { setWork(w); setWorkError(null); setWorkPartial(false); })
+      .catch(async (err) => {
+        // The worklist endpoint is newer than the alerts one, so a server
+        // running an older build 404s here while still answering /api/alerts —
+        // and this platform turns that 404 into its own index.html with a 200.
+        // Showing an error where a list should be is the worst outcome when the
+        // data for most of that list is still available: fall back to alerts,
+        // and say it is partial rather than passing it off as the full picture.
+        try {
+          const a = await getAlerts('active');
+          setWork(worklistFromAlerts(a));
+          setWorkPartial(true);
+          setWorkError(null);
+        } catch {
+          setWorkError(toApiError(err).message);
+          setWorkPartial(false);
+        }
+      })
       .finally(() => setWorkLoading(false));
     // What you said you'd do. Soft-fails: a missing list must never blank the
     // dashboard, and on a mailbox that hasn't been read yet it's simply empty.
@@ -458,6 +478,16 @@ export default function Dashboard() {
               ))}
             </ListGroup>
           </ListSection>
+        )}
+
+        {/* Partial data is worth saying out loud. The rows below are real, but
+            they are fresh mail only — no open loops, nothing gone quiet — so
+            letting the list read as complete would be a lie by omission. */}
+        {workPartial && (
+          <p className="px-4 pb-1 pt-3 text-[12.5px] text-muted-foreground">
+            Showing fresh mail only — open loops and quiet threads need a newer
+            version of the app on the server.
+          </p>
         )}
 
         {/* One ranked plan, not four inventories — see components/Worklist.tsx */}

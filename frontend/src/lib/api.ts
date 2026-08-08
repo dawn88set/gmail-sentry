@@ -120,24 +120,31 @@ api.interceptors.response.use((response) => {
     // A correct body that merely lost its content-type on the way here.
     return { ...response, data: JSON.parse(body) };
   } catch {
-    // Say WHAT came back. "Unexpected response from the server" is true and
-    // useless: it cannot be acted on, reported usefully, or told apart from any
-    // other failure. This app is served from behind a proxy, so the body is the
-    // only evidence of who actually answered — and without it a bug like this
-    // costs hours of guessing. Redacted and capped: an error page is low risk,
-    // but it is not worth putting anything token-shaped on someone's screen.
+    // Lead with what it MEANS, then the evidence.
+    //
+    // The first version of this put the raw body first, and it did its job — it
+    // is how the stale-server problem was finally identified. But once the cause
+    // is known, greeting someone with "<!doctype html> <html lang=..." is
+    // developer noise in a user's face: it reads as a crash, it is unactionable,
+    // and it buries the one sentence that tells them what to do. The excerpt
+    // stays, shortened and at the end, because the next unexplained response
+    // will need it too.
     const evidence = body
       .replace(/[A-Za-z0-9_-]{40,}/g, '…')
       .replace(/\s+/g, ' ')
-      .slice(0, 120);
+      .slice(0, 60);
+    // The app is served from the same origin as its API, so a page where data
+    // should be almost always means the server is mid-deploy or running a build
+    // that predates this endpoint.
+    const meaning = /<!doctype html|<html/i.test(body)
+      ? 'The server sent a web page instead of data — it may be restarting, or running an older version of this app.'
+      : `The server sent ${response.status} but not data.`;
     return Promise.reject(
       Object.assign(new Error('The server returned a page instead of data — it may be restarting.'), {
         isAxiosError: true,
         response: {
           status: response.status,
-          data: {
-            detail: `The server sent ${response.status} but not data: “${evidence}”`,
-          },
+          data: { detail: `${meaning} (${evidence}…)` },
         },
       }),
     );
@@ -1034,6 +1041,50 @@ export interface Worklist {
   done_today: number;
   ready_to_send: number;
   overdue: number;
+}
+
+/**
+ * Build a worklist out of alerts alone.
+ *
+ * `/api/worklist` composes fresh mail with open loops, and it is the newer of
+ * the two endpoints. When a server is running an older build it 404s — and this
+ * platform rewrites that 404 into the SPA shell with a 200, so the client sees
+ * a page where data should be and Today shows nothing at all.
+ *
+ * Alerts have been there since the first release and still answer. They are
+ * only half the picture — no open loops, no chase rows — but "the mail that
+ * needs an answer" is most of why anyone opens the app, and half a list beats
+ * an error where a list should be. The caller says plainly that it is partial;
+ * this does not pretend to be the real thing.
+ */
+export function worklistFromAlerts(alerts: Alert[]): Worklist {
+  const items: WorkItem[] = alerts
+    .filter((a) => a.tier === 'urgent' || a.tier === 'needs_reply')
+    .map((a) => ({
+      id: `alert:${a.id}`,
+      kind: 'reply' as WorkKind,
+      who: (a.sender || '').split('<')[0].trim() || a.sender || 'someone',
+      email: a.sender || '',
+      company: '',
+      headline: a.subject || '(no subject)',
+      subject: a.subject || '',
+      urgent: a.tier === 'urgent',
+      due_at: null,
+      due_label: '',
+      overdue: false,
+      age_label: '',
+      reply_ready: Boolean((a.reply_draft || '').trim()) && a.reply_status !== 'sent',
+      thread_id: a.thread_id || '',
+      alert_id: a.id,
+      followup_id: '',
+    }));
+  return {
+    items,
+    total: items.length,
+    done_today: 0,
+    ready_to_send: items.filter((i) => i.reply_ready).length,
+    overdue: 0,
+  };
 }
 
 export const getWorklist = async (limit = 12): Promise<Worklist> => {
