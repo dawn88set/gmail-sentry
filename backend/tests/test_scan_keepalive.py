@@ -384,3 +384,91 @@ def test_a_working_worklist_carries_no_error_field(monkeypatch):
 
     assert r.status_code == 200
     assert "error" not in r.json()
+
+
+# ── polls arrive together ───────────────────────────────────────────────────
+
+
+def test_simultaneous_claims_admit_exactly_one(monkeypatch):
+    """Every trigger for reading mail is a POLL — the widget, the worklist, the
+    Today page — so several arriving at once is normal, not exceptional.
+
+    The scan LOOKED safe because run_scan claims a ScanRun row and the interval
+    then refuses anything else. But that claim lands seconds in, so five
+    simultaneous polls all pass the interval check first: measured at five
+    concurrent Gmail scans, which is the duplicate traffic the rate-limit work
+    exists to avoid, caused by the upkeep meant to help.
+
+    Asserted on the guard itself rather than through scan_if_due, whose other
+    preconditions (cooldown, interval, session) make a threaded test pass or
+    fail for reasons that have nothing to do with the race.
+    """
+    import threading
+    import time as _time
+
+    # Self-contained: a guard left held by another test would make every worker
+    # stand down and the assertion pass for the wrong reason.
+    sentry._inflight.clear()
+
+    live = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def worker():
+        nonlocal live, peak
+        with sentry._claim("scan", "u1") as mine:
+            if not mine:
+                return
+            with lock:
+                live += 1
+                peak = max(peak, live)
+            _time.sleep(0.2)
+            with lock:
+                live -= 1
+
+    threads = [threading.Thread(target=worker) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert peak == 1, f"expected exactly one holder, saw {peak}"
+
+
+def test_the_scan_guard_is_per_user():
+    """One owner's scan must not block another's."""
+    assert sentry._acquire("scan", "u1") is True
+    try:
+        assert sentry._acquire("scan", "u1") is False
+        assert sentry._acquire("scan", "u2") is True
+        sentry._release("scan", "u2")
+    finally:
+        sentry._release("scan", "u1")
+
+
+def test_scan_and_sweep_do_not_block_each_other():
+    """Different jobs, same user — they read different things and both should run."""
+    assert sentry._acquire("scan", "u1") is True
+    try:
+        assert sentry._acquire("sweep", "u1") is True
+        sentry._release("sweep", "u1")
+    finally:
+        sentry._release("scan", "u1")
+
+
+def test_the_guard_is_released_when_a_scan_raises(monkeypatch):
+    """A crash must not wedge scanning until the container restarts."""
+    class _NoopSession:
+        def close(self):
+            pass
+
+    monkeypatch.setattr("backend.database.SessionLocal", lambda: _NoopSession())
+    monkeypatch.setattr(sentry, "due_for_scan", lambda db, uid, **kw: True)
+    monkeypatch.setattr(
+        sentry, "run_scan", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    sentry.scan_if_due("u1")           # swallows, by contract
+
+    assert sentry._acquire("scan", "u1") is True
+    sentry._release("scan", "u1")

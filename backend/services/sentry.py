@@ -305,60 +305,83 @@ def scan_if_due(user_id: str) -> None:
     if cooling_down("gmail"):
         return
 
-    db = SessionLocal()
-    try:
-        if not due_for_scan(db, user_id):
+    # And neither must arriving twice at once. run_scan claims a ScanRun row,
+    # but seconds in — long enough for several simultaneous polls to pass the
+    # interval check together and all start scanning. Measured: five polls, five
+    # concurrent scans.
+    with _claim("scan", user_id) as mine:
+        if not mine:
             return
-        run_scan(db, user_id)
-    except IntegrationNotConnected:
-        pass                                    # nothing to scan; the UI says so
-    except Exception:                           # noqa: BLE001 — background work
-        logger.exception("keepalive scan failed for %s", user_id)
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            if not due_for_scan(db, user_id):
+                return
+            run_scan(db, user_id)
+        except IntegrationNotConnected:
+            pass                                # nothing to scan; the UI says so
+        except Exception:                       # noqa: BLE001 — background work
+            logger.exception("keepalive scan failed for %s", user_id)
+        finally:
+            db.close()
 
 
-#: Users with a mailbox sweep in flight. The first read is the only thing in this
-#: app that makes sustained Gmail traffic, and it now has two drivers: the loop
-#: on the Today page and the background pass on every poll. Both call
-#: `sync_ledger`, which walks from persisted state — so running them at once
-#: doesn't corrupt anything, it just does the same expensive walk twice and
-#: doubles the request rate at precisely the moment the broker starts throttling.
-#: That is the 429 the owner actually saw. Process-local, like the rate-limit
-#: cooldown, and for the same reason: it's a politeness throttle on one container.
-_sweeping: set = set()
-_sweep_guard = threading.Lock()
+#: Which (job, user) pairs are in flight right now.
+#:
+#: Reading mail is the only thing here that makes sustained Gmail traffic, and
+#: every one of its triggers is a POLL — the widget, the worklist, the Today
+#: page. Several arriving together is normal, not exceptional.
+#:
+#: The scan looked safe because it claims a ScanRun row, and `due_for_scan` then
+#: refuses anything else for the interval. But that claim lands SECONDS in, so
+#: five simultaneous polls all pass the interval check first and five scans hit
+#: Gmail at once — measured, not theorised. That is the duplicate traffic the
+#: rate-limit work exists to avoid, caused by the upkeep meant to help.
+#:
+#: Process-local, like the rate-limit cooldown, and for the same reason: it is a
+#: politeness throttle on one container, not a correctness mechanism.
+_inflight: set = set()
+_inflight_guard = threading.Lock()
+
+
+def _acquire(job: str, user_id: str) -> bool:
+    """True if this caller may run `job` for `user_id`; False if one already is."""
+    with _inflight_guard:
+        key = (job, user_id)
+        if key in _inflight:
+            return False
+        _inflight.add(key)
+        return True
+
+
+def _release(job: str, user_id: str) -> None:
+    with _inflight_guard:
+        _inflight.discard((job, user_id))
 
 
 def acquire_sweep(user_id: str) -> bool:
     """Take the sweep guard. True if taken, False if someone already holds it."""
-    with _sweep_guard:
-        if user_id in _sweeping:
-            return False
-        _sweeping.add(user_id)
-        return True
+    return _acquire("sweep", user_id)
 
 
 def release_sweep(user_id: str) -> None:
-    with _sweep_guard:
-        _sweeping.discard(user_id)
+    _release("sweep", user_id)
+
+
+@contextmanager
+def _claim(job: str, user_id: str):
+    """Yields True if this caller may run `job`, False if one is already running."""
+    taken = _acquire(job, user_id)
+    try:
+        yield taken
+    finally:
+        if taken:
+            _release(job, user_id)
 
 
 @contextmanager
 def _claim_sweep(user_id: str):
-    """Yields True if this caller may sweep, False if one is already running."""
-    with _sweep_guard:
-        if user_id in _sweeping:
-            yielded = False
-        else:
-            _sweeping.add(user_id)
-            yielded = True
-    try:
-        yield yielded
-    finally:
-        if yielded:
-            with _sweep_guard:
-                _sweeping.discard(user_id)
+    with _claim("sweep", user_id) as taken:
+        yield taken
 
 
 def _detach(fn, user_id: str) -> None:
