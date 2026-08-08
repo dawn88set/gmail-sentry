@@ -1,4 +1,5 @@
-import { Badge, type BadgeTone } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
+import type { BadgeTone } from '@clarittyai/app-ui';
 import { Avatar } from '@/components/Avatar';
 import { ListRow } from '@/components/ios/List';
 import type { FollowUp } from '@/lib/api';

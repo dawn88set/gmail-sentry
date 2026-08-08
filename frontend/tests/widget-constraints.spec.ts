@@ -11,7 +11,17 @@ import { test, expect } from '@playwright/test';
  * Each size is rendered standalone at /widget?size=<size>.
  */
 
-const BASE = 'http://localhost:3200';
+/**
+ * Honour AUDIT_BASE_URL, exactly like the design audit does.
+ *
+ * This was pinned to :3200. That port is also what `docker compose` publishes,
+ * so whichever container happened to hold it got graded — and when the mapping
+ * moved to :3217, every one of these tests failed against a 404 from an
+ * unrelated container while the widget itself was perfectly fine. A suite that
+ * silently grades whatever answers a fixed port is worse than one that fails
+ * loudly: it can pass while testing something that is not this app.
+ */
+const BASE = process.env.AUDIT_BASE_URL || 'http://localhost:3200';
 
 const SIZES = [
   { size: 'small', w: 170, h: 170 },

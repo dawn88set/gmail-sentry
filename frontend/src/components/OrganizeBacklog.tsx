@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Archive, Loader2, RotateCcw } from 'lucide-react';
-import { Badge, Button } from '@clarittyai/app-ui';
+import { Button } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
 import { useToast } from '@/components/Toast';
 import { ListGroup, ListSection } from '@/components/ios/List';
 import { Toggle } from '@/components/ios/Toggle';

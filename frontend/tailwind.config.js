@@ -112,13 +112,17 @@ export default {
           red: '#E01E5A',
         },
         // Gmail-style initial-avatar colors — solid, white-legible circles.
+        // Avatar hues. Every one carries WHITE text, so each must clear 4.5:1
+        // against white — teal (#00897B, 4.32:1) and green (#0F9D58, 3.51:1)
+        // did not, which made an initial unreadable for anyone whose name
+        // happened to hash to them. Darkened to the nearest shade that passes.
         av: {
           blue: '#1A73E8',
-          teal: '#00897B',
+          teal: '#00796B',
           indigo: '#5C6BC0',
           purple: '#8E24AA',
           pink: '#D81B60',
-          green: '#0F9D58',
+          green: '#0B8043',
           red: '#D93025',
           brown: '#795548',
         },

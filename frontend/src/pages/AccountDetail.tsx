@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Badge, Button, EmptyState, ErrorState, type BadgeTone } from '@clarittyai/app-ui';
+import { Button, EmptyState, ErrorState } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
+import type { BadgeTone } from '@clarittyai/app-ui';
 import { ArrowLeft, Building2, Mail as MailIcon } from 'lucide-react';
 import { Screen } from '@/components/ios/Screen';
 import { ListGroup, ListRow, ListSection } from '@/components/ios/List';
@@ -85,11 +87,13 @@ export default function AccountDetail() {
     return (
       <Screen title="Account">
         {back}
-        <EmptyState
-          icon={<Building2 className="h-6 w-6" />}
-          title="That account is no longer listed"
-          description="It may have been merged into another once its company details were resolved."
-        />
+        <ListGroup>
+          <EmptyState
+            icon={<Building2 className="h-6 w-6" />}
+            title="That account is no longer listed"
+            description="It may have been merged into another once its company details were resolved."
+          />
+        </ListGroup>
       </Screen>
     );
   }
@@ -98,22 +102,24 @@ export default function AccountDetail() {
     return (
       <Screen title="Account">
         {back}
-        <ErrorState
-          title="Couldn’t load this account"
-          description={error ?? 'Not found'}
-          action={
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setLoading(true);
-                void load();
-              }}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <ListGroup>
+          <ErrorState
+            title="Couldn’t load this account"
+            description={error ?? 'Not found'}
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setLoading(true);
+                  void load();
+                }}
+              >
+                Try again
+              </Button>
+            }
+          />
+        </ListGroup>
       </Screen>
     );
   }

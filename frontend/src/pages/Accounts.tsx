@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Badge, Button, EmptyState, ErrorState, type BadgeTone } from '@clarittyai/app-ui';
+import { Button, EmptyState, ErrorState } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
+import type { BadgeTone } from '@clarittyai/app-ui';
 import { Building2, AlertTriangle } from 'lucide-react';
 import { Screen } from '@/components/ios/Screen';
 import { ListGroup, ListRow, ListSection } from '@/components/ios/List';
@@ -97,28 +99,32 @@ export default function Accounts() {
           </ListGroup>
         </ListSection>
       ) : error ? (
-        <ErrorState
-          title="Couldn’t load your accounts"
-          description={error}
-          action={
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setLoading(true);
-                void load();
-              }}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <ListGroup>
+          <ErrorState
+            title="Couldn’t load your accounts"
+            description={error}
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setLoading(true);
+                  void load();
+                }}
+              >
+                Try again
+              </Button>
+            }
+          />
+        </ListGroup>
       ) : accounts.length === 0 ? (
-        <EmptyState
-          icon={<Building2 className="h-6 w-6" />}
-          title="No accounts yet"
-          description="Once your mail has been read, the companies you work with appear here — who owes whom, and who has gone quiet."
-        />
+        <ListGroup>
+          <EmptyState
+            icon={<Building2 className="h-6 w-6" />}
+            title="No accounts yet"
+            description="Once your mail has been read, the companies you work with appear here — who owes whom, and who has gone quiet."
+          />
+        </ListGroup>
       ) : (
         <>
           {/* The summary is the headline a business owner wants first: not how
@@ -137,7 +143,11 @@ export default function Accounts() {
               )}
               {(data?.at_risk ?? 0) > 0 && (
                 <div>
-                  <div className="text-3xl font-semibold text-warning">{data?.at_risk}</div>
+                  {/* The NUMBER carries the meaning and must be readable; #FF9500 as text on
+                      the page measures 2.04:1. Amber stays where it works — on the icon
+                      beside the rows below, where it is a shape rather than something to
+                      be read. */}
+                  <div className="text-3xl font-semibold text-foreground">{data?.at_risk}</div>
                   <div className="text-[13px] text-muted-foreground">going quiet</div>
                 </div>
               )}

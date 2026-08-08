@@ -15,6 +15,7 @@ import {
   type Tier,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Panel } from '@/components/ios/Panel';
 
 type Msg = { role: 'you' | 'sentry'; text: string };
 
@@ -181,7 +182,7 @@ export default function Teach() {
 
           {/* Proposed changes */}
           {hasProposal && draft && (
-            <div className="rounded-2xl border border-accent/30 bg-card p-4">
+            <Panel tone="accent">
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Proposed
               </div>
@@ -214,7 +215,7 @@ export default function Teach() {
               >
                 Apply these rules
               </Button>
-            </div>
+            </Panel>
           )}
           <div ref={endRef} />
         </div>
@@ -250,7 +251,7 @@ export default function Teach() {
       </div>
 
       {/* What I've learned about you */}
-      <div className="rounded-2xl border border-border bg-card p-4">
+      <Panel>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-muted-foreground" />
@@ -302,7 +303,7 @@ export default function Teach() {
             sent mail to match your voice and spot the people you really talk to. (Needs Gmail connected.)
           </p>
         )}
-      </div>
+      </Panel>
     </Screen>
   );
 }

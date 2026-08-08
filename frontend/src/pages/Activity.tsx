@@ -15,7 +15,8 @@ import {
   UserCog,
   X,
 } from 'lucide-react';
-import { Badge, Button, EmptyState, ErrorState, Tabs } from '@clarittyai/app-ui';
+import { Button, EmptyState, ErrorState, Tabs } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
 import { useToast } from '@/components/Toast';
 import { OrganizeBacklog } from '@/components/OrganizeBacklog';
 import { Screen } from '@/components/ios/Screen';

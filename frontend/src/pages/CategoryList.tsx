@@ -11,6 +11,7 @@ import { ConnectButton } from '@/components/ConnectButtons';
 import { requestConnectIntegration } from '@/lib/integrations';
 import { useIntegrationStatus } from '@/hooks/useIntegrationStatus';
 import { getCategoryMessages, clearCategoryAll, toApiError, type CategoryMessage } from '@/lib/api';
+import { Panel } from '@/components/ios/Panel';
 
 const LABEL: Record<string, string> = { promotions: 'Promotions', social: 'Social', spam: 'Spam' };
 const VALID = new Set(['promotions', 'social', 'spam']);
@@ -151,7 +152,7 @@ export default function CategoryList() {
 
       {/* Live batch progress: N / total moved to Trash. */}
       {clearing && progress && (
-        <div className="rounded-2xl border border-border bg-card p-4">
+        <Panel>
           <div className="mb-2 flex items-center justify-between text-[13px]">
             <span className="font-medium text-foreground">Moving {cat} to Trash…</span>
             <span className="tabular-nums text-muted-foreground">
@@ -171,7 +172,7 @@ export default function CategoryList() {
               }}
             />
           </div>
-        </div>
+        </Panel>
       )}
 
       {notConnected ? (

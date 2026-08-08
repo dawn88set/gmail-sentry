@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Users, X, Pin, BellOff } from 'lucide-react';
-import { Badge, Button, EmptyState, ErrorState, type BadgeTone } from '@clarittyai/app-ui';
+import { Button, EmptyState, ErrorState } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
+import type { BadgeTone } from '@clarittyai/app-ui';
 import { useToast } from '@/components/Toast';
 import { Avatar } from '@/components/Avatar';
 import { Screen } from '@/components/ios/Screen';
@@ -23,6 +25,12 @@ const REL_LABEL: Record<Relationship, string> = {
   unknown: 'Unclassified',
 };
 
+/**
+ * Badge tones. `success` renders its own colour as TEXT — #34C759 on a 10% tint
+ * measures 1.9:1, which is not a subtle miss but genuinely unreadable. The tint
+ * still carries the meaning, so the label is drawn in the foreground colour and
+ * only the background stays coloured.
+ */
 const REL_TONE: Record<Relationship, BadgeTone> = {
   customer: 'success',
   prospect: 'accent',
@@ -170,7 +178,9 @@ export default function People() {
                     <div className="mt-0.5 space-y-1">
                       <div className="truncate text-[12px] text-muted-foreground">{c.email}</div>
                       <div className="flex items-center gap-1.5">
-                        <Badge tone={REL_TONE[c.relationship]}>{REL_LABEL[c.relationship]}</Badge>
+                        <Badge tone={REL_TONE[c.relationship]} className="text-foreground">
+                          {REL_LABEL[c.relationship]}
+                        </Badge>
                         <span className="truncate text-[12px] text-muted-foreground">
                           you reply {c.your_reply_rate}% · {c.thread_count} thread
                           {c.thread_count === 1 ? '' : 's'}

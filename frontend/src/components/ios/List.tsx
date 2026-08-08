@@ -27,14 +27,25 @@ export function ListSection({
 
 /**
  * The grouped container. Children (ListRows) get hairline separators.
- * - `card` (default): rounded, elevated card on all sizes.
- * - `plain-mobile`: flat, edge-to-edge with dividers on mobile (iOS "plain" list),
- *   becoming a rounded card only at `lg` (desktop).
+ *
+ * - `plain-mobile` (DEFAULT): flat and edge-to-edge with dividers on a phone —
+ *   the iOS "plain" list — becoming a rounded card only at `lg`.
+ * - `card`: a rounded card at every width. Opt in only when the group is a
+ *   genuine object on the page rather than a list of rows.
+ *
+ * The default used to be `card`, and a card is the wrong shape on a phone: a
+ * 16px gutter down each side, a rounded edge and a shadow spend horizontal
+ * space on decoration at exactly the width where content needs it most, and
+ * stacked cards read as a pile of unrelated boxes rather than one list. Every
+ * screen written since had to remember to pass `plain-mobile`, so the pages
+ * added most recently — Accounts and the account detail — are precisely the
+ * ones that forgot. Making the phone-correct shape the default means nobody has
+ * to remember, and a new screen is right by construction.
  */
 export function ListGroup({
   children,
   className,
-  variant = 'card',
+  variant = 'plain-mobile',
 }: {
   children: ReactNode;
   className?: string;

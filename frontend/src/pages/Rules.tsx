@@ -43,6 +43,7 @@ import {
   type RequiredIntegration,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Panel } from '@/components/ios/Panel';
 
 const INTEGRATION_META: Record<string, { Icon: typeof Mail; desc: string }> = {
   gmail: { Icon: Mail, desc: 'Read & organize your inbox' },
@@ -826,7 +827,7 @@ export default function Rules() {
 
           {/* Always-visible Slack setup guide (Slack needs an ID, not a name —
               the #1 reason a test fails). */}
-          <div className="mt-3 rounded-2xl bg-card p-4 text-[13px] leading-relaxed text-muted-foreground ring-1 ring-border">
+          <Panel className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
             <p className="mb-2 flex items-center gap-2 text-[14px] font-semibold text-foreground">
               <Slack className="h-4 w-4" /> Setting a Slack destination
             </p>
@@ -863,7 +864,7 @@ export default function Rules() {
               Then use <span className="font-medium text-foreground">Send test message</span> on the Slack row, or the
               button below, to confirm delivery.
             </p>
-          </div>
+          </Panel>
 
           {/* Send a test alert to every configured channel + show each result. */}
           <div className="mt-3 px-1">

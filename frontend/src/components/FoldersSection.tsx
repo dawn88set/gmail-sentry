@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderTree, Sparkles } from 'lucide-react';
-import { Badge } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
 import { useToast } from '@/components/Toast';
 import { ListSection, ListGroup, ListRow } from '@/components/ios/List';
 import { Toggle } from '@/components/ios/Toggle';

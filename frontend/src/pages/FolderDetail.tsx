@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ChevronLeft, ExternalLink, FolderTree } from 'lucide-react';
-import { Badge, Button, EmptyState, ErrorState } from '@clarittyai/app-ui';
+import { Button, EmptyState, ErrorState } from '@clarittyai/app-ui';
+import { Badge } from '@/components/ios/Badge';
 import { Avatar } from '@/components/Avatar';
 import { Screen } from '@/components/ios/Screen';
 import { ListGroup, ListSection } from '@/components/ios/List';
